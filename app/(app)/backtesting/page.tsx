@@ -1,21 +1,17 @@
-/**
- * backtesting — stub. Real implementation lands when this section is migrated.
- * For now this just confirms the SPA navigation works end-to-end.
- */
+import { BarChart3, Clock, Gauge, TrendingUp } from 'lucide-react'
+import { SectionPlaceholder } from '@/components/cockpit/SectionPlaceholder'
+
 export default function BacktestingPage() {
   return (
-    <div className="px-8 py-10 max-w-6xl">
-      <h1 className="text-2xl font-bold mb-1 capitalize">backtesting</h1>
-      <p className="text-sm text-zinc-500 mb-8">
-        Coming soon. The current backtesting experience still lives at{' '}
-        <a href="https://staxs.ai/client-dashboard.html" className="text-amber-400 underline">
-          staxs.ai/client-dashboard.html
-        </a>{' '}
-        — this section will be migrated here once the foundation is signed off.
-      </p>
-      <div className="border border-zinc-800/80 rounded-lg p-8 bg-zinc-900/30 text-zinc-500 text-sm">
-        Placeholder · sidebar nav between sections is instant (client-side routing).
-      </div>
-    </div>
+    <SectionPlaceholder
+      title="Backtesting"
+      subtitle="Strategy analysis components will use the shared stats, chart, and table language."
+      metrics={[
+        { label: 'Win Rate', value: '71.5%', caption: 'Last 50 trades', icon: Gauge },
+        { label: 'Profit Factor', value: '1.78', caption: 'Gross profit / loss', icon: TrendingUp },
+        { label: 'Runs', value: '5', caption: 'Asset basket', icon: BarChart3 },
+        { label: 'Updated', value: '5m', caption: 'Mock freshness', icon: Clock },
+      ]}
+    />
   )
 }

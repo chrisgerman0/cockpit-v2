@@ -1,21 +1,17 @@
-/**
- * settings — stub. Real implementation lands when this section is migrated.
- * For now this just confirms the SPA navigation works end-to-end.
- */
+import { Bell, Globe2, Palette, ShieldCheck } from 'lucide-react'
+import { SectionPlaceholder } from '@/components/cockpit/SectionPlaceholder'
+
 export default function SettingsPage() {
   return (
-    <div className="px-8 py-10 max-w-6xl">
-      <h1 className="text-2xl font-bold mb-1 capitalize">settings</h1>
-      <p className="text-sm text-zinc-500 mb-8">
-        Coming soon. The current settings experience still lives at{' '}
-        <a href="https://staxs.ai/client-dashboard.html" className="text-amber-400 underline">
-          staxs.ai/client-dashboard.html
-        </a>{' '}
-        — this section will be migrated here once the foundation is signed off.
-      </p>
-      <div className="border border-zinc-800/80 rounded-lg p-8 bg-zinc-900/30 text-zinc-500 text-sm">
-        Placeholder · sidebar nav between sections is instant (client-side routing).
-      </div>
-    </div>
+    <SectionPlaceholder
+      title="Settings"
+      subtitle="Preferences keep the new top-bar language and theme behavior."
+      metrics={[
+        { label: 'Theme', value: 'Dark', caption: 'Persisted locally', icon: Palette },
+        { label: 'Language', value: 'ENG', caption: 'PT available', icon: Globe2 },
+        { label: 'Alerts', value: 'On', caption: 'Notifications enabled', icon: Bell },
+        { label: 'Security', value: 'OK', caption: 'Session active', icon: ShieldCheck },
+      ]}
+    />
   )
 }

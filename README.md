@@ -78,6 +78,12 @@ npm install
 npm run dev          # → http://localhost:3000
 ```
 
+## Component reference
+
+The design system kitchen sink lives at `/design`. It renders the Obsidian Ledger primitives and
+cockpit composites in both light and dark themes, plus the full dashboard composition for visual
+regression checks before section ports land.
+
 Build + run as production:
 ```bash
 npm run build

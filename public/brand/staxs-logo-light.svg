@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#E8B830"/><stop offset="100%" stop-color="#8B6914"/></linearGradient></defs>
+  <rect width="64" height="64" rx="14" fill="#08080D"/>
+  <path d="M18 33L35 6L46 6L26 33Z" fill="url(#g)"/>
+  <path d="M46 31L29 58L18 58L38 31Z" fill="url(#g)"/>
+  <text x="80" y="44" font-family="Inter, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#1a1a2e" letter-spacing="-0.5">staxs</text>
+</svg>

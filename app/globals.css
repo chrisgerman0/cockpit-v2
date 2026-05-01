@@ -1,26 +1,131 @@
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: 45 30% 96%;
+  --foreground: 240 13% 8%;
+  --surface: 45 28% 98%;
+  --surface-elevated: 0 0% 100%;
+  --card: 45 28% 98%;
+  --card-foreground: 240 13% 8%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 13% 8%;
+  --primary: 42 80% 46%;
+  --primary-foreground: 45 35% 7%;
+  --secondary: 42 30% 91%;
+  --secondary-foreground: 240 13% 14%;
+  --muted: 42 24% 89%;
+  --muted-foreground: 240 6% 42%;
+  --accent: 42 80% 46%;
+  --accent-foreground: 45 35% 7%;
+  --destructive: 2 69% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 42 17% 82%;
+  --input: 42 17% 82%;
+  --ring: 42 80% 46%;
+  --positive: 132 55% 43%;
+  --negative: 5 71% 52%;
+  --warning: 42 80% 46%;
+  --info: 207 76% 52%;
+  --chart-grid: rgba(22, 19, 13, 0.11);
+  --chart-fill: rgba(212, 160, 23, 0.22);
+}
+
+.dark {
+  --background: 220 25% 3%;
+  --foreground: 44 24% 92%;
+  --surface: 218 24% 5%;
+  --surface-elevated: 217 24% 7%;
+  --card: 218 24% 6%;
+  --card-foreground: 44 24% 92%;
+  --popover: 218 24% 6%;
+  --popover-foreground: 44 24% 92%;
+  --primary: 42 82% 46%;
+  --primary-foreground: 44 35% 6%;
+  --secondary: 217 15% 12%;
+  --secondary-foreground: 44 18% 84%;
+  --muted: 217 12% 13%;
+  --muted-foreground: 220 8% 62%;
+  --accent: 42 82% 46%;
+  --accent-foreground: 44 35% 6%;
+  --destructive: 5 70% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 216 14% 16%;
+  --input: 216 14% 16%;
+  --ring: 42 82% 46%;
+  --positive: 123 48% 51%;
+  --negative: 5 77% 55%;
+  --warning: 42 82% 46%;
+  --info: 202 84% 54%;
+  --chart-grid: rgba(255, 246, 218, 0.075);
+  --chart-fill: rgba(212, 160, 23, 0.26);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-surface: hsl(var(--surface));
+  --color-surface-elevated: hsl(var(--surface-elevated));
+  --color-border: hsl(var(--border));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-positive: hsl(var(--positive));
+  --color-negative: hsl(var(--negative));
+  --color-warning: hsl(var(--warning));
+  --color-info: hsl(var(--info));
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  min-height: 100%;
+  background: hsl(var(--background));
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 22% 8%, rgba(212, 160, 23, 0.14), transparent 30rem),
+    radial-gradient(circle at 88% 105%, rgba(212, 160, 23, 0.12), transparent 30rem),
+    hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-geist-sans), Inter, system-ui, sans-serif;
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  outline-color: hsl(var(--ring));
+}
+
+.num {
+  font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.cockpit-card {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.012)),
+    hsl(var(--card) / 0.92);
+  border: 1px solid hsl(var(--border) / 0.82);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 16px 46px rgba(0,0,0,.24);
+}
+
+.light .cockpit-card,
+:root:not(.dark) .cockpit-card {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.58)),
+    hsl(var(--card) / 0.96);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 16px 36px rgba(28, 22, 10, .08);
 }

@@ -1,21 +1,17 @@
-/**
- * live — stub. Real implementation lands when this section is migrated.
- * For now this just confirms the SPA navigation works end-to-end.
- */
+import { Activity, Bot, ShieldCheck, TrendingUp } from 'lucide-react'
+import { SectionPlaceholder } from '@/components/cockpit/SectionPlaceholder'
+
 export default function LivePage() {
   return (
-    <div className="px-8 py-10 max-w-6xl">
-      <h1 className="text-2xl font-bold mb-1 capitalize">live</h1>
-      <p className="text-sm text-zinc-500 mb-8">
-        Coming soon. The current live experience still lives at{' '}
-        <a href="https://staxs.ai/client-dashboard.html" className="text-amber-400 underline">
-          staxs.ai/client-dashboard.html
-        </a>{' '}
-        — this section will be migrated here once the foundation is signed off.
-      </p>
-      <div className="border border-zinc-800/80 rounded-lg p-8 bg-zinc-900/30 text-zinc-500 text-sm">
-        Placeholder · sidebar nav between sections is instant (client-side routing).
-      </div>
-    </div>
+    <SectionPlaceholder
+      title="Live Trading"
+      subtitle="Live execution views inherit the Obsidian Ledger shell while data wiring stays mocked."
+      metrics={[
+        { label: 'Bot Status', value: 'Active', caption: 'Watching', icon: Bot },
+        { label: 'Unrealized PNL', value: '$0', caption: 'No open position', icon: TrendingUp },
+        { label: 'Signals', value: '0', caption: 'No pending entries', icon: Activity },
+        { label: 'Risk', value: 'OK', caption: 'Guards online', icon: ShieldCheck },
+      ]}
+    />
   )
 }
