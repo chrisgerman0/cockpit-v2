@@ -15,8 +15,8 @@ export function LeverageGauge({ value, max = 10, className }: LeverageGaugeProps
   return (
     <div className={cn('cockpit-card rounded-md p-4', className)}>
       <div className="text-label font-semibold uppercase text-muted-foreground">Current Leverage</div>
-      <div className="mt-1 flex items-end justify-between gap-3">
-        <svg viewBox="0 0 180 104" className="h-20 w-36 overflow-visible" role="img" aria-label={`Current leverage ${value}x`}>
+      <div className="mt-0.5 flex items-end justify-between gap-3">
+        <svg viewBox="0 0 180 104" className="h-[70px] w-32 overflow-visible" role="img" aria-label={`Current leverage ${value}x`}>
           <path d="M20 88 A70 70 0 0 1 160 88" fill="none" stroke="hsl(var(--muted))" strokeWidth="12" strokeLinecap="round" />
           <path d="M20 88 A70 70 0 0 1 160 88" fill="none" stroke="url(#levGradient)" strokeWidth="12" strokeLinecap="round" pathLength="100" strokeDasharray={`${(clamped / max) * 100} 100`} />
           <defs>

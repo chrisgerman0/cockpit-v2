@@ -31,7 +31,7 @@ export function StatTile({ label, value, caption, icon: Icon, variant = 'default
         </div>
         <div className="min-w-0">
           <div className="text-label font-semibold uppercase text-muted-foreground">{label}</div>
-          <div className={cn('num mt-1 text-2xl font-semibold leading-none', tone)}>{value}</div>
+          <div className={cn('num mt-1 text-[26px] font-semibold leading-none', tone)}>{value}</div>
           {caption ? <div className="mt-1 text-xs text-muted-foreground">{caption}</div> : null}
         </div>
       </div>

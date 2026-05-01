@@ -19,7 +19,7 @@ type SidebarProps = {
 export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 border-r border-border/70 bg-background/88 backdrop-blur-xl lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-48 border-r border-border/70 bg-background/88 backdrop-blur-xl lg:flex">
         <SidebarInner />
       </aside>
       <Sheet open={mobileOpen} onOpenChange={(open) => !open && onClose?.()}>
@@ -35,11 +35,11 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex h-16 items-center px-5">
-        <img src="/brand/staxs-logo-dark.svg" alt="staxs" width={116} height={27} className="hidden dark:block" />
-        <img src="/brand/staxs-logo-light.svg" alt="staxs" width={116} height={27} className="block dark:hidden" />
+      <div className="flex h-16 items-center px-4">
+        <img src="/brand/staxs-logo-dark.svg" alt="staxs" width={126} height={29} className="hidden dark:block" />
+        <img src="/brand/staxs-logo-light.svg" alt="staxs" width={126} height={29} className="block dark:hidden" />
       </div>
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav className="flex-1 space-y-1 px-2.5 py-3">
         {navItems.map(item => {
           const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
           const Icon = item.icon
@@ -59,7 +59,7 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
           )
         })}
       </nav>
-      <div className="space-y-4 p-4">
+      <div className="space-y-4 p-3">
         <div className="rounded-md border border-accent/20 bg-accent/8 p-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Circle className="h-3 w-3 fill-positive text-positive" />

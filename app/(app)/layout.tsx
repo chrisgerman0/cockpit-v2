@@ -15,7 +15,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <ThemeProvider>
       <div className="min-h-screen bg-background text-foreground transition-colors">
         <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
-        <div className="min-w-0 lg:pl-60">
+        <div className="min-w-0 lg:pl-48">
           <TopBar onMenuClick={() => setMobileOpen(o => !o)} />
           <main>
             {children}

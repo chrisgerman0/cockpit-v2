@@ -8,16 +8,16 @@ import type { TickerAsset } from './mock-data'
  */
 export function TickerBar({ assets }: { assets: TickerAsset[] }) {
   return (
-    <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-accent/25 bg-background/92 pl-0 backdrop-blur-xl lg:pl-60">
+    <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-accent/25 bg-background/92 pl-0 backdrop-blur-xl lg:pl-48">
       <div className="mx-auto flex max-w-[1440px] items-center overflow-x-auto">
         {assets.map(asset => (
-          <div key={asset.symbol} className="flex min-h-11 min-w-40 items-center gap-3 border-r border-border/70 px-3">
+          <div key={asset.symbol} className="flex min-h-11 min-w-36 items-center gap-2 border-r border-border/70 px-3">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-semibold">{asset.symbol[0]}</span>
             <div>
               <div className="num text-xs font-semibold">{asset.symbol} <span className="text-muted-foreground">{fmtUsd(asset.price)}</span></div>
               <div className={cn('num text-xs', asset.change >= 0 ? 'text-positive' : 'text-negative')}>{fmtPct(asset.change, { sign: true })}</div>
             </div>
-            <svg width="54" height="22" viewBox="0 0 54 22" className={asset.change >= 0 ? 'text-positive' : 'text-negative'} aria-hidden>
+            <svg width="42" height="20" viewBox="0 0 54 22" className={asset.change >= 0 ? 'text-positive' : 'text-negative'} aria-hidden>
               <polyline fill="none" stroke="currentColor" strokeWidth="1.5" points="0,15 8,13 14,16 22,11 30,12 38,7 46,9 54,4" />
             </svg>
           </div>
