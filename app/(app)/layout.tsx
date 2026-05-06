@@ -1,27 +1,24 @@
-'use client'
-
-import { useState } from 'react'
-import { Sidebar } from '@/components/cockpit/Sidebar'
-import { TopBar } from '@/components/cockpit/TopBar'
 import { ThemeProvider } from '@/components/theme-provider'
+import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
 
 /**
- * App shell — sidebar + sticky top bar + content. Auth gate temporarily off.
- * Mobile sidebar is toggled by the hamburger in TopBar.
+ * App shell — Stax design (sidebar + topbar + bottom ticker). Wraps every
+ * route under (app). Pages render only their inner content; the shell
+ * self-fetches BTC + 5-asset tickers from Bitget public REST so it works
+ * regardless of which page is open.
+ *
+ * Forced dynamic — without this, Next prerenders static HTML at build time
+ * which means usePathname() in StaxSidebar returns null and the active nav
+ * item defaults to Dashboard regardless of the actual route. Dynamic
+ * rendering gives every request the real URL so the highlight is correct
+ * before the client even hydrates.
  */
+export const dynamic = 'force-dynamic'
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const [mobileOpen, setMobileOpen] = useState(false)
   return (
     <ThemeProvider>
-      <div className="min-h-screen bg-background text-foreground transition-colors">
-        <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
-        <div className="min-w-0 lg:pl-48">
-          <TopBar onMenuClick={() => setMobileOpen(o => !o)} />
-          <main>
-            {children}
-          </main>
-        </div>
-      </div>
+      <StaxAppShell>{children}</StaxAppShell>
     </ThemeProvider>
   )
 }

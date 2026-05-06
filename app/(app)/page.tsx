@@ -1,5 +1,5 @@
-import { DashboardMockup } from '@/components/cockpit/DashboardMockup'
+import { DashboardLive } from '@/components/cockpit/DashboardLive'
 
 export default function DashboardHome() {
-  return <DashboardMockup />
+  return <DashboardLive />
 }

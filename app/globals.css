@@ -90,15 +90,30 @@ html {
   background: hsl(var(--background));
 }
 
+/* Heavier ambient color depth so the glass cards have real depth to refract
+   through. Three offset gold blobs at varying radii + opacity create a
+   nebula-like backdrop that the cards' backdrop-filter actually has
+   something to blur. Without these the cards just look like solid panels. */
 body {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 22% 8%, rgba(212, 160, 23, 0.14), transparent 30rem),
-    radial-gradient(circle at 88% 105%, rgba(212, 160, 23, 0.12), transparent 30rem),
+    radial-gradient(ellipse 60rem 40rem at 18% 5%,  rgba(212, 160, 23, 0.28), transparent 70%),
+    radial-gradient(ellipse 50rem 50rem at 88% 95%, rgba(212, 160, 23, 0.22), transparent 70%),
+    radial-gradient(ellipse 40rem 30rem at 50% 50%, rgba(232, 184, 48, 0.10), transparent 70%),
     hsl(var(--background));
+  background-attachment: fixed;
   color: hsl(var(--foreground));
   font-family: var(--font-geist-sans), Inter, system-ui, sans-serif;
   font-feature-settings: "rlig" 1, "calt" 1;
+}
+.dark body,
+:root:not(.light) body {
+  background:
+    radial-gradient(ellipse 60rem 40rem at 18% 5%,  rgba(212, 160, 23, 0.18), transparent 70%),
+    radial-gradient(ellipse 55rem 50rem at 88% 95%, rgba(212, 160, 23, 0.15), transparent 70%),
+    radial-gradient(ellipse 40rem 30rem at 50% 50%, rgba(232, 184, 48, 0.06), transparent 70%),
+    hsl(var(--background));
+  background-attachment: fixed;
 }
 
 button,

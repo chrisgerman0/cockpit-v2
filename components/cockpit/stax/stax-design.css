@@ -1,0 +1,1882 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Stax Dashboard — Obsidian Ledger design system
+   Sourced verbatim from Claude Design handoff bundle (Stax Dashboard.html).
+   All rules scoped under .stax-app to avoid colliding with v2's Tailwind
+   theme. To use: wrap app shell in <div class="stax-app">.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.stax-app {
+  --gold: #D4A017;
+  --gold-hi: #E8B830;
+  --gold-dim: #8c6a10;
+  --bg: #050507;
+  --bg-2: #0b0b0f;
+  --card: #0e0e13;
+  --card-2: #131319;
+  --line: #1c1c24;
+  --line-2: #26262f;
+  --text: #e7e7ea;
+  --muted: #8b8b94;
+  --muted-2: #5c5c66;
+  --pos: #2ecc71;
+  --neg: #ff4d4f;
+  --pos-rgb: 46, 204, 113;
+  --neg-rgb: 255, 77, 79;
+  --gold-glow: rgba(212,160,23,0.30);
+  --gold-edge-a: rgba(212,160,23,0.05);
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+}
+.stax-app.light,
+html.light .stax-app {
+  --gold: #B8860B;
+  --gold-hi: #d39d11;
+  --gold-dim: #a07707;
+  --bg: #f6f4ee;
+  --bg-2: #efece2;
+  --card: #ffffff;
+  --card-2: #faf7ec;
+  --line: #e6e1cf;
+  --line-2: #d8d2bd;
+  --text: #1a1a1f;
+  --muted: #6b6b73;
+  --muted-2: #9a9aa3;
+  --pos: #1f9d55;
+  --neg: #d23a3a;
+  --pos-rgb: 31, 157, 85;
+  --neg-rgb: 210, 58, 58;
+  --gold-glow: rgba(184,134,11,0.25);
+  --gold-edge-a: rgba(184,134,11,0.06);
+}
+
+.stax-app * { box-sizing: border-box; }
+.stax-app .mono,
+.stax-app .num {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.stax-app .num { font-weight: 600; }
+
+.stax-app .label {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #a8a8b0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.stax-app .label-gold {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 600;
+}
+
+/* Glass card — heavier frost, brighter top-edge highlight, deeper shadow,
+   and a more visible top-gold gradient. The body's color blobs (gold, plus
+   the new accent blobs added below) refract through the blur, giving each
+   card real depth rather than the previous "tinted dark rectangle" look. */
+.stax-app .card {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(14, 14, 19, 0.42) 50%,
+    rgba(14, 14, 19, 0.50) 100%
+  );
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  overflow: hidden;
+  min-width: 0;
+  box-shadow:
+    /* outer drop — gives the float-above-bg feel */
+    0 1px 2px rgba(0, 0, 0, 0.20),
+    0 12px 48px rgba(0, 0, 0, 0.45),
+    /* inner top highlight — the frosted-edge sheen */
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    /* inner side highlights — soft glass refraction */
+    inset 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset -1px 0 0 rgba(255, 255, 255, 0.04);
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.28s ease,
+    box-shadow 0.28s ease;
+}
+
+/* Cursor-tracking spotlight — a soft gold radial gradient that follows the
+   pointer inside the card. CSS variables --mx/--my are written by the
+   global mousemove handler in StaxAppShell. The ::after pseudo-element
+   layers above the bg but below content (z-index between bg and content). */
+.stax-app .card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    600px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(212, 160, 23, 0.08),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+.stax-app .card > * { position: relative; z-index: 2; }
+@media (hover: hover) {
+  .stax-app .card:hover::after { opacity: 1; }
+}
+
+/* Hover state — lift, gold-tinted border, gold outer glow, brighter top edge */
+@media (hover: hover) {
+  .stax-app .card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(212, 160, 23, 0.22);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.20),
+      0 18px 56px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(212, 160, 23, 0.08),
+      0 0 40px rgba(212, 160, 23, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      inset 1px 0 0 rgba(255, 255, 255, 0.05),
+      inset -1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+  .stax-app .card:hover::before {
+    background: linear-gradient(
+      180deg,
+      rgba(212, 160, 23, 0.32) 0%,
+      rgba(212, 160, 23, 0.08) 50%,
+      transparent 100%
+    );
+  }
+}
+.stax-app.light .card,
+html.light .stax-app .card {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.85) 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 1px 2px rgba(28, 22, 10, 0.06),
+    0 12px 48px rgba(28, 22, 10, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+/* Stronger top gold gradient — was 8% height with low alpha, now 14%
+   with higher alpha so the brand accent reads on the frosted bg. */
+.stax-app .card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 14%;
+  background: linear-gradient(
+    180deg,
+    rgba(212, 160, 23, 0.18) 0%,
+    rgba(212, 160, 23, 0.05) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+/* Light mode dampens the top gold so it doesn't fight the page bg. */
+.stax-app.light .card::before,
+html.light .stax-app .card::before {
+  background: linear-gradient(
+    180deg,
+    rgba(184, 134, 11, 0.10) 0%,
+    rgba(184, 134, 11, 0.02) 60%,
+    transparent 100%
+  );
+}
+.stax-app .card-pad { padding: 20px 22px; }
+.stax-app .card-hd { display: flex; align-items: center; gap: 8px; }
+
+/* sidebar */
+.stax-app .app-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 100vh;
+}
+.stax-app .side {
+  background: var(--bg);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 200px;
+  height: 100vh;
+  z-index: 10;
+}
+.stax-app .brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; }
+.stax-app .brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold));
+  display: grid; place-items: center;
+  color: #1a1300; font-weight: 800;
+  box-shadow: 0 0 16px rgba(212,160,23,0.35);
+}
+.stax-app .brand-name { font-weight: 600; letter-spacing: 0.02em; font-size: 18px; }
+.stax-app .brand-mark-dark,
+.stax-app .brand-mark-light {
+  width: 30px; height: 30px; border-radius: 8px; display: block;
+}
+/* Default: dark logo (gold S on full-color background). */
+.stax-app .brand-mark-light { display: none; }
+/* Light theme: swap to transparent gold-only logo (no dark backing). */
+.stax-app.light .brand-mark-dark,
+html.light .stax-app .brand-mark-dark { display: none; }
+.stax-app.light .brand-mark-light,
+html.light .stax-app .brand-mark-light { display: block; }
+
+/* Collapsed sidebar — icons-only mode. */
+.stax-app.collapsed .app-grid { grid-template-columns: 64px 1fr; }
+.stax-app.collapsed .side { width: 64px; padding: 20px 8px; }
+.stax-app.collapsed .brand { padding: 6px 0 18px; justify-content: center; }
+.stax-app.collapsed .brand-name { display: none; }
+.stax-app.collapsed .nav-item {
+  justify-content: center;
+  padding: 10px 8px;
+  margin-left: 0;
+  border-left: 0;
+  border-radius: 8px;
+}
+.stax-app.collapsed .nav-item.active {
+  border-left: 0;
+  background: rgba(212,160,23,0.10);
+}
+.stax-app.collapsed .nav-item span { display: none; }
+.stax-app.collapsed .sb-collapse {
+  /* Center the chevron in the narrow 64px collapsed sidebar — override the
+     `margin-left: auto` that right-aligns it in expanded mode. */
+  margin-left: auto;
+  margin-right: auto;
+  justify-content: center;
+  padding: 10px 8px;
+}
+.stax-app.collapsed .sb-collapse-label { display: none; }
+.stax-app.collapsed .side-foot { padding: 10px 4px 14px; }
+.stax-app .nav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.stax-app .nav-item:hover { background: rgba(255,255,255,0.02); color: var(--text); }
+.stax-app.light .nav-item:hover,
+html.light .stax-app .nav-item:hover { background: rgba(0,0,0,0.03); }
+.stax-app .nav-item.active {
+  /* Frosty gold glass — translucent gold tint + 20px blur lets the body's
+     gold radial show through. Inner highlight on top edge. */
+  background: rgba(212, 160, 23, 0.10);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  color: var(--gold);
+  border-color: rgba(212, 160, 23, 0.55);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 0 0 1px rgba(212, 160, 23, 0.10),
+    0 4px 14px rgba(212, 160, 23, 0.08);
+}
+.stax-app .nav-item .ico { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.9; }
+/* side-foot pinned to bottom of sidebar — Sign Out sits just above the
+   bottom edge with a small breathing margin. */
+.stax-app .side-foot {
+  margin-top: auto;
+  padding: 10px 0 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+/* Collapse / expand toggle — icon-only chevron pill. Subtle on dark, hover
+   brightens to gold. Right-aligned so it sits under the brand-name area. */
+.stax-app .sb-collapse {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  margin: 4px 0 14px auto;
+  color: var(--muted);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  user-select: none;
+}
+.stax-app .sb-collapse:hover {
+  color: var(--gold);
+  background: rgba(212,160,23,0.08);
+  border-color: rgba(212,160,23,0.5);
+}
+/* Sign Out reuses .nav-item styling (so it lines up with Settings) but with
+   a button reset and a slight red wash on hover — destructive intent. */
+.stax-app .nav-signout {
+  appearance: none; background: transparent; width: 100%;
+  text-align: left; font-family: inherit;
+}
+.stax-app .nav-signout:hover {
+  background: rgba(255,77,79,0.06);
+  color: var(--neg);
+  border-color: transparent;
+}
+
+/* main */
+/* Subtle shade on the main column so the sidebar (left) and topbar (top) read
+   as a contained "L-frame" against the content area. The topbar still has its
+   own `background: var(--bg)` so it visually merges with the sidebar; the
+   .content area inside .main inherits this --bg-2 tint. Effect is intentional
+   and subtle — just enough to define the menu boundaries without splitting
+   the page into hard zones. */
+.stax-app .main {
+  display: flex; flex-direction: column;
+  min-width: 0; max-width: 100%;
+  grid-column: 2;
+  min-height: 100vh;
+  background: var(--bg-2);
+}
+/* Push the bottom ticker bar to the viewport bottom so the sidebar's
+   "Systems Online" pill (anchored at side-foot via margin-top:auto) lines
+   up with the ticker — both end up at the same y. */
+.stax-app .main > .content { flex: 1 1 auto; }
+.stax-app .topbar {
+  display: flex; align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  /* Matches the main column (--bg-2) so the topbar reads as part of the
+     content surface — only the sidebar carries a distinct background.
+     Was previously --bg which made the topbar visually merge with the
+     sidebar, leaving an awkward seam against the cream main area. */
+  background: var(--bg-2);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.stax-app .topbar-brand {
+  display: none;  /* desktop hides this — sidebar carries the brand */
+  align-items: center; gap: 8px;
+}
+/* Width/height only — do NOT set display here. The theme-aware rules above
+   (.stax-app .brand-mark-light { display: none }) handle which variant shows.
+   Setting display:block here would override that and render BOTH icons. */
+.stax-app .topbar-brand .brand-mark-dark,
+.stax-app .topbar-brand .brand-mark-light {
+  width: 26px; height: 26px; border-radius: 6px;
+}
+.stax-app .topbar-brand-name {
+  font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
+  color: var(--text);
+}
+.stax-app .topbar-spacer { flex: 1 1 auto; }
+.stax-app .desktop-only { display: inherit; }
+.stax-app .mobile-only { display: none; }
+/* Mobile language toggle — pill button showing current lang code (ENG/PT).
+   Visibility is owned by the .mobile-only / .desktop-only utility classes;
+   we don't set `display` here, otherwise it'd override .mobile-only's
+   `display: none` on desktop and the toggle would leak into the desktop
+   view alongside the ENG/PT segment. */
+.stax-app .lang-toggle {
+  appearance: none; cursor: pointer;
+  background: var(--card); color: var(--gold);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+  font-family: inherit;
+  min-width: 44px; min-height: 32px;
+  align-items: center; justify-content: center;
+  transition: background 0.12s, border-color 0.12s;
+}
+.stax-app .lang-toggle:hover,
+.stax-app .lang-toggle:active {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+}
+
+/* Language dropdown — ported from v1 client-dashboard.html (.lang-menu /
+   .lang-option). Globe icon button toggles a 2-option menu (English / PT-BR).
+   Same shape v1 ships, just scoped under .stax-app. */
+.stax-app .lang-wrap { position: relative; display: inline-flex; }
+.stax-app .lang-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #0d0d14;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 220px;
+  z-index: 210;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stax-app.light .lang-menu,
+html.light .stax-app .lang-menu {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.10);
+}
+.stax-app .lang-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+}
+.stax-app .lang-option:hover { background: rgba(255, 255, 255, 0.04); }
+.stax-app .lang-option.is-active {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.stax-app.light .lang-option:hover,
+html.light .stax-app .lang-option:hover { background: rgba(0, 0, 0, 0.04); }
+.stax-app.light .lang-option.is-active,
+html.light .stax-app .lang-option.is-active {
+  background: rgba(0, 0, 0, 0.035);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+.stax-app .lang-option-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.2;
+}
+.stax-app .lang-option-meta {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.stax-app .lang-option-code {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+.stax-app .lang-option.is-active .lang-option-code,
+.stax-app .lang-option.is-active .lang-option-label { color: var(--text); }
+.stax-app .pill {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+.stax-app .icon-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--card); border: 1px solid var(--line);
+  display: grid; place-items: center;
+  cursor: pointer;
+  color: var(--muted);
+}
+/* Hover shade removed — icons stay static on hover (per user request).
+   Cursor still changes to pointer (set on base .icon-btn). */
+.stax-app .seg {
+  display: flex; align-items: center;
+  /* Frosty glass — translucent body + 20px backdrop blur lets the page's
+     gold radial / theme color peek through. Inner highlight on top edge gives
+     the "lit pane" look. */
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 999px; padding: 3px;
+  gap: 2px;
+}
+.stax-app.light .seg,
+html.light .stax-app .seg {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 4px 14px rgba(0, 0, 0, 0.05);
+}
+.stax-app .seg button {
+  border: 0; background: transparent; color: var(--muted);
+  padding: 6px 10px; border-radius: 999px; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+}
+.stax-app .seg button.on { background: var(--bg-2); color: var(--gold); }
+.stax-app .lang-seg button { font-family: inherit; font-weight: 600; letter-spacing: 0.05em; }
+.stax-app .avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, #2a2a35, #1a1a22);
+  border: 1px solid var(--line-2);
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 13px; color: var(--text);
+}
+.stax-app.light .avatar,
+html.light .stax-app .avatar { background: linear-gradient(135deg, #e9e3ce, #d8cfae); }
+
+/* Hamburger menu dropdown — opens from the trigger button at the topbar
+   right edge. Clones v1's topMenuDropdown (client-dashboard.html ~2815). */
+.stax-app .menu-wrap { position: relative; }
+.stax-app .menu-trigger { color: var(--text); }
+.stax-app .menu-trigger:hover { color: var(--gold); border-color: rgba(212,160,23,0.35); }
+.stax-app .menu-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 200;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  display: flex; flex-direction: column;
+}
+.stax-app.light .menu-dropdown,
+html.light .stax-app .menu-dropdown { box-shadow: 0 16px 36px rgba(28,22,10,.18); }
+.stax-app .menu-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.stax-app .menu-item:hover { background: rgba(255,255,255,0.04); color: var(--gold); }
+.stax-app.light .menu-item:hover,
+html.light .stax-app .menu-item:hover { background: rgba(0,0,0,0.04); }
+.stax-app .menu-divider {
+  height: 1px; background: var(--line); margin: 6px 8px;
+}
+.stax-app .menu-signout { color: var(--muted); }
+.stax-app .menu-signout:hover { background: rgba(255,77,79,0.08); color: var(--neg); }
+
+/* content grid */
+.stax-app .content { padding: 10px 14px 0; display: grid; gap: 8px; }
+.stax-app .row { display: grid; gap: 8px; }
+.stax-app .row-hero { grid-template-columns: 1fr 1.85fr; }
+.stax-app .row-hero > .hero-left { display: grid; grid-template-rows: auto; gap: 14px; }
+.stax-app .row-stats { grid-template-columns: repeat(4, 1fr); }
+.stax-app .row-tables { grid-template-columns: 1.3fr 2fr; }
+.stax-app .row-bottom { grid-template-columns: 1.3fr 1fr 1fr 1.2fr; }
+
+/* hero balance card */
+.stax-app .balance-card { padding: 16px 20px 18px; min-height: auto; }
+.stax-app .hero-balance {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 34px;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  text-shadow: 0 0 28px var(--gold-glow);
+  line-height: 1.05;
+  margin: 8px 0 12px;
+}
+.stax-app .tier-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  /* Frosty gold glass — subtle gold tint, blur lets the page's hero radial
+     glow through. Inner highlight on top edge. */
+  background: rgba(212, 160, 23, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.10);
+  border-radius: 999px;
+  color: var(--gold);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.stax-app .tier-pill .star { color: var(--gold); }
+.stax-app .watermark {
+  position: absolute; right: 14px; top: 50%;
+  transform: translateY(-50%);
+  width: 120px; height: 120px; opacity: 0.06;
+  color: var(--gold);
+  pointer-events: none;
+}
+.stax-app .btc-goal {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.stax-app .btc-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.stax-app .btc-amt { font-size: 14px; color: var(--gold); font-weight: 600; }
+.stax-app .slider {
+  position: relative;
+  height: 8px;
+  background: var(--card-2);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.stax-app .slider-fill {
+  position: absolute; left: 0; top: -1px; bottom: -1px;
+  background: linear-gradient(90deg,
+    rgba(212,160,23,0.20) 0%,
+    rgba(212,160,23,0.55) 50%,
+    var(--gold) 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(212,160,23,0.4);
+}
+.stax-app .slider-thumb {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid #1a1300;
+  box-shadow: 0 0 10px rgba(212,160,23,0.7);
+  cursor: grab;
+  overflow: hidden;
+  background: var(--gold);
+}
+.stax-app.light .slider-thumb,
+html.light .stax-app .slider-thumb { border-color: #fff8e0; }
+.stax-app .slider-thumb img {
+  width: 100%; height: 100%; display: block; border-radius: 50%;
+}
+.stax-app .slider-ends { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+
+/* equity */
+.stax-app .equity-card { min-height: auto; display: flex; flex-direction: column; padding: 16px 20px; }
+.stax-app .equity-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.stax-app .equity-foot {
+  text-align: center; padding: 6px 0 0;
+  color: var(--gold); font-size: 11.5px;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+.stax-app .equity-foot .dot { display: inline-block; width: 8px; height: 2px; background: var(--gold); vertical-align: middle; margin-right: 6px; }
+
+/* stats row */
+.stax-app .stat-card { padding: 16px 18px; }
+.stax-app .stat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.stax-app .stat-ico {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center;
+  /* Frosty glass — gold-tinted translucent surface + backdrop blur. The
+     page's gold radial diffuses through, giving the icon container a soft
+     glowing-glass look. */
+  background: rgba(212, 160, 23, 0.10);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(212, 160, 23, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 2px 8px rgba(0, 0, 0, 0.12);
+  color: var(--gold);
+}
+.stax-app .stat-val { font-size: 22px; font-weight: 600; line-height: 1.15; margin: 4px 0; letter-spacing: -0.01em; }
+.stax-app .stat-sub { font-size: 11.5px; color: var(--muted); }
+.stax-app .stat-val.pos { color: var(--pos); }
+.stax-app .stat-val.neg { color: var(--neg); }
+.stax-app .pos-text { color: var(--pos); }
+.stax-app .neg-text { color: var(--neg); }
+.stax-app .dot-live {
+  display: inline-block;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--pos); margin-right: 6px;
+  box-shadow: 0 0 6px var(--pos);
+  vertical-align: middle;
+  animation: stax-pulse 1.8s ease-in-out infinite;
+}
+
+/* Subtle heartbeat for live status dots. The transform scales up + the
+   shadow brightens at the apex, then settles back. ~1.8s feels alive but
+   not distracting. */
+@keyframes stax-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 6px currentColor, 0 0 0 0 rgba(46, 204, 113, 0.45);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow: 0 0 12px currentColor, 0 0 0 6px rgba(46, 204, 113, 0);
+  }
+}
+
+/* tables */
+/* Horizontal scroll wrapper — keeps table inside the card on mobile (where
+   columns are wider than viewport) instead of clipping at the card edge.
+   Has a touch-friendly scroll on iOS via -webkit-overflow-scrolling. */
+.stax-app .table-scroll {
+  padding: 0 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.stax-app table { width: 100%; border-collapse: collapse; }
+.stax-app thead th {
+  text-align: left;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #a8a8b0;
+  font-weight: 500;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stax-app thead th:last-child,
+.stax-app tbody td:last-child { padding-right: 16px; text-align: right; }
+.stax-app thead th:last-child { text-align: right; }
+.stax-app tbody td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.stax-app tbody tr:last-child td { border-bottom: 0; }
+/* P&L % stacked under $ — visible only on mobile (CSS rule below). On
+   desktop the % has its own column so we hide the inline stacked one. */
+.stax-app .pnl-pct-stacked { display: none; }
+.stax-app .table-foot {
+  text-align: center; padding: 10px 0;
+  color: var(--muted); font-size: 12px;
+  border-top: 1px solid var(--line);
+}
+.stax-app .pair-cell { display: flex; align-items: center; gap: 10px; }
+.stax-app .coin {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 11px; color: #fff;
+  flex: 0 0 22px;
+}
+.stax-app .coin.btc { background: #f7931a; }
+.stax-app .coin.eth { background: #627eea; }
+.stax-app .coin.sol { background: linear-gradient(135deg, #9945ff, #14f195); }
+.stax-app .coin.xrp { background: #23292f; }
+.stax-app .coin.sui { background: #4ca3ff; }
+.stax-app .badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  font-family: 'JetBrains Mono', monospace;
+}
+/* Frosty glass on direction badges — backdrop blur lets the underlying
+   row tint diffuse through, gives a softer feel than the flat tint. */
+.stax-app .badge-long {
+  background: rgba(46, 204, 113, 0.14);
+  color: var(--pos);
+  border: 1px solid rgba(46, 204, 113, 0.28);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.stax-app .badge-short {
+  background: rgba(255, 77, 79, 0.12);
+  color: var(--neg);
+  border: 1px solid rgba(255, 77, 79, 0.28);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+/* Leverage card gauge: sits absolutely on the right of the number on
+   desktop; on narrow viewports it'd collide with the value, so it gets
+   hidden in the mobile media query below. */
+.stax-app .lev-gauge {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+}
+.stax-app .gauge-card { padding: 18px 20px; display: flex; flex-direction: column; height: 100%; }
+.stax-app .gauge-num { font-size: 28px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+
+/* win-rate cards */
+.stax-app .wr-val { font-size: 30px; font-weight: 600; color: var(--gold); margin: 6px 0 4px; letter-spacing: -0.01em; }
+
+/* bottom row — aligned big numbers */
+.stax-app .bottom-card {
+  min-height: 162px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+}
+.stax-app .bottom-body {
+  display: flex;
+  align-items: center;
+  min-height: 78px;
+}
+.stax-app .bottom-val {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+.stax-app .bottom-card .streak-dots { margin-top: auto; }
+
+/* streak */
+.stax-app .streak-val { font-size: 30px; font-weight: 600; color: var(--pos); margin: 6px 0 4px; letter-spacing: -0.01em; }
+.stax-app .streak-dots { display: flex; gap: 5px; flex-wrap: nowrap; margin-top: 16px; overflow: hidden; }
+.stax-app .sd { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; box-shadow: 0 0 6px currentColor; }
+.stax-app .sd.w { background: var(--pos); color: rgba(46,204,113,0.6); }
+.stax-app .sd.l { background: var(--neg); color: rgba(255,77,79,0.5); }
+/* Open trade — same colour scheme as W/L based on current pnl, but pulses
+   to signal "this is a live position, the colour can still flip." Uses the
+   existing stax-pulse keyframes for visual consistency with other live
+   indicators on the page. */
+.stax-app .sd.open { animation: stax-pulse 1.6s ease-in-out infinite; }
+
+/* ticker */
+.stax-app .ticker {
+  background: var(--bg-2);
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  display: flex; align-items: stretch;
+  padding: 0;
+  flex-wrap: wrap;
+  /* Items are content-sized (.tk-item: flex 0 0 auto); space-between
+     distributes them evenly across the row so each [icon sym price delta
+     chart] cluster stays tight while the row still fills the full width. */
+  justify-content: space-between;
+  overflow: hidden;
+}
+/* When the ticker sits at the top of the main column, it reads as a
+   continuous strip flush against the topbar — no border, no radius, no
+   margin, just the bg-2 colour to mark it. Stickies under the topbar so
+   prices stay visible while scrolling. */
+.stax-app .ticker.ticker-top {
+  margin: 0;
+  position: sticky;
+  top: 56px; /* approximate topbar height; falls back gracefully on overflow */
+  z-index: 25;
+}
+
+/* Topbar-embedded ticker — the live prices live INSIDE the topbar (not as a
+   separate row), packed between the brand and the action buttons. Items
+   stay tight ([icon | sym | price | delta | spark]) and the row takes
+   `flex: 1` so it absorbs available width without pushing the bell/globe/
+   theme/hamburger off-screen. Hidden on mobile (the .topbar-btc-pill
+   provides a compact BTC-only fallback there). */
+.stax-app .topbar-ticker {
+  display: flex; align-items: center;
+  flex: 1 1 auto; min-width: 0;
+  gap: 14px;
+  overflow: hidden;
+}
+.stax-app .topbar-ticker .tk-item {
+  /* Tighter padding than the standalone ticker — topbar is height-constrained */
+  padding: 0;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.stax-app .topbar-ticker .tk-spark { width: 38px; flex: 0 0 38px; }
+.stax-app .topbar-ticker .tk-end {
+  padding: 0;
+  margin-left: auto;
+  gap: 12px;
+}
+@media (max-width: 1280px) {
+  /* Drop sparklines first when space gets tight */
+  .stax-app .topbar-ticker .tk-spark { display: none; }
+}
+@media (max-width: 1100px) {
+  /* Then drop the % delta to fit all five coins on mid-size laptops */
+  .stax-app .topbar-ticker .tk-item .pos-text,
+  .stax-app .topbar-ticker .tk-item .neg-text { display: none; }
+}
+@media (max-width: 768px) {
+  /* Mobile: hide the embedded ticker entirely; the topbar-btc-pill takes over */
+  .stax-app .topbar-ticker { display: none; }
+}
+/* Latency indicator inside the ticker. Color tracks WS RTT health: good
+   (gold), mid (amber), high (red), stale (muted) when disconnected. */
+.stax-app .tk-latency-good { color: var(--gold); }
+.stax-app .tk-latency-mid  { color: var(--gold-hi); }
+.stax-app .tk-latency-high { color: var(--neg); }
+.stax-app .tk-latency-stale { color: var(--muted-2); }
+/* BTC chip in the topbar — hidden on desktop (top ticker carries BTC),
+   shown on mobile where the ticker is hidden. Higher specificity than
+   `.stax-app .pill` so it can override that rule's `display: flex`. */
+.stax-app .topbar .topbar-btc-pill { display: none; }
+@media (max-width: 768px) {
+  .stax-app .topbar .topbar-btc-pill { display: flex; }
+}
+.stax-app .tk-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  /* Content-sized so each [icon, sym, price, delta, chart] group stays
+     tight; the row's flex-wrap distributes any extra width as gap between
+     items rather than stretching individual items wide. */
+  flex: 0 0 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.stax-app .tk-sym { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; font-size: 11.5px; flex: 0 0 auto; }
+/* Sparkline sits IMMEDIATELY after the % delta — no margin-left:auto, which
+   was pushing the chart to the far right of its item and making it visually
+   associate with the next coin. */
+.stax-app .tk-spark { width: 42px; height: 16px; flex: 0 0 42px; opacity: 0.85; }
+.stax-app .tk-end { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; padding: 8px 14px; flex: 0 0 auto; justify-content: flex-end; min-width: 0; }
+.stax-app .tk-end .live { color: var(--pos); }
+@media (max-width: 1280px) {
+  .stax-app .tk-item .tk-spark { display: none; }
+}
+@media (max-width: 980px) {
+  .stax-app .tk-item { flex: 1 1 140px; }
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Settings page — left tab nav + right content panel
+   ─────────────────────────────────────────────────────────────────── */
+.stax-app .settings-wrap { padding: 4px 4px 24px; }
+.stax-app .settings-title { font-size: 22px; font-weight: 700; color: var(--text); margin: 0 0 24px; }
+.stax-app .settings-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+}
+@media (max-width: 768px) {
+  .stax-app .settings-grid { grid-template-columns: 1fr; gap: 12px; }
+}
+.stax-app .settings-nav {
+  display: flex; flex-direction: column; gap: 2px;
+}
+@media (max-width: 768px) {
+  .stax-app .settings-nav {
+    flex-direction: row; overflow-x: auto;
+    border-bottom: 1px solid var(--line); padding-bottom: 8px;
+  }
+  .stax-app .settings-nav .settings-tab span { display: inline; }
+}
+.stax-app .settings-tab {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px; font-weight: 500;
+  background: transparent; border: 0;
+  cursor: pointer; text-align: left; width: 100%;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.stax-app .settings-tab:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.stax-app.light .settings-tab:hover,
+html.light .stax-app .settings-tab:hover { background: rgba(0,0,0,0.04); }
+.stax-app .settings-tab.active {
+  color: var(--gold);
+  background: rgba(212,160,23,0.08);
+  font-weight: 600;
+}
+
+/* settings-card is now layered on top of .card card-pad — those provide
+   bg/border/gold-edge. We just override padding to give Settings a bit
+   more vertical breathing room than the dashboard's tighter card-pad. */
+.stax-app .settings-card { padding: 22px 24px; }
+.stax-app .settings-card-title { font-size: 16px; font-weight: 600; color: var(--text); margin: 0 0 16px; }
+.stax-app .settings-form { display: grid; gap: 16px; max-width: 460px; }
+.stax-app .settings-field { display: grid; gap: 6px; }
+.stax-app .settings-field-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.stax-app .settings-field-help { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.stax-app .settings-input {
+  width: 100%;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.12s;
+  font-family: inherit;
+}
+.stax-app.light .settings-input,
+html.light .stax-app .settings-input { background: rgba(0,0,0,0.02); }
+.stax-app .settings-input:focus { border-color: var(--gold); }
+.stax-app .settings-input[readonly] { opacity: 0.7; cursor: not-allowed; }
+.stax-app .settings-btn-primary {
+  background: var(--gold);
+  color: #08080D;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  transition: opacity 0.12s, background 0.12s;
+  font-family: inherit;
+}
+.stax-app .settings-btn-primary:hover:not(:disabled) { background: var(--gold-hi); }
+.stax-app .settings-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.stax-app .settings-btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s;
+}
+.stax-app .settings-btn-secondary:hover { color: var(--neg); border-color: var(--neg); }
+.stax-app .settings-help { font-size: 12px; color: var(--muted); }
+
+.stax-app .billing-status {
+  background: rgba(212,160,23,0.06);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.stax-app .billing-row { display: flex; gap: 8px; align-items: baseline; font-size: 14px; font-weight: 600; }
+.stax-app .billing-label { color: var(--text); }
+.stax-app .billing-plan { color: var(--gold); }
+.stax-app .billing-help { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.stax-app .bot-summary { display: grid; gap: 12px; }
+.stax-app .bot-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.stax-app.light .bot-row,
+html.light .stax-app .bot-row { background: rgba(0,0,0,0.02); }
+.stax-app .bot-row-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; }
+.stax-app .bot-row-value { font-size: 13px; font-weight: 600; color: var(--text); }
+.stax-app .bot-tier-pill {
+  display: inline-flex; align-items: center;
+  padding: 4px 10px;
+  background: rgba(212,160,23,0.12);
+  border: 1px solid rgba(212,160,23,0.4);
+  border-radius: 999px;
+  color: var(--gold);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+.stax-app .notif-list { display: grid; gap: 12px; }
+.stax-app .toggle-row {
+  display: flex; justify-content: space-between; gap: 16px; align-items: center;
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.stax-app.light .toggle-row,
+html.light .stax-app .toggle-row { background: rgba(0,0,0,0.02); }
+.stax-app .toggle-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.stax-app .toggle-help { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.stax-app .toggle-switch {
+  width: 38px; height: 22px;
+  background: var(--card-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+.stax-app .toggle-switch.on { background: var(--gold); border-color: var(--gold); }
+.stax-app .toggle-knob {
+  position: absolute; left: 2px; top: 50%;
+  transform: translateY(-50%);
+  width: 16px; height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: left 0.18s;
+}
+.stax-app .toggle-switch.on .toggle-knob { left: 18px; background: #08080D; }
+
+.stax-app .payout-method-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.stax-app .payout-method-card {
+  flex: 1 1 100px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.stax-app .payout-method-card:hover { border-color: var(--gold); color: var(--text); }
+.stax-app .payout-method-card.active {
+  background: rgba(212,160,23,0.08);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Backtesting page — strategy track record + tier picker + trade list
+   ─────────────────────────────────────────────────────────────────── */
+/* ─── Universal page wrapper ─────────────────────────────────────────────
+   Every route MUST start with <div className="stax-page">. Single source of
+   truth for page-level padding + vertical rhythm. Don't override the gap or
+   padding inline — if you need a tighter section, use a card-pad inside
+   instead. `.bt-wrap` is kept as a backwards-compat alias only. */
+.stax-app .stax-page,
+.stax-app .bt-wrap {
+  display: flex; flex-direction: column;
+  gap: 16px;
+  padding: 4px 4px 24px;
+}
+.stax-app .bt-header { padding: 0 4px; }
+.stax-app .bt-eyebrow {
+  font-size: 10.5px; letter-spacing: 0.16em; color: var(--gold);
+  font-weight: 600; text-transform: uppercase;
+  position: relative; padding-left: 28px;
+}
+.stax-app .bt-eyebrow::before {
+  content: ''; position: absolute; left: 0; top: 50%;
+  width: 18px; height: 1px; background: var(--gold);
+}
+.stax-app .bt-title { font-size: 32px; font-weight: 700; color: var(--text); margin: 12px 0 14px; line-height: 1.15; }
+/* Gradient applies to ONLY the accent word (e.g. "positions." / "performance.").
+   No italic — matches the Live Trading hero treatment 1:1 so both pages read
+   as one family. 90deg horizontal gradient with three gold stops. */
+.stax-app .bt-title-gold {
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-hi));
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.stax-app .bt-blurb { font-size: 13px; color: var(--muted); max-width: 900px; margin-bottom: 12px; line-height: 1.55; }
+.stax-app .bt-blurb strong { color: var(--text); font-weight: 600; }
+.stax-app .bt-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.stax-app .bt-fresh { display: inline-flex; align-items: center; gap: 6px; }
+.stax-app .dot-stale {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--neg);
+}
+
+.stax-app .bt-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+@media (max-width: 980px) { .stax-app .bt-metrics-row { grid-template-columns: repeat(2, 1fr); } }
+.stax-app .bt-metric {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.stax-app .bt-metric-label {
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); font-weight: 500; margin-bottom: 8px;
+}
+.stax-app .bt-metric-value { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.stax-app .bt-metric-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.stax-app .bt-tier-row {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 4px;
+}
+/* Segmented tier picker — glass container with 3 evenly-sized pills.
+   Each pill is the SAME height/padding regardless of active state; only
+   the background + text color flip. The container's blur lets the body's
+   gold radial peek through subtly. Rectangular shape (8px outer / 6px
+   inner) matches the sidebar nav items and Log/Linear chart toggle so the
+   page reads as one family of controls. */
+.stax-app .bt-tier-pills {
+  display: inline-flex;
+  background: rgba(14, 14, 19, 0.55);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 4px;
+  gap: 2px;
+}
+.stax-app.light .bt-tier-pills,
+html.light .stax-app .bt-tier-pills {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+.stax-app .bt-tier-pill {
+  background: transparent; border: 0; cursor: pointer;
+  padding: 8px 20px;
+  height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  transition: color 0.15s, background 0.15s;
+}
+.stax-app .bt-tier-pill:hover:not(.active) { color: var(--text); }
+.stax-app .bt-tier-pill.active {
+  /* Matches the bt-tier-tag look — translucent gold bg + gold border + gold text.
+     Unified with the rest of the site's pill/badge family. */
+  background: rgba(212, 160, 23, 0.12);
+  color: var(--gold);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  box-shadow: 0 0 12px rgba(212, 160, 23, 0.18);
+}
+.stax-app .bt-tier-meta { font-size: 12px; color: var(--muted); }
+
+/* Metrics / List of Trades view tabs — same glass pill pattern as the
+   tier picker so the two segmented controls feel like one family. Both
+   pills identical height/padding; only bg + text flip on active. */
+.stax-app .bt-view-tabs {
+  display: inline-flex;
+  background: rgba(14, 14, 19, 0.55);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 4px;
+  gap: 2px;
+  width: fit-content;
+}
+.stax-app.light .bt-view-tabs,
+html.light .stax-app .bt-view-tabs {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+.stax-app .bt-view-tab {
+  background: transparent; border: 0; cursor: pointer;
+  padding: 8px 18px;
+  height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  transition: all 0.15s;
+}
+.stax-app .bt-view-tab svg { width: 14px; height: 14px; }
+.stax-app .bt-view-tab.active {
+  background: rgba(212, 160, 23, 0.12);
+  color: var(--gold);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  box-shadow: 0 0 12px rgba(212, 160, 23, 0.18);
+}
+.stax-app .bt-view-tab:hover:not(.active) { color: var(--text); }
+
+/* bt-card is layered on .card card-pad — they provide the gold-edge
+   gradient + bg + border. We just retune the padding for backtesting
+   sections which want a bit more breathing room. */
+.stax-app .bt-card { padding: 20px 22px; }
+.stax-app .bt-card-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+.stax-app .bt-card-foot { font-size: 11px; color: var(--muted); margin-top: 8px; text-align: center; }
+.stax-app .bt-pagination {
+  display: flex; gap: 12px; align-items: center; justify-content: center;
+  padding: 12px 0 0;
+}
+
+/* List-of-trades filters — coin + side segment controls above the table.
+   Reuses the .bt-tier-pills/.bt-tier-pill family so all backtesting page
+   toggles share one shape. */
+.stax-app .bt-trades-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+  margin: 4px 0 14px;
+}
+.stax-app .bt-filter-group { display: flex; align-items: center; gap: 10px; }
+.stax-app .bt-filter-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+/* Price + timestamp stacked cell. Price is the existing num style (default
+   table size); timestamp sits below in muted 10.5px so the eye reads price
+   first, then context. The .sub variant covers the SIZE column where a
+   coin-units string sits under the dollar notional. */
+.stax-app .bt-price-cell { line-height: 1.2; }
+.stax-app .bt-price-cell .ts,
+.stax-app .bt-price-cell .sub {
+  display: block; margin-top: 2px;
+  font-size: 10.5px; color: var(--muted); font-weight: 400;
+  font-family: 'JetBrains Mono', monospace; letter-spacing: 0;
+}
+
+/* Open-trade label. Replaces exit price/timestamp on rows where the trade
+   is still live. Pulses opacity (no transform) so column width stays
+   stable. Gold matches the rest of the live-state language on the page. */
+.stax-app .bt-open-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--gold); font-weight: 700; font-size: 12px;
+  letter-spacing: 0.12em;
+  font-family: 'JetBrains Mono', monospace;
+  animation: stax-open-pulse 1.6s ease-in-out infinite;
+}
+.stax-app .bt-open-label .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 6px var(--gold);
+}
+@keyframes stax-open-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* Win/loss/open row tints. Very low alpha so the eye reads the tint as a
+   tier (positive / negative / live) without the bg fighting the price text.
+   Hover bumps the same colour up a notch instead of switching to a neutral
+   highlight, so the win/loss read survives. */
+.stax-app tr.bt-trade-win    > td { background-color: rgba(var(--pos-rgb), 0.11); }
+.stax-app tr.bt-trade-loss   > td { background-color: rgba(var(--neg-rgb), 0.11); }
+.stax-app tr.bt-trade-open   > td { background-color: rgba(212, 160, 23, 0.13); }
+.stax-app tr.bt-trade-win:hover  > td { background-color: rgba(var(--pos-rgb), 0.18); }
+.stax-app tr.bt-trade-loss:hover > td { background-color: rgba(var(--neg-rgb), 0.18); }
+.stax-app tr.bt-trade-open:hover > td { background-color: rgba(212, 160, 23, 0.20); }
+.stax-app.light tr.bt-trade-win    > td,
+html.light .stax-app tr.bt-trade-win    > td { background-color: rgba(var(--pos-rgb), 0.06); }
+.stax-app.light tr.bt-trade-loss   > td,
+html.light .stax-app tr.bt-trade-loss   > td { background-color: rgba(var(--neg-rgb), 0.06); }
+.stax-app.light tr.bt-trade-open   > td,
+html.light .stax-app tr.bt-trade-open   > td { background-color: rgba(212, 160, 23, 0.09); }
+
+/* Broker page bits */
+.stax-app .broker-link-row { display: flex; gap: 8px; align-items: stretch; }
+@media (max-width: 560px) { .stax-app .broker-link-row { flex-direction: column; } }
+.stax-app .broker-claim-row {
+  display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Backtesting page — section bits (atop the existing bt-* rules)
+   ─────────────────────────────────────────────────────────────────── */
+.stax-app .bt-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.stax-app .bt-card-bar {
+  display: inline-block; width: 4px; height: 14px;
+  background: var(--gold); border-radius: 2px;
+  vertical-align: middle; margin-right: 8px;
+}
+.stax-app .bt-card-title {
+  font-size: 11px; letter-spacing: 0.18em; color: var(--text);
+  text-transform: uppercase; font-weight: 700;
+  display: flex; align-items: center;
+}
+.stax-app .bt-card-sub { font-size: 11px; color: var(--muted); margin-bottom: 14px; }
+
+.stax-app .bt-tier-tag {
+  font-size: 10px; letter-spacing: 0.2em; color: var(--gold);
+  font-weight: 700; padding: 4px 10px;
+  background: rgba(212,160,23,0.1);
+  border: 1px solid rgba(212,160,23,0.3);
+  border-radius: 4px;
+}
+
+.stax-app .bt-twin-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 980px) { .stax-app .bt-twin-row { grid-template-columns: 1fr; } }
+
+/* Top metric cards (used in 5-up row) */
+.stax-app .bt-metric-card { padding: 16px 18px; }
+.stax-app .bt-metric-card .bt-metric-label {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--gold); margin-bottom: 12px;
+}
+
+/* Equity card scale toggle */
+.stax-app .bt-eq-card { padding: 18px 20px; }
+.stax-app .bt-scale-toggle {
+  display: inline-flex;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px;
+}
+.stax-app .bt-scale-toggle button {
+  background: transparent; border: 0; cursor: pointer;
+  padding: 4px 12px; font-size: 11px; font-weight: 600;
+  color: var(--muted); border-radius: 4px;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.stax-app .bt-scale-toggle button.on {
+  background: rgba(212, 160, 23, 0.12);
+  color: var(--gold);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  box-shadow: 0 0 10px rgba(212, 160, 23, 0.15);
+}
+.stax-app .bt-eq-legend {
+  display: flex; gap: 12px; margin-bottom: 6px; justify-content: center;
+}
+/* Legend items are buttons — click toggles series visibility. Faded `.off`
+   state strikes through the label and dims the swatch so the user can read
+   which series are currently shown. */
+.stax-app .bt-legend-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--muted);
+  background: transparent; border: 1px solid transparent;
+  padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; font-family: inherit;
+  transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.stax-app .bt-legend-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.stax-app.light .bt-legend-item:hover,
+html.light .stax-app .bt-legend-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+.stax-app .bt-legend-item.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+  text-decoration-color: var(--muted-2, var(--muted));
+}
+.stax-app .bt-legend-swatch {
+  display: inline-block; width: 14px; height: 3px; border-radius: 2px;
+}
+/* Dashed swatch matches the BTC B&H line style on the chart. */
+.stax-app .bt-legend-swatch-dashed {
+  width: 14px; height: 0; border-radius: 0;
+  border-top: 2px dashed rgba(212, 160, 23, 0.55);
+  background: transparent;
+}
+
+/* Equity-curve hover tooltip — HTML overlay so the date/labels/values use
+   real CSS layout (flexbox). The previous SVG-text version stretched
+   horizontally with the chart's preserveAspectRatio="none" and the values
+   ended up overlapping the labels at wide viewport widths. */
+.stax-app .bt-eq-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--card-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 10px 14px 11px;
+  min-width: 210px;
+  font-size: 11.5px;
+  z-index: 5;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  font-family: inherit;
+}
+.stax-app.light .bt-eq-tooltip,
+html.light .stax-app .bt-eq-tooltip {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.10);
+}
+.stax-app .bt-eq-tooltip-date {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.stax-app .bt-eq-tooltip-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 0;
+}
+.stax-app .bt-eq-tooltip-swatch {
+  width: 16px; height: 3px; border-radius: 2px;
+  flex: 0 0 16px;
+}
+.stax-app .bt-eq-tooltip-swatch-solid { background: var(--gold); }
+.stax-app .bt-eq-tooltip-swatch-dashed {
+  height: 0; border-radius: 0;
+  border-top: 2px dashed rgba(212, 160, 23, 0.55);
+  background: transparent;
+}
+.stax-app .bt-eq-tooltip-label {
+  color: var(--muted); font-weight: 500;
+  margin-right: 14px;
+}
+.stax-app .bt-eq-tooltip-value {
+  color: var(--gold); font-weight: 700;
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+  margin-left: auto;
+}
+.stax-app .bt-eq-tooltip-value.bh { color: rgba(212, 160, 23, 0.85); }
+.stax-app.light .bt-eq-tooltip-value.bh,
+html.light .stax-app .bt-eq-tooltip-value.bh { color: rgba(184, 134, 11, 0.85); }
+
+/* Per-asset breakdown scope tag */
+.stax-app .bt-scope-tag {
+  display: inline-block;
+  background: rgba(46,204,113,0.10);
+  border: 1px solid rgba(46,204,113,0.25);
+  color: var(--pos);
+  font-size: 10.5px; font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Profit Structure bars */
+.stax-app .bt-bar-wrap {
+  display: flex; gap: 32px; align-items: flex-end;
+  height: 240px; padding: 16px 24px;
+}
+.stax-app .bt-bar-col {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  height: 100%;
+}
+.stax-app .bt-bar {
+  width: 100%; max-width: 110px;
+  border-radius: 6px 6px 0 0;
+  margin-top: auto;
+  min-height: 4px;
+  transition: height 0.4s ease-out;
+}
+.stax-app .bt-bar-label {
+  font-size: 10.5px; color: var(--muted); margin-top: 10px;
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+}
+.stax-app .bt-bar-val {
+  font-size: 14px; font-weight: 700; margin-top: 2px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* PnL Distribution histogram */
+.stax-app .bt-hist {
+  display: flex; gap: 2px; align-items: flex-end;
+  height: 220px; padding: 16px 8px 0;
+}
+.stax-app .bt-hist-bar {
+  flex: 1; min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+.stax-app .bt-hist-bar:hover { opacity: 1; }
+.stax-app .bt-hist-axis {
+  display: flex; justify-content: space-between;
+  padding: 6px 8px 0;
+  font-size: 10.5px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Stat tables (Returns Summary / Trade Analysis / etc.) */
+.stax-app .bt-stat-table { width: 100%; border-collapse: collapse; }
+.stax-app .bt-stat-table thead th {
+  text-align: left;
+  font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.stax-app .bt-stat-table tbody td {
+  padding: 9px 6px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.stax-app .bt-stat-table tbody tr:last-child td { border-bottom: 0; }
+.stax-app .bt-stat-table tbody td:first-child { color: var(--muted); }
+
+/* Monthly returns heatmap */
+.stax-app .bt-monthly { width: 100%; border-collapse: separate; border-spacing: 4px; }
+.stax-app .bt-monthly thead th {
+  font-size: 10px; letter-spacing: 0.1em; color: var(--muted);
+  font-weight: 600; padding: 6px 4px;
+}
+.stax-app .bt-monthly-label {
+  font-size: 10px; letter-spacing: 0.1em; color: var(--muted);
+  font-weight: 600; padding: 6px;
+  text-transform: uppercase;
+}
+.stax-app .bt-monthly-cell {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  text-align: center;
+  font-size: 11.5px; font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 8px 6px;
+  border-radius: 8px;
+  min-width: 60px;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  /* Frosted-glass surface — vivid radial blob in ::before bleeds through. */
+  background: rgba(20, 20, 28, 0.32);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 1px 3px rgba(0, 0, 0, 0.30);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.stax-app .bt-monthly-cell::before {
+  content: '';
+  position: absolute;
+  inset: -35%;
+  z-index: -1;
+  filter: blur(14px);
+  opacity: calc(0.30 + var(--intensity, 0) * 0.65);
+  pointer-events: none;
+}
+.stax-app .bt-monthly-cell-win::before {
+  background: radial-gradient(
+    ellipse at 30% 35%,
+    #22c55e 0%,
+    #16a34a 40%,
+    transparent 72%
+  );
+}
+.stax-app .bt-monthly-cell-loss::before {
+  background: radial-gradient(
+    ellipse at 70% 65%,
+    #f87171 0%,
+    #dc2626 40%,
+    transparent 72%
+  );
+}
+.stax-app .bt-monthly-cell-empty {
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  text-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-color: rgba(255, 255, 255, 0.04);
+}
+.stax-app .bt-monthly-cell-empty::before { content: none; }
+.stax-app .bt-monthly-cell:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.stax-app.light .bt-monthly-cell,
+html.light .stax-app .bt-monthly-cell {
+  /* Light mode: no glass. Backdrop-blur + white wash + blurred radial blob
+     produced muddy mixed shades. Flat solid fills below — same red/green
+     tokens as the bars and pos-text/neg-text, alpha driven by --intensity. */
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(15, 20, 25, 0.92);
+  text-shadow: none;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.stax-app.light .bt-monthly-cell::before,
+html.light .stax-app .bt-monthly-cell::before { content: none; }
+.stax-app.light .bt-monthly-cell-win,
+html.light .stax-app .bt-monthly-cell-win {
+  /* Floor at 0.65 alpha so a +5% month already reads as solid green, not a
+     washed pale tint. Cap at 0.95 so dark text on the strongest cells still
+     has comfortable contrast. */
+  background-color: rgba(var(--pos-rgb), calc(0.65 + var(--intensity, 0) * 0.30));
+}
+.stax-app.light .bt-monthly-cell-loss,
+html.light .stax-app .bt-monthly-cell-loss {
+  background-color: rgba(var(--neg-rgb), calc(0.65 + var(--intensity, 0) * 0.30));
+}
+.stax-app.light .bt-monthly-cell-empty,
+html.light .stax-app .bt-monthly-cell-empty {
+  background: rgba(0, 0, 0, 0.025);
+  color: var(--muted);
+  border-color: rgba(0, 0, 0, 0.05);
+  box-shadow: none;
+}
+.stax-app.light .bt-monthly-cell:hover,
+html.light .stax-app .bt-monthly-cell:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Footer — visible on both desktop and mobile. Logo + tagline + links.
+   ─────────────────────────────────────────────────────────────────── */
+.stax-app .stax-footer {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 28px 16px 24px;
+  margin: 8px 14px 4px;
+  border-top: 0;
+}
+.stax-app .stax-footer-brand { display: flex; align-items: center; gap: 8px; }
+/* Size only — display is theme-controlled by .brand-mark-dark/.brand-mark-light. */
+.stax-app .stax-footer-mark { width: 24px; height: 24px; border-radius: 6px; }
+.stax-app .stax-footer-name {
+  font-size: 16px; font-weight: 700;
+  color: var(--text); letter-spacing: 0.02em;
+}
+.stax-app .stax-footer-tag { font-size: 12px; color: var(--muted); }
+.stax-app .stax-footer-links {
+  display: flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+}
+.stax-app .stax-footer-links a {
+  color: var(--muted); font-size: 12px; text-decoration: none;
+  transition: color 0.12s;
+}
+.stax-app .stax-footer-links a:hover { color: var(--gold); }
+
+/* ───────────────────────────────────────────────────────────────────
+   Mobile bottom nav — hidden by default, shown on mobile only.
+   Positioned fixed at viewport bottom; ports the v1 dashboard pattern
+   (client-dashboard.html ~line 10930) into v2.
+   ─────────────────────────────────────────────────────────────────── */
+.stax-app .mobile-bottom-nav {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0;
+  height: 60px;
+  background: rgba(13,13,20,0.98);
+  backdrop-filter: blur(18px);
+  z-index: 100;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 8px;
+  /* iOS safe-area: extra room above home-indicator. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  height: calc(60px + env(safe-area-inset-bottom, 0px));
+}
+.stax-app.light .mobile-bottom-nav,
+html.light .stax-app .mobile-bottom-nav {
+  background: rgba(255,255,255,0.97);
+}
+.stax-app .mb-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 10px; font-weight: 500;
+  padding: 6px 8px; border-radius: 8px;
+  transition: color 0.15s;
+  flex: 1 1 0;
+  text-align: center;
+}
+.stax-app .mb-item.active { color: var(--gold); }
+.stax-app .mb-item svg { width: 20px; height: 20px; }
+
+/* ───────────────────────────────────────────────────────────────────
+   Responsive layout
+   - Desktop ≥1281px: full sidebar + 4-col rows
+   - Tablet 1281-769px: 1-col hero, 2-col stats/bottom
+   - Mobile ≤768px: bottom nav, no sidebar, 2-col grids, fixed topbar
+   ─────────────────────────────────────────────────────────────────── */
+@media (max-width: 1280px) {
+  .stax-app .row-hero { grid-template-columns: 1fr; }
+  .stax-app .row-bottom { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 980px) {
+  .stax-app .row-stats { grid-template-columns: repeat(2, 1fr); }
+  .stax-app .row-tables { grid-template-columns: 1fr; }
+}
+
+/* Mobile breakpoint: hide sidebar, show bottom nav, brand in topbar. */
+@media (max-width: 768px) {
+  .stax-app .app-grid { grid-template-columns: 1fr; }
+  .stax-app .side { display: none; }
+  .stax-app .main { grid-column: 1; }
+
+  /* topbar: brand on left, controls on right.
+     Left padding kept tight (8px) so the logo sits flush with where the
+     content card edges land below it — feels properly anchored to the
+     leftmost content rail. */
+  .stax-app .topbar { padding: 10px 8px 10px 8px; gap: 8px; }
+  .stax-app .topbar-brand { display: flex; padding-left: 2px; }
+  .stax-app .desktop-only { display: none !important; }
+  .stax-app .mobile-only { display: inline-flex; }
+  .stax-app .topbar .pill { padding: 6px 10px; font-size: 12px; }
+  .stax-app .topbar .pill .num { font-size: 12px; }
+  .stax-app .topbar .icon-btn { width: 32px; height: 32px; }
+  .stax-app .topbar .seg button { padding: 5px 8px; }
+
+  /* Mobile nav appears, content needs space for it */
+  .stax-app .mobile-bottom-nav { display: flex; }
+  .stax-app .main {
+    /* leave room for bottom nav (60px) + safe-area, no ticker on mobile */
+    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Stack everything single-column on phones */
+  .stax-app .row-stats { grid-template-columns: repeat(2, 1fr); }
+  .stax-app .row-tables { grid-template-columns: 1fr; }
+  .stax-app .row-bottom { grid-template-columns: repeat(2, 1fr); }
+
+  /* Hide the inline ticker on mobile — too noisy in a small viewport.
+     The bottom nav becomes the navigation; price info lives in the topbar
+     pill (BTC) and individual asset cards. */
+  .stax-app .ticker { display: none; }
+
+  /* Tighter content padding for small viewports */
+  .stax-app .content { padding: 10px; gap: 10px; }
+  .stax-app .row { gap: 10px; }
+  .stax-app .hero-balance { font-size: 32px; }
+  .stax-app .bottom-card { min-height: 130px; }
+  .stax-app .bottom-val { font-size: 24px; }
+  .stax-app .stat-val { font-size: 20px; }
+
+  /* Streak dots fill width proportionally on mobile so they spread
+     evenly under the value. With 10 dots (now sourced from the data hook)
+     they fit cleanly even on narrow phones. */
+  .stax-app .streak-dots {
+    gap: 4px;
+    justify-content: space-between;
+    margin-top: 12px;
+    overflow: visible;
+    padding-right: 4px;
+  }
+  .stax-app .sd { width: 7px; height: 7px; flex: 0 0 7px; }
+
+  /* Leverage gauge on mobile: render BELOW the value (not absolute right)
+     so it doesn't overlap the digits. Smaller scale to fit the narrow card. */
+  .stax-app .lev-gauge {
+    position: static;
+    transform: none;
+    margin-top: 8px;
+    align-self: center;
+  }
+  .stax-app .lev-gauge svg { transform: scale(0.65); transform-origin: center center; }
+  .stax-app .lev-body { align-items: stretch !important; }
+
+  /* Hide non-essential table columns on mobile so the remaining columns
+     fit without horizontal scroll.
+       Open Positions: Pair · Side · Entry · P&L ($+%)
+       Recent Trades:  Pair · P&L ($+%) · Time
+     P&L $ and % are stacked in the same cell via .pnl-pct-stacked. */
+  .stax-app .hide-mobile { display: none !important; }
+  .stax-app .pnl-pct-stacked {
+    display: block;
+    font-size: 10px; font-weight: 500; opacity: 0.85;
+    margin-top: 1px;
+  }
+  /* Right-pad the visible last column so values don't kiss the card edge. */
+  .stax-app .table-scroll { padding: 0 4px 0 12px; }
+  .stax-app tbody td, .stax-app thead th { padding: 10px 6px; font-size: 11px; }
+  .stax-app tbody td:last-child, .stax-app thead th:last-child { padding-right: 12px; }
+
+  /* Footer compact on mobile */
+  .stax-app .stax-footer { padding: 24px 16px 18px; gap: 10px; margin: 4px 8px 0; }
+}
+
+/* Very small phones */
+@media (max-width: 380px) {
+  .stax-app .topbar-brand-name { display: none; }
+  .stax-app .topbar .pill { padding: 5px 8px; }
+  .stax-app .topbar .pill .num { font-size: 11px; }
+  .stax-app .row-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* scrollbar light touch */
+.stax-app ::-webkit-scrollbar { height: 8px; width: 8px; }
+.stax-app ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
