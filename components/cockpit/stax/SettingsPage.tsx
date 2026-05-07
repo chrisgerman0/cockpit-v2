@@ -69,14 +69,16 @@ export function SettingsContent() {
             )
           })}
         </nav>
-        <div className="settings-panel">
-          {tab === 'profile'       && <ProfilePanel />}
-          {tab === 'billing'       && <BillingPanel />}
-          {tab === 'bot'           && <BotPanel />}
-          {tab === 'notifications' && <NotificationsPanel />}
-          {tab === 'security'      && <SecurityPanel />}
-          {tab === 'payout'        && <PayoutPanel />}
-        </div>
+        {/* All panels stay mounted — toggling display instead of conditional
+            render means switching tabs is instant (no useEffect refetch).
+            Mirrors v1 client-dashboard.html which keeps all .settings-panel
+            divs in the DOM and just flips display:none/block. */}
+        <div className="settings-panel"><div style={{ display: tab === 'profile'       ? 'block' : 'none' }}><ProfilePanel /></div>
+        <div style={{ display: tab === 'billing'       ? 'block' : 'none' }}><BillingPanel /></div>
+        <div style={{ display: tab === 'bot'           ? 'block' : 'none' }}><BotPanel /></div>
+        <div style={{ display: tab === 'notifications' ? 'block' : 'none' }}><NotificationsPanel /></div>
+        <div style={{ display: tab === 'security'      ? 'block' : 'none' }}><SecurityPanel /></div>
+        <div style={{ display: tab === 'payout'        ? 'block' : 'none' }}><PayoutPanel /></div></div>
       </div>
     </div>
   )
