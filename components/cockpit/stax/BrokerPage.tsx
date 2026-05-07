@@ -172,15 +172,30 @@ function TierIcon({ kind, size = 22 }: { kind: typeof TIERS[number]['icon']; siz
   return <IconGem size={size} />
 }
 
+// ─── Empty default — page renders instantly against this; real data swaps in ─
+
+const EMPTY_BROKER_DATA: BrokerData = {
+  broker: { name: '', split_pct: 20, status: 'approved', referral_code: null },
+  summary: {
+    total_users: 0, active_users: 0, total_capital: 0,
+    total_pnl_cents: 0, total_fees_cents: 0,
+    total_earnings_cents: 0, pending_cents: 0, paid_cents: 0, failed_cents: 0,
+    last_payout_date: null,
+  },
+  users: [],
+  payouts: [],
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 
 export function BrokerContent() {
   const isPt = getCurrentLang() === 'PT'
   const tt = (en: string, pt: string) => (isPt ? pt : en)
 
-  const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<BrokerData | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // data is ALWAYS present — starts empty, fills in when API resolves. No loading
+  // gate, no banner card. Matches the StaxDashboardContent / LiveTradingContent
+  // pattern (DESIGN_SYSTEM.md §3.10 in handover_2026-05-02.md).
+  const [data, setData] = useState<BrokerData>(EMPTY_BROKER_DATA)
   const [copied, setCopied] = useState(false)
   const [payoutAmount, setPayoutAmount] = useState('')
   const [payoutLoading, setPayoutLoading] = useState(false)
@@ -192,21 +207,20 @@ export function BrokerContent() {
     let cancelled = false
     ;(async () => {
       try {
-        const r = await authedFetch('/api/broker/dashboard')
-        if (!r.ok) throw new Error(r.status === 403 ? 'not-broker' : `status ${r.status}`)
-        const j = (await r.json()) as BrokerData
+        // authedFetch returns the parsed JSON body directly (or throws on non-2xx).
+        const j = await authedFetch<BrokerData>('/api/broker/dashboard')
         if (!cancelled) setData(j)
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'fetch-failed')
-      } finally {
-        if (!cancelled) setLoading(false)
+      } catch {
+        // Auto-approved system: a 403 here means an unprovisioned account, not
+        // a legitimate gate. Render the page with zero values rather than
+        // bouncing the user. Auth errors fall through to the layout's guard.
       }
     })()
     return () => { cancelled = true }
   }, [])
 
-  const splitPct = data?.broker.split_pct ?? 20
-  const referralCode = data?.broker.referral_code || 'STAXS'
+  const splitPct = data.broker.split_pct || 20
+  const referralCode = data.broker.referral_code || 'BRK-XXXXX'
   const referralLink = `https://staxs.ai/?ref=${referralCode}`
 
   const handleCopy = useCallback(() => {
@@ -225,61 +239,23 @@ export function BrokerContent() {
     setPayoutLoading(true)
     setPayoutMsg(null)
     try {
-      const r = await authedFetch('/api/broker/request-payout', {
+      // authedFetch throws on non-2xx with the body included in the message.
+      await authedFetch('/api/broker/request-payout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: amt }),
       })
-      const j = await r.json().catch(() => ({} as any))
-      if (r.ok) {
-        setPayoutMsg({ ok: true, text: tt('Payout request submitted!', 'Solicitação enviada!') })
-        setPayoutAmount('')
-      } else {
-        setPayoutMsg({ ok: false, text: j?.error || tt('Request failed', 'Falha na solicitação') })
-      }
-    } catch {
-      setPayoutMsg({ ok: false, text: tt('Network error', 'Erro de rede') })
+      setPayoutMsg({ ok: true, text: tt('Payout request submitted!', 'Solicitação enviada!') })
+      setPayoutAmount('')
+    } catch (e: any) {
+      // Pull out the server's error message if the body was JSON-shaped.
+      const raw = String(e?.message || '')
+      let serverMsg: string | undefined
+      const m = raw.match(/\{.*\}/)
+      if (m) { try { serverMsg = JSON.parse(m[0])?.error } catch {} }
+      setPayoutMsg({ ok: false, text: serverMsg || tt('Request failed', 'Falha na solicitação') })
     } finally {
       setPayoutLoading(false)
     }
-  }
-
-  // ── Loading
-  if (loading) {
-    return (
-      <div className="stax-page">
-        <div className="card card-pad" style={{ textAlign: 'center', color: 'var(--muted)' }}>
-          {tt('Loading…', 'Carregando…')}
-        </div>
-      </div>
-    )
-  }
-
-  // ── Empty / error (auto-approved system: API may still 403 for fresh accounts)
-  if (error === 'not-broker' || !data) {
-    return (
-      <div className="stax-page">
-        <div className="bt-header" style={{ marginBottom: 14 }}>
-          <div className="bt-eyebrow">{tt('BROKER PROGRAM', 'PROGRAMA DE PARCEIROS')}</div>
-          <h1 className="bt-title">
-            {tt('Refer and ', 'Indique e ')}
-            <span className="bt-title-gold">{tt('earn.', 'ganhe.')}</span>
-          </h1>
-          <p className="bt-blurb">
-            {tt(
-              'Share Staxs with your contacts and earn a share of every fee they pay. Auto-approved — no application needed.',
-              'Compartilhe Staxs com seus contatos e ganhe parte de cada taxa que pagarem. Aprovação automática — não precisa pedir.'
-            )}
-          </p>
-        </div>
-        <div className="card card-pad" style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-          {tt(
-            'Connect your Staxs account and your referral code will appear here.',
-            'Conecte sua conta Staxs e seu código de indicação aparecerá aqui.'
-          )}
-        </div>
-      </div>
-    )
   }
 
   const s = data.summary
