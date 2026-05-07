@@ -2331,6 +2331,42 @@ html.light .stax-app .bw-proj-stat { background: rgba(0,0,0,0.02); }
   margin-top: 6px; line-height: 1.5;
 }
 
+.stax-app .bw-proj-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin-bottom: 4px;
+}
+.stax-app .bw-proj-head svg { color: var(--gold); cursor: help; }
+
+/* Tone classes on projected stat cards — reuse the dashboard's pos/neg vars. */
+.stax-app .bw-proj-stat-val.pos-text { color: var(--pos); }
+.stax-app .bw-proj-stat-val.neg-text { color: var(--neg); }
+
+/* Equity Curve card inside Step 1 */
+.stax-app .bw-equity-card {
+  margin-top: 4px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.stax-app.light .bw-equity-card,
+html.light .stax-app .bw-equity-card { background: rgba(0,0,0,0.02); }
+.stax-app .bw-equity-head {
+  font-size: 11px; font-weight: 600; color: var(--text);
+  margin-bottom: 8px;
+}
+.stax-app .bw-equity-chart {
+  position: relative;
+  height: 160px;
+}
+.stax-app .bw-equity-foot {
+  text-align: center;
+  margin-top: 8px;
+  font-size: 10.5px; color: var(--muted);
+}
+.stax-app .bw-equity-foot strong { color: var(--text); font-weight: 600; }
+
 /* Step 2 — Capital */
 .stax-app .bw-cap-row {
   display: flex; gap: 12px; align-items: flex-end;
@@ -2532,6 +2568,181 @@ html.light .stax-app .bw-review-card { background: rgba(0,0,0,0.02); }
 }
 .stax-app .bw-btn-secondary:hover:not(:disabled) { background: var(--gold-hi); }
 .stax-app .bw-btn-secondary:disabled { opacity: 0.5; cursor: progress; }
+
+/* ── Billing — port of v1 #settings-billing layout ────────────────── */
+
+.stax-app .bp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px; gap: 12px; flex-wrap: wrap;
+}
+.stax-app .bp-title {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  margin: 0; letter-spacing: -0.01em;
+}
+.stax-app .bp-subtitle {
+  font-size: 12.5px; color: var(--muted); margin: 4px 0 0;
+}
+.stax-app .bp-vip-badge {
+  background: linear-gradient(135deg, rgba(212,160,23,0.15), rgba(212,160,23,0.05));
+  border: 1px solid rgba(212,160,23,0.40);
+  color: var(--gold);
+  font-size: 11px; font-weight: 700;
+  padding: 4px 12px; border-radius: 999px;
+  letter-spacing: 0.05em;
+}
+
+.stax-app .bp-card {} /* spacing handled by parent gap */
+
+.stax-app .bp-eyebrow {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.18em;
+  margin-bottom: 12px;
+}
+.stax-app .bp-eyebrow-gold { color: var(--gold); }
+
+/* Plan card */
+.stax-app .bp-plan-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.stax-app .bp-plan-name { font-size: 18px; font-weight: 700; color: var(--text); }
+.stax-app .bp-plan-details {
+  font-size: 13px; color: var(--text); line-height: 1.6;
+}
+
+.stax-app .bp-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 6px;
+  display: inline-block;
+  white-space: nowrap;
+}
+.stax-app .bp-badge-gold {
+  background: rgba(212,160,23,0.10);
+  color: var(--gold);
+  border: 1px solid rgba(212,160,23,0.25);
+}
+.stax-app .bp-badge-pos {
+  background: rgba(46,204,113,0.10);
+  color: var(--pos);
+  border: 1px solid rgba(46,204,113,0.25);
+}
+.stax-app .bp-badge-neg {
+  background: rgba(255,77,79,0.10);
+  color: var(--neg);
+  border: 1px solid rgba(255,77,79,0.25);
+}
+.stax-app .bp-badge-locked {
+  background: rgba(255,77,79,0.06);
+  color: #f87171;
+  border: 1px solid rgba(255,77,79,0.20);
+}
+
+/* Period card */
+.stax-app .bp-period-dates {
+  font-size: 13px; color: var(--muted); margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.stax-app .bp-period-status {
+  font-size: 11px; font-weight: 700;
+}
+.stax-app .bp-status-open     { color: var(--pos); }
+.stax-app .bp-status-locked   { color: var(--gold); }
+.stax-app .bp-status-invoiced { color: #3b82f6; }
+.stax-app .bp-status-paid     { color: var(--pos); }
+
+.stax-app .bp-period-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 720px) { .stax-app .bp-period-grid { grid-template-columns: 1fr; } }
+
+.stax-app .bp-cell {
+  padding: 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.stax-app.light .bp-cell,
+html.light .stax-app .bp-cell { background: rgba(0,0,0,0.02); }
+.stax-app .bp-cell-label {
+  font-size: 11px; color: var(--muted); margin-bottom: 4px;
+}
+.stax-app .bp-cell-val {
+  font-size: 16px; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.stax-app .bp-tone-text   { color: var(--text); }
+.stax-app .bp-tone-muted  { color: var(--muted); }
+.stax-app .bp-tone-pos    { color: var(--pos); }
+.stax-app .bp-tone-neg    { color: var(--neg); }
+.stax-app .bp-tone-gold   { color: var(--gold); }
+
+.stax-app .bp-fee-explainer {
+  margin-top: 16px; padding: 12px;
+  background: rgba(212,160,23,0.04);
+  border: 1px solid rgba(212,160,23,0.12);
+  border-radius: 8px;
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+}
+.stax-app .bp-fee-explainer strong { color: var(--text); }
+
+/* VIP financial summary */
+.stax-app .bp-vip-summary {
+  border: 1px solid rgba(212,160,23,0.25);
+  background: linear-gradient(135deg, rgba(212,160,23,0.03), transparent);
+}
+.stax-app .bp-vip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 720px) { .stax-app .bp-vip-grid { grid-template-columns: 1fr; } }
+.stax-app .bp-vip-cell {
+  padding: 14px;
+  background: rgba(212,160,23,0.03);
+  border: 1px solid rgba(212,160,23,0.12);
+  border-radius: 8px;
+  text-align: center;
+}
+.stax-app .bp-vip-cell-label {
+  font-size: 10px; letter-spacing: 0.18em; color: var(--gold);
+  text-transform: uppercase; font-weight: 600;
+  margin-bottom: 6px;
+}
+.stax-app .bp-vip-cell-val {
+  font-size: 20px; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* History table */
+.stax-app .bp-history { width: 100%; border-collapse: collapse; }
+.stax-app .bp-history thead th {
+  padding: 10px 12px; text-align: left;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stax-app .bp-history tbody td {
+  padding: 10px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.stax-app.light .bp-history tbody td,
+html.light .stax-app .bp-history tbody td { border-bottom: 1px solid rgba(0,0,0,0.04); }
+.stax-app .bp-history tbody tr:last-child td { border-bottom: 0; }
+
+.stax-app .bp-status-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%; margin-right: 6px;
+  vertical-align: middle;
+}
+.stax-app .bp-status-dot-open     { background: var(--pos); }
+.stax-app .bp-status-dot-locked   { background: var(--gold); }
+.stax-app .bp-status-dot-invoiced { background: #3b82f6; }
+.stax-app .bp-status-dot-paid     { background: var(--pos); }
+.stax-app .bp-status-dot-failed   { background: var(--neg); }
 
 /* scrollbar light touch */
 .stax-app ::-webkit-scrollbar { height: 8px; width: 8px; }

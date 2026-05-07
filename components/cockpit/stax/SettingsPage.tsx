@@ -218,16 +218,29 @@ type BillingData = {
   plan: BillingPlan | null
   currentPeriod: BillingPeriod | null
   history: BillingHistoryEntry[]
+  profile?: { isVip?: boolean; isBroker?: boolean }
 }
 
-const fmtUsd = (cents: number) =>
-  '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
+// Same formatters as v1 client-dashboard.html — signed prefix on PnL, abs on
+// fee/charge cells, en-GB date for "01 May 2026", en-US for "May 2026".
+const fmtCents = (cents: number | null | undefined) => {
+  if (cents == null) return '—'
+  const val = Math.abs(cents) / 100
+  const prefix = cents < 0 ? '-' : cents > 0 ? '+' : ''
+  return prefix + '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+const fmtCentsAbs = (cents: number | null | undefined) => {
+  if (cents == null) return '—'
+  return '$' + (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: '2-digit' })
+  new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+const fmtMonthYear = (ts: string | null | undefined) => {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
 
 function BillingPanel() {
-  const t = useT()
   const [data, setData] = useState<BillingData | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -238,7 +251,7 @@ function BillingPanel() {
         const j = await authedFetch<BillingData>('/api/billing')
         if (!cancelled) setData(j)
       } catch {
-        if (!cancelled) setData({ plan: null, currentPeriod: null, history: [] })
+        if (!cancelled) setData(null)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -246,149 +259,210 @@ function BillingPanel() {
     return () => { cancelled = true }
   }, [])
 
-  const plan = data?.plan
-  const period = data?.currentPeriod
-  const isPerf = plan?.type === 'performance'
-  const periodOverdue = period
-    ? new Date(period.endTs).getTime() < Date.now() && period.status === 'open'
-    : false
+  if (loading) return <div className="card card-pad settings-card"><div className="settings-help">Loading…</div></div>
+  if (!data) return <div className="card card-pad settings-card"><div className="settings-help">Unable to load billing.</div></div>
 
-  // Days remaining until end_ts (negative if overdue)
-  const daysLeft = period
-    ? Math.ceil((new Date(period.endTs).getTime() - Date.now()) / 86400_000)
-    : 0
+  const plan = data.plan
+  const cp = data.currentPeriod
+  const isVip = !!data.profile?.isVip
+  const isPerf = plan?.type === 'performance'
+
+  // Plan card content — verbatim copy from v1 client-dashboard.html
+  // window._loadBillingSettings(). Same conditionals, same copy.
+  const planName = !plan
+    ? 'No Plan Selected'
+    : isVip
+      ? 'Performance Plan — Partner Account'
+      : `${plan.name} Plan`
+
+  const planBadge = !plan ? (
+    <span className="bp-badge bp-badge-neg">Not Active</span>
+  ) : isVip ? (
+    <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+      <span className="bp-badge bp-badge-gold">{plan.perfFeePct}% Performance Fee</span>
+      <span className="bp-badge bp-badge-locked">🔒 Locked</span>
+    </span>
+  ) : plan.type === 'flat' ? (
+    <span className="bp-badge bp-badge-pos">${plan.priceCents / 100}/mo</span>
+  ) : (
+    <span className="bp-badge bp-badge-gold">{plan.perfFeePct}% Performance Fee</span>
+  )
+
+  const planDetails = !plan ? (
+    isVip
+      ? 'Your Performance Plan is being set up — please contact support if this persists.'
+      : 'Select a plan to start trading.'
+  ) : isVip ? (
+    <>Partner account — enrolled in Performance Plan. {plan.perfFeePct}% fee on realized profits.<br />Plan is fixed and cannot be changed.</>
+  ) : plan.type === 'flat' ? (
+    <>Fixed monthly subscription. No performance fees apply.<br />Your trading profits are 100% yours.</>
+  ) : (
+    <>
+      No monthly subscription. {plan.perfFeePct}% fee on realized profits per billing period.
+      <br />If a period is negative, you pay nothing. Each period stands on its own.
+      {(plan as any).lockedUntil ? <><br /><span style={{ color: 'var(--muted)', fontSize: 11 }}>Plan locked until {fmtDate((plan as any).lockedUntil)}</span></> : null}
+    </>
+  )
+
+  // Status pill — same labels/colours as v1 #billingPeriodDates2.
+  const statusPill = !cp ? null : (() => {
+    const map: Record<string, { lbl: string; cls: string }> = {
+      open:     { lbl: '● Active',    cls: 'bp-status-open' },
+      locked:   { lbl: '🔒 Locked',   cls: 'bp-status-locked' },
+      invoiced: { lbl: '📧 Invoiced', cls: 'bp-status-invoiced' },
+      paid:     { lbl: '✅ Paid',     cls: 'bp-status-paid' },
+    }
+    const m = map[cp.status] || { lbl: cp.status, cls: 'bp-status-locked' }
+    return <span className={'bp-period-status ' + m.cls}>{m.lbl}</span>
+  })()
+
+  // 6-cell metrics grid — verbatim labels/order from v1.
+  const periodCells = cp ? [
+    { label: 'Starting Balance', value: fmtCentsAbs(cp.startingBalanceCents), tone: 'text' as const },
+    { label: 'Trades This Period', value: String(cp.tradeCount ?? 0), tone: 'text' as const },
+    { label: 'Realized PnL', value: fmtCents(cp.grossPnlCents), tone: cp.grossPnlCents >= 0 ? 'pos' as const : 'neg' as const },
+    {
+      label: isPerf ? `Performance Fee (${plan?.perfFeePct}%)` : 'Fee',
+      value: isPerf ? fmtCentsAbs(cp.feeAmountCents) : '$0.00',
+      tone: cp.feeAmountCents > 0 ? 'gold' as const : 'muted' as const,
+    },
+    { label: 'Net After Fee', value: fmtCents(cp.netAfterFeeCents), tone: cp.netAfterFeeCents >= 0 ? 'pos' as const : 'neg' as const },
+    {
+      label: isPerf && cp.status === 'open' ? 'Estimated Charge' : 'Final Charge',
+      value: cp.feeAmountCents > 0 ? fmtCentsAbs(cp.feeAmountCents) : '$0.00',
+      tone: cp.feeAmountCents > 0 ? 'neg' as const : 'muted' as const,
+    },
+  ] : []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-      {/* ── Current plan ────────────────────────────────────────────── */}
-      <div className="card card-pad">
-        <div className="bt-card-head">
-          <div className="bt-card-title"><span className="bt-card-bar" />CURRENT PLAN</div>
+      <div className="bp-header">
+        <div>
+          <h2 className="bp-title">Billing</h2>
+          <p className="bp-subtitle">Your plan, fees, and billing history</p>
         </div>
-        {loading ? (
-          <div className="settings-help">{t('common.loading')}</div>
-        ) : !plan ? (
-          <div className="settings-help">No plan assigned. Contact support.</div>
-        ) : (
-          <div className="bot-summary">
-            <BotRow label="Plan" value={<span className="bot-tier-pill">{plan.name}</span>} />
-            <BotRow label="Type" value={plan.type === 'performance' ? 'Performance fee' : 'Flat subscription'} />
-            {isPerf
-              ? <BotRow label="Performance fee" value={`${plan.perfFeePct}% on net profits`} />
-              : <BotRow label="Subscription" value={`${fmtUsd(plan.priceCents)}/month`} />
-            }
-            {plan.minBalanceCents > 0 ? (
-              <BotRow label="Minimum balance" value={fmtUsd(plan.minBalanceCents)} />
-            ) : null}
-          </div>
-        )}
+        {isVip ? <span className="bp-vip-badge">⭐ VIP CLIENT</span> : null}
       </div>
 
-      {/* ── Current period ──────────────────────────────────────────── */}
-      <div className="card card-pad">
-        <div className="bt-card-head">
-          <div className="bt-card-title"><span className="bt-card-bar" />CURRENT BILLING PERIOD</div>
-          {period ? (
-            <span className={'badge ' + (period.status === 'open' ? 'badge-long' : 'badge-short')}>
-              {period.status.toUpperCase()}
-            </span>
-          ) : null}
+      {/* Current Plan card */}
+      <div className="card card-pad bp-card">
+        <div className="bp-plan-head">
+          <div>
+            <div className="bp-eyebrow">Current Plan</div>
+            <div className="bp-plan-name">{planName}</div>
+          </div>
+          <div>{planBadge}</div>
         </div>
-        {loading ? (
-          <div className="settings-help">{t('common.loading')}</div>
-        ) : !period ? (
-          <div className="settings-help">No active period yet. Your first period opens after activation.</div>
+        <div className="bp-plan-details">{planDetails}</div>
+      </div>
+
+      {/* Current Billing Period card */}
+      <div className="card card-pad bp-card">
+        <div className="bp-eyebrow">Current Billing Period</div>
+        {!cp ? (
+          <>
+            <div className="bp-period-dates">No active billing period</div>
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)', fontSize: 12.5 }}>
+              Select a plan to start your first billing period
+            </div>
+          </>
         ) : (
           <>
-            <div className="bot-summary">
-              <BotRow label="Period" value={`${fmtDate(period.startTs)} → ${fmtDate(period.endTs)}`} />
-              <BotRow
-                label="Days remaining"
-                value={
-                  <span className={periodOverdue ? 'neg-text' : ''}>
-                    {periodOverdue ? `${Math.abs(daysLeft)} days overdue` : `${daysLeft} days`}
-                  </span>
-                }
-              />
-              <BotRow label="Trades closed" value={String(period.tradeCount ?? 0)} />
-              <BotRow
-                label="Realised PnL"
-                value={
-                  <span className={period.grossPnlCents > 0 ? 'pos-text' : period.grossPnlCents < 0 ? 'neg-text' : ''}>
-                    {period.grossPnlCents >= 0 ? '+' : ''}{fmtUsd(period.grossPnlCents)}
-                  </span>
-                }
-              />
-              {isPerf ? (
-                <>
-                  <BotRow label={`Estimated fee (${plan?.perfFeePct}%)`} value={fmtUsd(period.feeAmountCents)} />
-                  <BotRow
-                    label="Net after fee"
-                    value={
-                      <span className={period.netAfterFeeCents > 0 ? 'pos-text' : period.netAfterFeeCents < 0 ? 'neg-text' : ''}>
-                        {period.netAfterFeeCents >= 0 ? '+' : ''}{fmtUsd(period.netAfterFeeCents)}
-                      </span>
-                    }
-                  />
-                </>
-              ) : null}
+            <div className="bp-period-dates">
+              {fmtMonthYear(cp.startTs)}{statusPill}
             </div>
-            {periodOverdue ? (
-              <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.22)', borderRadius: 8, fontSize: 12, color: 'var(--neg)' }}>
-                ⚠ This period was due to lock on {fmtDate(period.endTs)}. The billing scheduler may need to roll it over — contact support if the next period doesn't open within 24h.
-              </div>
-            ) : null}
+            <div className="bp-period-grid">
+              {periodCells.map((c, i) => (
+                <div key={i} className="bp-cell">
+                  <div className="bp-cell-label">{c.label}</div>
+                  <div className={'bp-cell-val num bp-tone-' + c.tone}>{c.value}</div>
+                </div>
+              ))}
+            </div>
             {isPerf ? (
-              <div className="settings-help" style={{ marginTop: 12, lineHeight: 1.55 }}>
-                The {plan?.perfFeePct}% performance fee only applies when net realised PnL is positive at period close. Open trades don't count until they close. The fee is estimated live as trades close — final amount is computed and invoiced when the period locks.
+              <div className="bp-fee-explainer">
+                {cp.grossPnlCents > 0 ? (
+                  <>
+                    💡 <strong>How your fee is calculated:</strong> {plan?.perfFeePct}% of your realized profit for this billing period.<br />
+                    Profit: {fmtCents(cp.grossPnlCents)} × {plan?.perfFeePct}% = <strong>{fmtCentsAbs(cp.feeAmountCents)}</strong>
+                    {cp.status === 'open' ? <><br /><em>This is an estimate. Final fee is locked at period close.</em></> : null}
+                  </>
+                ) : (
+                  <>💡 This period has no realized profit, so <strong>no performance fee</strong> applies. Each billing period is independent — past losses don't carry forward.</>
+                )}
+              </div>
+            ) : plan?.type === 'flat' ? (
+              <div className="bp-fee-explainer">
+                💡 You're on the <strong>Subscription</strong> plan (${plan.priceCents / 100}/mo). No performance fees — your profits are 100% yours. Subscription is billed separately via Stripe.
               </div>
             ) : null}
           </>
         )}
       </div>
 
-      {/* ── History ─────────────────────────────────────────────────── */}
-      {!loading && data && data.history.length > 0 ? (
-        <div className="card card-pad">
-          <div className="bt-card-head">
-            <div className="bt-card-title"><span className="bt-card-bar" />HISTORY</div>
-          </div>
-          <div className="table-scroll">
-            <table className="bt-stat-table">
-              <thead>
-                <tr>
-                  <th>Period</th>
-                  <th>Plan</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Gross PnL</th>
-                  <th style={{ textAlign: 'right' }}>Fee</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.history.map(h => (
-                  <tr key={h.id}>
-                    <td>{fmtDate(h.startTs)} → {fmtDate(h.endTs)}</td>
-                    <td>{h.planName}</td>
-                    <td>
-                      <span className={'badge ' + (h.status === 'paid' ? 'badge-long' : 'badge-short')}>
-                        {h.status}
-                      </span>
-                    </td>
-                    <td className={'num'} style={{ textAlign: 'right' }}>
-                      {h.grossPnlCents >= 0 ? '+' : ''}{fmtUsd(h.grossPnlCents)}
-                    </td>
-                    <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(h.feeAmountCents)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* VIP Financial Summary (broker-referred users only) */}
+      {isVip && cp ? (
+        <div className="card card-pad bp-card bp-vip-summary">
+          <div className="bp-eyebrow bp-eyebrow-gold">⭐ VIP Financial Summary</div>
+          <div className="bp-vip-grid">
+            <VipCell label="Current Period Profit" value={fmtCents(cp.grossPnlCents)} tone={cp.grossPnlCents >= 0 ? 'pos' : 'neg'} />
+            <VipCell label="Our Fee" value={cp.feeAmountCents > 0 ? fmtCentsAbs(cp.feeAmountCents) : '$0.00'} tone="gold" />
+            <VipCell label="Your Net" value={fmtCents(cp.netAfterFeeCents)} tone={cp.netAfterFeeCents >= 0 ? 'pos' : 'neg'} />
           </div>
         </div>
       ) : null}
+
+      {/* Billing History table — Period / Plan / PnL / Fee / Net / Status */}
+      <div className="card card-pad bp-card">
+        <div className="bp-eyebrow">Billing History</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="bp-history">
+            <thead>
+              <tr>
+                <th>Period</th>
+                <th>Plan</th>
+                <th style={{ textAlign: 'right' }}>PnL</th>
+                <th style={{ textAlign: 'right' }}>Fee</th>
+                <th style={{ textAlign: 'right' }}>Net</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.history.length === 0 ? (
+                <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>No billing history yet</td></tr>
+              ) : data.history.map(h => {
+                const net = h.grossPnlCents - h.feeAmountCents
+                const labels: Record<string, string> = { open: 'Active', locked: 'Locked', invoiced: 'Invoiced', paid: 'Paid', failed: 'Failed' }
+                return (
+                  <tr key={h.id}>
+                    <td>{fmtMonthYear(h.startTs)}</td>
+                    <td style={{ color: 'var(--muted)' }}>{h.planName || '—'}</td>
+                    <td className={'num ' + (h.grossPnlCents >= 0 ? 'pos-text' : 'neg-text')} style={{ textAlign: 'right' }}>{fmtCents(h.grossPnlCents)}</td>
+                    <td className="num" style={{ textAlign: 'right', color: h.feeAmountCents > 0 ? 'var(--gold)' : 'var(--muted)' }}>
+                      {h.feeAmountCents > 0 ? fmtCentsAbs(h.feeAmountCents) : '$0'}
+                    </td>
+                    <td className={'num ' + (net >= 0 ? 'pos-text' : 'neg-text')} style={{ textAlign: 'right' }}>{fmtCents(net)}</td>
+                    <td><span className={'bp-status-dot bp-status-dot-' + h.status} />{labels[h.status] || h.status}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
+
+function VipCell({ label, value, tone }: { label: string; value: string; tone: 'pos' | 'neg' | 'gold' }) {
+  return (
+    <div className="bp-vip-cell">
+      <div className="bp-vip-cell-label">{label}</div>
+      <div className={'bp-vip-cell-val num bp-tone-' + tone}>{value}</div>
+    </div>
+  )
+}
+
 
 // ─── Bot ────────────────────────────────────────────────────────────────────
 // Reads /api/bot-activate (GET) → { activated, config } sourced from Supabase
@@ -518,11 +592,93 @@ function BotPanel() {
 // Tier multipliers (TIER_RATIOS): 0.5× / 1.0× / 1.5× of balance.
 // SL is 4% across all tiers. Bitget leverage cap is set per tier (4/10/20×).
 
+// Backtest stats per tier — all from the 8-year Satoshi Stacker portfolio.
+// Win rate / total trades / profit factor / months profitable are tier-
+// independent (same strategy on every asset). Returns + drawdown + avg
+// win/loss scale with the tier multiplier.
 const TIER_BACKTEST = {
-  conservative: { totalReturnPct: 4009 * 0.5, annualPct: 452 * 0.5, maxDdPct: 8.7,  winRatePct: 80.9, profitFactor: 4.74, riskPos: 10 },
-  bold:         { totalReturnPct: 4009,        annualPct: 452,        maxDdPct: 17.4, winRatePct: 80.9, profitFactor: 4.74, riskPos: 40 },
-  aggressive:   { totalReturnPct: 4009 * 1.5,  annualPct: 452 * 1.5,  maxDdPct: 26.1, winRatePct: 80.9, profitFactor: 4.74, riskPos: 75 },
+  conservative: { totalReturnPct: 4009 * 0.5, annualPct: 452 * 0.5, maxDdPct: 8.7,  avgWinPct: 7.2 * 0.5, avgLossPct: 2.1 * 0.5, winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 10 },
+  bold:         { totalReturnPct: 4009,       annualPct: 452,       maxDdPct: 17.4, avgWinPct: 7.2,       avgLossPct: 2.1,       winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 40 },
+  aggressive:   { totalReturnPct: 4009 * 1.5, annualPct: 452 * 1.5, maxDdPct: 26.1, avgWinPct: 7.2 * 1.5, avgLossPct: 2.1 * 1.5, winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 75 },
 } as const
+
+// ─── Projected equity curve (synthetic, tier-scaled exponential growth) ──
+// Generates a smooth-ish curve from $start capital to $start × (1 + totalReturnPct/100)
+// over 8 years of monthly points. Matches the v1 wizard's mini equity chart.
+function ProjectedEquityCurve({ startCapital, totalReturnPct }: { startCapital: number; totalReturnPct: number }) {
+  const points = 96 // 8 years × 12 months
+  const endCapital = startCapital * (1 + totalReturnPct / 100)
+  // Pseudo-random for slight wobble — deterministic so re-renders don't twitch.
+  let s = Math.round(totalReturnPct)
+  const rand = () => { s = (s * 9301 + 49297) % 233280; return s / 233280 }
+  // Exponential growth ratio per period.
+  const r = Math.pow(endCapital / startCapital, 1 / (points - 1))
+  const vals: number[] = []
+  let v = startCapital
+  for (let i = 0; i < points; i++) {
+    v *= r
+    // ±3% wobble
+    const wobble = 1 + (rand() - 0.5) * 0.06
+    vals.push(v * wobble)
+  }
+  // Force final value to exactly endCapital so the curve ends where labelled.
+  vals[vals.length - 1] = endCapital
+
+  const W = 760
+  const H = 160
+  const pad = { l: 56, r: 12, t: 10, b: 22 }
+  const min = Math.min(...vals) * 0.95
+  const max = Math.max(...vals) * 1.05
+  const xAt = (i: number) => pad.l + (i / (vals.length - 1)) * (W - pad.l - pad.r)
+  const yAt = (val: number) => pad.t + (1 - (val - min) / (max - min)) * (H - pad.t - pad.b)
+
+  // 5 y-axis ticks
+  const ticks = 5
+  const yTicks = Array.from({ length: ticks }, (_, i) => min + ((max - min) * i) / (ticks - 1))
+  const fmtY = (v: number) => {
+    if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(0)}M`
+    if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`
+    return `$${v.toFixed(0)}`
+  }
+
+  // 5 x-axis labels — quarterly milestones across the 8 years
+  const startDate = new Date()
+  startDate.setFullYear(startDate.getFullYear() - 8)
+  const xLabels = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const d = new Date(startDate)
+    d.setMonth(d.getMonth() + Math.floor(f * (points - 1)))
+    return { i: Math.floor(f * (points - 1)), label: d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/,/g, '') }
+  })
+
+  // Smooth path
+  const path = vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(2)} ${yAt(v).toFixed(2)}`).join(' ')
+  const areaPath = path + ` L ${xAt(vals.length - 1)} ${H - pad.b} L ${xAt(0)} ${H - pad.b} Z`
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 160, display: 'block' }}>
+      <defs>
+        <linearGradient id="bw-eq-grad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="rgba(212,160,23,0.28)" />
+          <stop offset="100%" stopColor="rgba(212,160,23,0.02)" />
+        </linearGradient>
+      </defs>
+      {/* gridlines + y-labels */}
+      {yTicks.map((t, i) => (
+        <g key={i}>
+          <line x1={pad.l} x2={W - pad.r} y1={yAt(t)} y2={yAt(t)} stroke="var(--line)" strokeWidth="1" strokeDasharray="2 4" />
+          <text x={pad.l - 8} y={yAt(t) + 3} textAnchor="end" fontSize="10" fill="var(--muted)" fontFamily="JetBrains Mono, monospace">{fmtY(t)}</text>
+        </g>
+      ))}
+      {/* area + line */}
+      <path d={areaPath} fill="url(#bw-eq-grad)" />
+      <path d={path} fill="none" stroke="var(--gold)" strokeWidth="2" />
+      {/* x-labels */}
+      {xLabels.map((xl, i) => (
+        <text key={i} x={xAt(xl.i)} y={H - 6} textAnchor={i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'} fontSize="10" fill="var(--muted)" fontFamily="JetBrains Mono, monospace">{xl.label}</text>
+      ))}
+    </svg>
+  )
+}
 
 function BotSettingsWizard({
   initialTier, initialCapital, initialCompound, onClose, onSaved,
@@ -653,17 +809,41 @@ function BotSettingsWizard({
           </button>
           {showProjected ? (
             <div className="bw-projected">
-              <div className="bw-proj-row">
-                <ProjStat label="Total Return"     val={`+${bt.totalReturnPct.toFixed(0)}%`} positive />
-                <ProjStat label="Annual Return"    val={`+${bt.annualPct.toFixed(0)}%`}      positive />
-                <ProjStat label="Max Drawdown"     val={`-${bt.maxDdPct.toFixed(1)}%`}       negative />
+              <div className="bw-proj-head">
+                <span>Projected Performance</span>
+                <span title="Based on 8 years of backtested data. Past performance does not guarantee future results.">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                </span>
               </div>
+              {/* Row 1: Win Rate / Total Trades / Months Profitable — neutral */}
               <div className="bw-proj-row">
-                <ProjStat label="Win Rate"         val={`${bt.winRatePct.toFixed(1)}%`} />
-                <ProjStat label="Profit Factor"    val={bt.profitFactor.toFixed(2)} />
+                <ProjStat label="Win Rate"          val={`${bt.winRatePct.toFixed(1)}%`} />
+                <ProjStat label="Total Trades"      val={String(bt.totalTrades)} />
                 <ProjStat label="Months Profitable" val="94/102" />
               </div>
-              <div className="bw-proj-disclaimer">Based on 8 years of backtested data. Past performance does not guarantee future results.</div>
+              {/* Row 2: Total Return (green) / Max Drawdown (red) / Profit Factor (neutral) */}
+              <div className="bw-proj-row">
+                <ProjStat label="Total Return"   val={`+${bt.totalReturnPct.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}%`} positive />
+                <ProjStat label="Max Drawdown"   val={`-${bt.maxDdPct.toFixed(1)}%`} negative />
+                <ProjStat label="Profit Factor"  val={bt.profitFactor.toFixed(2)} />
+              </div>
+              {/* Row 3: Avg Win (green) / Avg Loss (red) / Annual Return (green) */}
+              <div className="bw-proj-row">
+                <ProjStat label="Avg Win"       val={`+${bt.avgWinPct.toFixed(1)}%`} positive />
+                <ProjStat label="Avg Loss"      val={`-${bt.avgLossPct.toFixed(1)}%`} negative />
+                <ProjStat label="Annual Return" val={`+${bt.annualPct.toFixed(0)}%`} positive />
+              </div>
+
+              {/* Equity Curve — projected for the selected tier */}
+              <div className="bw-equity-card">
+                <div className="bw-equity-head">Equity Curve</div>
+                <div className="bw-equity-chart">
+                  <ProjectedEquityCurve startCapital={1000} totalReturnPct={bt.totalReturnPct} />
+                </div>
+                <div className="bw-equity-foot">
+                  Projected for <strong>{TIER_RATIOS[preset].label} tier ({TIER_RATIOS[preset].mult}× of balance)</strong>
+                </div>
+              </div>
             </div>
           ) : null}
 
