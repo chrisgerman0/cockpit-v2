@@ -104,7 +104,7 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
   return (
     <div className="stax-page">
       <PageHeader lastUpdatedMs={data.lastUpdatedMs} hasOpen={openRows.length > 0} />
-      <StatsRow totals={data.totals} unrealizedPnl={data.unrealizedPnl} />
+      <StatsRow totals={data.totals} unrealizedPnl={data.unrealizedPnl} openCount={openRows.length} />
       <LiveTradesTable
         title="OPEN POSITIONS"
         rows={openRows}
@@ -145,14 +145,16 @@ function PageHeader({ lastUpdatedMs, hasOpen }: { lastUpdatedMs: number; hasOpen
 
 // ─── Stats row ──────────────────────────────────────────────────────────────
 
-function StatsRow({ totals, unrealizedPnl }: { totals: LiveTradingData['totals']; unrealizedPnl: number }) {
+function StatsRow({ totals, unrealizedPnl, openCount }: { totals: LiveTradingData['totals']; unrealizedPnl: number; openCount: number }) {
   const realizedClass = totals.realizedPnl >= 0 ? 'pos' : 'neg'
+  const unrealizedClass = unrealizedPnl >= 0 ? 'pos' : 'neg'
   return (
     <div className="row row-stats">
-      <Stat icon={Icons.Bars}    label="Total Trades"  value={String(totals.closedCount)} sub={totals.closedCount === 0 ? 'No history' : `Avg win ${fmtUsdSign(totals.avgWin)} · Avg loss ${fmtUsdSign(-totals.avgLoss)}`} />
-      <Stat icon={Icons.TrendUp} label="Win Rate"      value={totals.closedCount === 0 ? '—' : `${totals.winRate}%`} sub={`${totals.wins} wins · ${totals.losses} losses`} />
-      <Stat icon={Icons.Check}   label="Realized PnL"  value={totals.closedCount === 0 ? '$0' : fmtUsdSign(totals.realizedPnl)} sub={totals.closedCount === 0 ? 'No closed trades yet' : `Best ${fmtUsdSign(totals.bestTrade)} · Worst ${fmtUsdSign(totals.worstTrade)}`} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
-      <Stat icon={Icons.Star}    label="Total Return"  value={totals.closedCount === 0 ? '—' : fmtPctSign(totals.realizedPct)} sub="Since activation" valueClass={totals.closedCount === 0 ? '' : realizedClass} />
+      <Stat icon={Icons.Bars}    label="Total Trades"   value={String(totals.closedCount)} sub={totals.closedCount === 0 ? 'No history' : `Avg win ${fmtUsdSign(totals.avgWin)} · Avg loss ${fmtUsdSign(-totals.avgLoss)}`} />
+      <Stat icon={Icons.TrendUp} label="Win Rate"       value={totals.closedCount === 0 ? '—' : `${totals.winRate}%`} sub={`${totals.wins} wins · ${totals.losses} losses`} />
+      <Stat icon={Icons.TrendUp} label="Unrealized PnL" value={openCount === 0 ? '$0' : fmtUsdSign(unrealizedPnl)} sub={openCount === 0 ? 'No open position' : `${openCount} ${openCount === 1 ? 'leg' : 'legs'} open`} valueClass={openCount === 0 ? '' : unrealizedClass} />
+      <Stat icon={Icons.Check}   label="Realized PnL"   value={totals.closedCount === 0 ? '$0' : fmtUsdSign(totals.realizedPnl)} sub={totals.closedCount === 0 ? 'No closed trades yet' : `Best ${fmtUsdSign(totals.bestTrade)} · Worst ${fmtUsdSign(totals.worstTrade)}`} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
+      <Stat icon={Icons.Star}    label="Total Return"   value={totals.closedCount === 0 ? '—' : fmtPctSign(totals.realizedPct)} sub="Since activation" valueClass={totals.closedCount === 0 ? '' : realizedClass} />
     </div>
   )
 }
