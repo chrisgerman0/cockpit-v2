@@ -177,25 +177,68 @@ function ProfilePanel() {
 }
 
 // ─── Billing ────────────────────────────────────────────────────────────────
+// Pulls /api/billing which returns the user's current plan (Performance / 20%
+// perf-fee, or Subscription / $100 flat), the OPEN billing period with live
+// realised PnL + estimated fee, and history of past periods.
+
+type BillingPlan = {
+  id: string
+  name: string
+  type: 'performance' | 'flat'
+  priceCents: number
+  perfFeePct: number
+  minBalanceCents: number
+}
+
+type BillingPeriod = {
+  id: string
+  startTs: string
+  endTs: string
+  status: 'open' | 'locked' | 'invoiced' | 'paid' | 'failed'
+  startingBalanceCents: number
+  endingBalanceCents: number | null
+  grossPnlCents: number
+  feeAmountCents: number
+  netAfterFeeCents: number
+  tradeCount?: number
+}
+
+type BillingHistoryEntry = {
+  id: string
+  startTs: string
+  endTs: string
+  status: string
+  planName: string
+  grossPnlCents: number
+  feeAmountCents: number
+  stripeStatus?: string
+}
+
+type BillingData = {
+  plan: BillingPlan | null
+  currentPeriod: BillingPeriod | null
+  history: BillingHistoryEntry[]
+}
+
+const fmtUsd = (cents: number) =>
+  '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: '2-digit' })
 
 function BillingPanel() {
   const t = useT()
-  const [plan, setPlan] = useState<{ name: string; status: string } | null>(null)
+  const [data, setData] = useState<BillingData | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const r = await authedFetch('/api/check-subscription')
-        if (!r.ok) throw new Error('subscription fetch failed')
-        const j = await r.json()
-        if (cancelled) return
-        const pn = j?.subscription?.plan || j?.plan || 'Free'
-        const st = j?.subscription?.status || j?.status || 'inactive'
-        setPlan({ name: pn, status: st })
+        const j = await authedFetch<BillingData>('/api/billing')
+        if (!cancelled) setData(j)
       } catch {
-        if (!cancelled) setPlan({ name: 'Free', status: 'inactive' })
+        if (!cancelled) setData({ plan: null, currentPeriod: null, history: [] })
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -203,19 +246,146 @@ function BillingPanel() {
     return () => { cancelled = true }
   }, [])
 
+  const plan = data?.plan
+  const period = data?.currentPeriod
+  const isPerf = plan?.type === 'performance'
+  const periodOverdue = period
+    ? new Date(period.endTs).getTime() < Date.now() && period.status === 'open'
+    : false
+
+  // Days remaining until end_ts (negative if overdue)
+  const daysLeft = period
+    ? Math.ceil((new Date(period.endTs).getTime() - Date.now()) / 86400_000)
+    : 0
+
   return (
-    <div className="card card-pad settings-card">
-      <h3 className="settings-card-title">{t('billing.title')}</h3>
-      <div className="billing-status">
-        <div className="billing-row">
-          <span className="billing-label">{t('billing.currentPlan')}</span>
-          <span className="billing-plan">{loading ? t('common.loading') : (plan?.name || t('billing.free'))}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── Current plan ────────────────────────────────────────────── */}
+      <div className="card card-pad">
+        <div className="bt-card-head">
+          <div className="bt-card-title"><span className="bt-card-bar" />CURRENT PLAN</div>
         </div>
-        <div className="billing-help">{t('billing.upgrade')}</div>
+        {loading ? (
+          <div className="settings-help">{t('common.loading')}</div>
+        ) : !plan ? (
+          <div className="settings-help">No plan assigned. Contact support.</div>
+        ) : (
+          <div className="bot-summary">
+            <BotRow label="Plan" value={<span className="bot-tier-pill">{plan.name}</span>} />
+            <BotRow label="Type" value={plan.type === 'performance' ? 'Performance fee' : 'Flat subscription'} />
+            {isPerf
+              ? <BotRow label="Performance fee" value={`${plan.perfFeePct}% on net profits`} />
+              : <BotRow label="Subscription" value={`${fmtUsd(plan.priceCents)}/month`} />
+            }
+            {plan.minBalanceCents > 0 ? (
+              <BotRow label="Minimum balance" value={fmtUsd(plan.minBalanceCents)} />
+            ) : null}
+          </div>
+        )}
       </div>
-      <a href="/subscribe" className="settings-btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>
-        {plan?.status === 'active' ? t('billing.managePlan') : t('billing.subscribe')}
-      </a>
+
+      {/* ── Current period ──────────────────────────────────────────── */}
+      <div className="card card-pad">
+        <div className="bt-card-head">
+          <div className="bt-card-title"><span className="bt-card-bar" />CURRENT BILLING PERIOD</div>
+          {period ? (
+            <span className={'badge ' + (period.status === 'open' ? 'badge-long' : 'badge-short')}>
+              {period.status.toUpperCase()}
+            </span>
+          ) : null}
+        </div>
+        {loading ? (
+          <div className="settings-help">{t('common.loading')}</div>
+        ) : !period ? (
+          <div className="settings-help">No active period yet. Your first period opens after activation.</div>
+        ) : (
+          <>
+            <div className="bot-summary">
+              <BotRow label="Period" value={`${fmtDate(period.startTs)} → ${fmtDate(period.endTs)}`} />
+              <BotRow
+                label="Days remaining"
+                value={
+                  <span className={periodOverdue ? 'neg-text' : ''}>
+                    {periodOverdue ? `${Math.abs(daysLeft)} days overdue` : `${daysLeft} days`}
+                  </span>
+                }
+              />
+              <BotRow label="Trades closed" value={String(period.tradeCount ?? 0)} />
+              <BotRow
+                label="Realised PnL"
+                value={
+                  <span className={period.grossPnlCents > 0 ? 'pos-text' : period.grossPnlCents < 0 ? 'neg-text' : ''}>
+                    {period.grossPnlCents >= 0 ? '+' : ''}{fmtUsd(period.grossPnlCents)}
+                  </span>
+                }
+              />
+              {isPerf ? (
+                <>
+                  <BotRow label={`Estimated fee (${plan?.perfFeePct}%)`} value={fmtUsd(period.feeAmountCents)} />
+                  <BotRow
+                    label="Net after fee"
+                    value={
+                      <span className={period.netAfterFeeCents > 0 ? 'pos-text' : period.netAfterFeeCents < 0 ? 'neg-text' : ''}>
+                        {period.netAfterFeeCents >= 0 ? '+' : ''}{fmtUsd(period.netAfterFeeCents)}
+                      </span>
+                    }
+                  />
+                </>
+              ) : null}
+            </div>
+            {periodOverdue ? (
+              <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.22)', borderRadius: 8, fontSize: 12, color: 'var(--neg)' }}>
+                ⚠ This period was due to lock on {fmtDate(period.endTs)}. The billing scheduler may need to roll it over — contact support if the next period doesn't open within 24h.
+              </div>
+            ) : null}
+            {isPerf ? (
+              <div className="settings-help" style={{ marginTop: 12, lineHeight: 1.55 }}>
+                The {plan?.perfFeePct}% performance fee only applies when net realised PnL is positive at period close. Open trades don't count until they close. The fee is estimated live as trades close — final amount is computed and invoiced when the period locks.
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      {/* ── History ─────────────────────────────────────────────────── */}
+      {!loading && data && data.history.length > 0 ? (
+        <div className="card card-pad">
+          <div className="bt-card-head">
+            <div className="bt-card-title"><span className="bt-card-bar" />HISTORY</div>
+          </div>
+          <div className="table-scroll">
+            <table className="bt-stat-table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Plan</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Gross PnL</th>
+                  <th style={{ textAlign: 'right' }}>Fee</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.history.map(h => (
+                  <tr key={h.id}>
+                    <td>{fmtDate(h.startTs)} → {fmtDate(h.endTs)}</td>
+                    <td>{h.planName}</td>
+                    <td>
+                      <span className={'badge ' + (h.status === 'paid' ? 'badge-long' : 'badge-short')}>
+                        {h.status}
+                      </span>
+                    </td>
+                    <td className={'num'} style={{ textAlign: 'right' }}>
+                      {h.grossPnlCents >= 0 ? '+' : ''}{fmtUsd(h.grossPnlCents)}
+                    </td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(h.feeAmountCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

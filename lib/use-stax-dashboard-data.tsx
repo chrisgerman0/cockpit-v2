@@ -370,8 +370,15 @@ export function useStaxDashboardData(): StaxLoadState {
     async function load() {
       try {
         const sb = browserClient()
-        const { data: { session } } = await sb.auth.getSession()
-        if (!session) { if (!cancelled) setState({ status: 'unauthenticated' }); return }
+        const { data: { session }, error: sessionError } = await sb.auth.getSession()
+        if (!session || sessionError) { if (!cancelled) setState({ status: 'unauthenticated' }); return }
+
+        // Pull the mission target from user_metadata. Settings → Profile saves
+        // it via supabase.auth.updateUser; reading from getUser ensures we
+        // always see the latest value (no extra API call needed).
+        const { data: { user: authUser } } = await sb.auth.getUser()
+        const missionTarget = Number((authUser?.user_metadata as any)?.mission_target_btc)
+        const btcGoalTarget = Number.isFinite(missionTarget) && missionTarget > 0 ? missionTarget : 1
 
         const [botRes, balanceRes, userTradesRes] = await Promise.all([
           authedFetch<BotConfigResp>('/api/bot-activate').catch(() => null),
@@ -423,7 +430,9 @@ export function useStaxDashboardData(): StaxLoadState {
         const tickerBySymbol: Record<string, PublicTicker | undefined> = {}
         tickers.forEach(t => { tickerBySymbol[t.symbol] = t })
         const btcPrice = tickerBySymbol['BTCUSDT']?.price || 0
-        const btcGoal = btcPrice > 0 ? Math.min(1, equity / btcPrice) : 0
+        // Raw equity-in-BTC; the dashboard divides by btcGoalTarget to compute
+        // progress %. Don't clamp here — let the UI decide based on target.
+        const btcGoal = btcPrice > 0 ? equity / btcPrice : 0
 
         let positions: Position[] = openTrades.map(t => {
           const entry = Number(t.entry_price || 0)
@@ -585,6 +594,7 @@ export function useStaxDashboardData(): StaxLoadState {
           balanceUsd: equity || startCapital,
           tierLabel,
           btcGoal,
+          btcGoalTarget,
           // Raw portfolio + base — Hero simulates the curve per range.
           portfolioTrades: portfolio.map(t => ({ exitTs: t.exitTs, pnl: t.pnl })),
           strategyBase: startCapital,

@@ -98,7 +98,8 @@ export type StaxDashboardData = {
   // Hero
   balanceUsd: number
   tierLabel: string                  // "Bold tier · 1.0× of balance"
-  btcGoal: number                    // 0..1 (fraction of 1 BTC)
+  btcGoal: number                    // current BTC equivalent of equity
+  btcGoalTarget?: number             // mission target in BTC (default 1)
   // Equity Curve — projected from user's balance through the strategy.
   // Simulator semantics: "if you'd put $balanceUsd in N months ago, where
   // would you be now?" Each strategy trade's pnl is scaled by
@@ -355,7 +356,19 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
   const latencyTitle = connected
     ? `WebSocket round-trip: ${latencyMs}ms (sampled every 5s)`
     : 'Reconnecting to Bitget WebSocket — values fall back to a 5s REST poll'
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  // Theme persists in localStorage; fall back to user's OS preference on
+  // first visit. Without this, every nav/refresh forces dark and overrides
+  // whatever the user picked last.
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark'
+    try {
+      const saved = localStorage.getItem('stax-theme')
+      if (saved === 'light' || saved === 'dark') return saved
+      // First visit: respect OS preference.
+      if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light'
+    } catch {}
+    return 'dark'
+  })
   const [lang, setLang] = useState<'ENG' | 'PT'>(() => {
     if (typeof window === 'undefined') return 'ENG'
     return (localStorage.getItem('stax-lang') === 'PT' ? 'PT' : 'ENG')
@@ -379,6 +392,7 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
     const html = document.documentElement
     if (theme === 'light') { html.classList.add('light'); html.classList.remove('dark') }
     else { html.classList.add('dark'); html.classList.remove('light') }
+    try { localStorage.setItem('stax-theme', theme) } catch {}
   }, [theme])
 
   useEffect(() => {
@@ -840,7 +854,10 @@ function Hero({ data }: { data: StaxDashboardData }) {
   const t = useT()
   const [range, setRange] = useState<Range>('6M')
   const ranges: Range[] = ['1M', '3M', '6M', '1Y', 'ALL']
-  const pct = Math.min(1, Math.max(0, data.btcGoal))
+  // Scale progress against the user's mission target (default 1 BTC). A user
+  // with a 5 BTC target shouldn't see a full bar at 1 BTC.
+  const target = data.btcGoalTarget && data.btcGoalTarget > 0 ? data.btcGoalTarget : 1
+  const pct = Math.min(1, Math.max(0, data.btcGoal / target))
 
   const sim = useMemo(() => {
     if (data.portfolioTrades && data.portfolioTrades.length > 0) {
@@ -884,7 +901,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
           </div>
           <div className="slider-ends">
             <span>0 BTC</span>
-            <span>1 BTC</span>
+            <span>{target} BTC</span>
           </div>
         </div>
       </div>
