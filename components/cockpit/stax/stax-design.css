@@ -585,7 +585,12 @@ html.light .stax-app .menu-item:hover { background: rgba(0,0,0,0.04); }
 .stax-app .row { display: grid; gap: 8px; }
 .stax-app .row-hero { grid-template-columns: 1fr 1.85fr; }
 .stax-app .row-hero > .hero-left { display: grid; grid-template-rows: auto; gap: 14px; }
-.stax-app .row-stats { grid-template-columns: repeat(4, 1fr); }
+/* Auto-fit columns so the row adapts to whatever number of stat cards it
+   contains. Dashboard has 4 (Bot Status / Unrealized / Realized / Total
+   Return), Live Trading has 5 (Total Trades / Win Rate / Unrealized /
+   Realized / Total Return). minmax(170px) keeps cards readable; auto-fit
+   spreads them evenly across the available row width. */
+.stax-app .row-stats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .stax-app .row-tables { grid-template-columns: 1fr 1fr; }
 .stax-app .row-bottom { grid-template-columns: 1.3fr 1fr 1fr 1.2fr; }
 
