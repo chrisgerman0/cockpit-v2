@@ -1400,6 +1400,268 @@ html.light .stax-app tr.bt-trade-open   > td { background-color: rgba(212, 160, 
   display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap;
 }
 
+/* ── Broker — full feature port from v1 ────────────────────────────── */
+
+/* Tier ladder grid (5 cards) */
+.stax-app .broker-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+@media (max-width: 980px) { .stax-app .broker-tier-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .stax-app .broker-tier-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.stax-app .broker-tier-card {
+  position: relative;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 12px;
+  text-align: center;
+  transition: transform 0.25s cubic-bezier(0.2,0.8,0.2,1), border-color 0.15s ease, background 0.15s ease;
+}
+.stax-app .broker-tier-card:hover { transform: translateY(-2px); border-color: rgba(212,160,23,0.35); }
+.stax-app .broker-tier-card.locked { opacity: 0.55; }
+.stax-app .broker-tier-card.active {
+  background: rgba(212,160,23,0.08);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold), 0 0 22px var(--gold-glow);
+  animation: tier-glow 3s ease-in-out infinite;
+}
+.stax-app.light .broker-tier-card,
+html.light .stax-app .broker-tier-card { background: rgba(0,0,0,0.015); }
+.stax-app.light .broker-tier-card.active,
+html.light .stax-app .broker-tier-card.active { background: rgba(184,134,11,0.10); }
+
+@keyframes tier-glow {
+  0%, 100% { box-shadow: 0 0 0 1px var(--gold), 0 0 18px rgba(212,160,23,0.18); }
+  50%      { box-shadow: 0 0 0 1px var(--gold), 0 0 28px rgba(212,160,23,0.32); }
+}
+
+.stax-app .broker-tier-card .tier-ico {
+  width: 28px; height: 28px; margin: 0 auto 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.stax-app .broker-tier-card.active .tier-ico { color: var(--gold); }
+.stax-app .broker-tier-card.locked .tier-ico { color: var(--muted-2); }
+
+.stax-app .broker-tier-card .tier-name {
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.stax-app .broker-tier-card.locked .tier-name { color: var(--muted-2); }
+.stax-app .broker-tier-card .tier-range {
+  font-size: 10.5px; color: var(--muted); margin-top: 2px;
+  letter-spacing: 0.04em;
+}
+.stax-app .broker-tier-card .tier-pct {
+  font-size: 22px; font-weight: 700; margin-top: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--text);
+}
+.stax-app .broker-tier-card.active .tier-pct { color: var(--gold); }
+.stax-app .broker-tier-card.locked .tier-pct { color: var(--muted-2); }
+.stax-app .broker-tier-card .tier-pct-label {
+  font-size: 9px; letter-spacing: 0.18em; color: var(--muted-2);
+  text-transform: uppercase; margin-top: 2px;
+}
+
+.stax-app .broker-tier-card .tier-current-pill {
+  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  background: var(--gold); color: #0b0b0f;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.16em;
+  padding: 2px 8px; border-radius: 999px;
+  text-transform: uppercase; white-space: nowrap;
+}
+
+/* AUM progress strip */
+.stax-app .broker-aum-strip {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(255,255,255,0.015);
+  flex-wrap: wrap;
+}
+.stax-app .broker-aum-strip .aum-bar-wrap {
+  flex: 1 1 220px; min-width: 200px;
+  position: relative; height: 8px; border-radius: 4px;
+  background: rgba(255,255,255,0.06); overflow: hidden;
+}
+.stax-app.light .broker-aum-strip,
+html.light .stax-app .broker-aum-strip { background: rgba(0,0,0,0.02); }
+.stax-app.light .broker-aum-strip .aum-bar-wrap,
+html.light .stax-app .broker-aum-strip .aum-bar-wrap { background: rgba(0,0,0,0.06); }
+.stax-app .broker-aum-strip .aum-bar-fill {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-hi));
+  border-radius: 4px;
+  transition: width 0.9s cubic-bezier(0.2,0.8,0.2,1);
+}
+.stax-app .broker-aum-strip .aum-meta {
+  font-size: 11px; color: var(--muted);
+  display: flex; align-items: center; gap: 6px;
+}
+.stax-app .broker-aum-strip .aum-meta strong { color: var(--text); font-weight: 600; }
+.stax-app .broker-aum-strip .aum-meta .aum-next { color: var(--gold); font-weight: 600; }
+
+/* "How You Earn" 3-step grid */
+.stax-app .broker-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 880px) { .stax-app .broker-steps { grid-template-columns: 1fr; } }
+.stax-app .broker-step-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 18px;
+  background: rgba(255,255,255,0.015);
+}
+.stax-app.light .broker-step-card,
+html.light .stax-app .broker-step-card { background: rgba(0,0,0,0.012); }
+.stax-app .broker-step-card .step-ico {
+  width: 40px; height: 40px; border-radius: 10px;
+  background: rgba(212,160,23,0.12);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gold); margin-bottom: 10px;
+}
+.stax-app .broker-step-card .step-num {
+  position: absolute; top: 16px; right: 18px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 44px; font-weight: 700; color: var(--line-2);
+  line-height: 1;
+}
+.stax-app .broker-step-card .step-tag {
+  display: inline-block;
+  font-size: 9.5px; letter-spacing: 0.16em; font-weight: 700;
+  color: var(--gold); background: rgba(212,160,23,0.10);
+  border: 1px solid rgba(212,160,23,0.22);
+  padding: 2px 8px; border-radius: 6px;
+  text-transform: uppercase;
+}
+.stax-app .broker-step-card .step-title {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin: 8px 0 6px;
+}
+.stax-app .broker-step-card .step-desc {
+  font-size: 12px; color: var(--muted); line-height: 1.55;
+}
+
+/* Tier summary table — uses .bt-stat-table base; this just tints active row */
+.stax-app .bt-stat-table tr.active-tier td { background: rgba(212,160,23,0.08); }
+.stax-app.light .bt-stat-table tr.active-tier td,
+html.light .stax-app .bt-stat-table tr.active-tier td { background: rgba(184,134,11,0.07); }
+
+/* Referral perf table — purpose-built grid */
+.stax-app .broker-perf-grid {
+  display: grid;
+  grid-template-columns: 1fr 80px 90px 110px 120px 110px;
+  gap: 8px;
+  padding: 10px 4px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.stax-app .broker-perf-head {
+  font-size: 9.5px; letter-spacing: 0.18em; color: var(--muted);
+  text-transform: uppercase; font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 4px 10px;
+}
+.stax-app .broker-perf-row { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.stax-app.light .broker-perf-row,
+html.light .stax-app .broker-perf-row { border-bottom: 1px solid rgba(0,0,0,0.04); }
+.stax-app .broker-perf-row:hover { background: rgba(255,255,255,0.02); }
+.stax-app.light .broker-perf-row:hover,
+html.light .stax-app .broker-perf-row:hover { background: rgba(0,0,0,0.02); }
+.stax-app .broker-perf-row.totals {
+  border-top: 1px solid var(--line);
+  background: rgba(255,255,255,0.025);
+  font-weight: 600;
+}
+.stax-app.light .broker-perf-row.totals,
+html.light .stax-app .broker-perf-row.totals { background: rgba(0,0,0,0.025); }
+.stax-app .broker-perf-grid .ta-r { text-align: right; }
+.stax-app .broker-perf-empty {
+  padding: 28px 12px; text-align: center;
+  color: var(--muted); font-size: 12.5px;
+}
+@media (max-width: 880px) {
+  .stax-app .broker-perf-grid { grid-template-columns: 1fr 70px 100px 100px; font-size: 11.5px; }
+  .stax-app .broker-perf-grid .hide-md { display: none; }
+}
+
+/* Payout request body */
+.stax-app .broker-payout-body { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .broker-payout-body .row-line {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12.5px;
+}
+.stax-app .broker-payout-body .row-line .lbl { color: var(--muted); }
+.stax-app .broker-payout-body .row-line .val { color: var(--text); font-weight: 600; }
+.stax-app .broker-payout-body .row-line .val.gold { color: var(--gold); }
+.stax-app .broker-payout-divider {
+  border: 0; border-top: 1px solid var(--line); margin: 6px 0;
+}
+.stax-app .broker-payout-input-row {
+  display: flex; gap: 8px; align-items: stretch;
+}
+.stax-app .broker-payout-msg-pos { color: var(--pos); font-size: 11.5px; }
+.stax-app .broker-payout-msg-neg { color: var(--neg); font-size: 11.5px; }
+
+/* Past payouts list */
+.stax-app .broker-past-empty {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 24px 12px; gap: 6px; text-align: center;
+}
+.stax-app .broker-past-empty .ico {
+  color: var(--muted-2); margin-bottom: 4px;
+}
+.stax-app .broker-past-empty .ttl { font-size: 13px; color: var(--muted); }
+.stax-app .broker-past-empty .sub { font-size: 11px; color: var(--muted-2); }
+.stax-app .broker-past-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.stax-app .broker-past-row:last-child { border-bottom: 0; }
+
+/* Collapsible payout ledger */
+.stax-app .broker-collapsible-head {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between;
+  background: transparent; border: 0; cursor: pointer;
+  padding: 4px 0; color: var(--text);
+  font-size: 13px; font-weight: 600;
+}
+.stax-app .broker-collapsible-head .chev {
+  display: inline-flex; transition: transform 0.18s ease;
+  color: var(--muted);
+}
+.stax-app .broker-collapsible-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+
+.stax-app .broker-ledger-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr 100px 100px 90px;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.stax-app.light .broker-ledger-grid,
+html.light .stax-app .broker-ledger-grid { border-bottom: 1px solid rgba(0,0,0,0.04); }
+.stax-app .broker-ledger-grid:last-child { border-bottom: 0; }
+.stax-app .broker-ledger-grid.head {
+  font-size: 9.5px; letter-spacing: 0.18em;
+  color: var(--muted); text-transform: uppercase; font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 720px) {
+  .stax-app .broker-ledger-grid { grid-template-columns: 90px 1fr 80px 80px; }
+  .stax-app .broker-ledger-grid .hide-md { display: none; }
+}
+
 /* ───────────────────────────────────────────────────────────────────
    Backtesting page — section bits (atop the existing bt-* rules)
    ─────────────────────────────────────────────────────────────────── */
