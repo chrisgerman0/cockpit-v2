@@ -1015,7 +1015,7 @@ function LeverageCard({ value, max }: { value: number; max?: number }) {
           {value.toFixed(2)}x
         </div>
         <div className="lev-gauge">
-          <LeverageGauge value={value} max={upper} scale={0.72} />
+          <LeverageGauge value={value} max={upper} scale={0.9} />
         </div>
       </div>
     </div>

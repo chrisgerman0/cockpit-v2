@@ -3,7 +3,7 @@
 /* Equity curve, sparklines, leverage gauge — hand-rolled SVG ported from
    Claude Design Stax/charts.jsx. Uses the data shapes Live data prop. */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 export type EquityPoint = { ts?: number; value: number; month?: string }
 
@@ -234,7 +234,25 @@ export function LeverageGauge({ value = 7.5, max = 10, scale = 0.75 }: { value: 
   }
   const v = Math.min(Math.max(value, 0), max)
   const ang = 180 + (v / max) * 180
-  const [nx, ny] = polar(ang)
+
+  // RPM-style live needle jitter — small bounded random walk around the
+  // actual angle, updating ~8×/sec. Makes the needle feel alive (like a
+  // car's tachometer never sitting perfectly still) without distorting
+  // the reading. Disabled when leverage is 0 (gauge at zero stays put).
+  const [jitter, setJitter] = useState(0)
+  useEffect(() => {
+    if (v === 0) { setJitter(0); return }
+    const id = window.setInterval(() => {
+      setJitter(prev => {
+        const next = prev + (Math.random() - 0.5) * 0.6
+        return Math.max(-1.2, Math.min(1.2, next))
+      })
+    }, 120)
+    return () => window.clearInterval(id)
+  }, [v])
+
+  const displayAng = ang + jitter
+  const [nx, ny] = polar(displayAng)
   const [gx0, gy0] = polar(180)
   const [gx1, gy1] = polar(ang)
 
