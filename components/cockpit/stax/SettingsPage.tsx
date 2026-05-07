@@ -418,27 +418,35 @@ const TIER_LEVERAGE: Record<'conservative' | 'bold' | 'aggressive', number> = {
   aggressive: 20,
 }
 
+// Tier ratios — V1 canonical (matches lib/tier-sizing.ts on staxs-landing).
+// position size = capital × tierMult; SL = 4% of entry across the basket.
+const TIER_RATIOS = {
+  conservative: { mult: 0.5, leverage: 4,  sl: 4, label: 'Conservative', blurb: 'Smaller positions. Smoother ride.', recommended: true },
+  bold:         { mult: 1.0, leverage: 10, sl: 4, label: 'Bold',         blurb: 'Benchmark sizing. Same logic, full exposure.', recommended: false },
+  aggressive:   { mult: 1.5, leverage: 20, sl: 4, label: 'Aggressive',   blurb: 'Bigger swings. Same logic, more risk.', recommended: false },
+} as const
+type TierKey = keyof typeof TIER_RATIOS
+
 function BotPanel() {
   const t = useT()
   const [cfg, setCfg] = useState<BotConfig | null>(null)
   const [activated, setActivated] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [view, setView] = useState<'summary' | 'wizard'>('summary')
 
   const loadConfig = useCallback(async () => {
     try {
       const j = await authedFetch<{ activated: boolean; config: BotConfig | null }>('/api/bot-activate')
       setCfg(j?.config || null)
       setActivated(!!j?.activated)
-    } catch { /* keep current state — will show empty defaults */ }
+    } catch { /* keep current state */ }
     finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadConfig() }, [loadConfig])
 
-  const tier = (cfg?.tier || cfg?.preset || 'conservative') as 'conservative' | 'bold' | 'aggressive'
-  const lev = cfg?.leverage || TIER_LEVERAGE[tier]
+  const tier = (cfg?.tier || cfg?.preset || 'conservative') as TierKey
+  const lev = cfg?.leverage || TIER_RATIOS[tier].leverage
   const capital = cfg?.activation_balance || cfg?.capital
   const notional = cfg?.hb_base_notional_usd || cfg?.notional
 
@@ -448,33 +456,16 @@ function BotPanel() {
     aggressive: t('bot.tierAggressive'),
   } as any)[tier] || t('bot.tierConservative')
 
-  async function changeTier(next: 'conservative' | 'bold' | 'aggressive') {
-    if (saving || next === tier) return
-    setSaving(true); setSaveMsg(null)
-    try {
-      // POST /api/bot-activate — uses existing capital. Server derives all
-      // sizing from the tier (incl. leverage, hb_base_notional_usd, etc.).
-      await authedFetch('/api/bot-activate', {
-        method: 'POST',
-        body: JSON.stringify({
-          preset: next,
-          capital: capital || 1000,
-          notional: notional || 1000,
-          compound: !!cfg?.compound,
-          smart_sizing_enabled: !!cfg?.smart_sizing_enabled,
-        }),
-      })
-      setSaveMsg({ ok: true, text: `Tier set to ${next}.` })
-      await loadConfig()
-    } catch (e: any) {
-      const raw = String(e?.message || '')
-      let msg = 'Failed to change tier.'
-      const j = raw.match(/\{.*\}/)
-      if (j) { try { msg = JSON.parse(j[0])?.error || msg } catch {} }
-      setSaveMsg({ ok: false, text: msg })
-    } finally {
-      setSaving(false)
-    }
+  if (view === 'wizard') {
+    return (
+      <BotSettingsWizard
+        initialTier={tier}
+        initialCapital={Number(capital) || 0}
+        initialCompound={!!cfg?.compound}
+        onClose={() => setView('summary')}
+        onSaved={async () => { await loadConfig(); setView('summary') }}
+      />
+    )
   }
 
   return (
@@ -497,43 +488,393 @@ function BotPanel() {
             {notional ? <BotRow label={t('bot.notional')} value={`$${Number(notional).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
           </div>
 
-          {/* Inline tier change — runs Bitget pre-flight server-side */}
-          <div style={{ marginTop: 18 }}>
-            <div className="settings-help" style={{ marginBottom: 8 }}>Change tier</div>
-            <div className="bt-tier-pills">
-              {(['conservative', 'bold', 'aggressive'] as const).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  className={'bt-tier-pill' + (tier === p ? ' active' : '')}
-                  disabled={saving}
-                  onClick={() => changeTier(p)}
-                >
-                  {p === 'conservative' ? t('bot.tierConservative') : p === 'bold' ? t('bot.tierBold') : t('bot.tierAggressive')}
-                  <span style={{ opacity: 0.55, marginLeft: 6, fontSize: 10 }}>{TIER_LEVERAGE[p]}×</span>
-                </button>
-              ))}
-            </div>
-            {saveMsg ? (
-              <div className={saveMsg.ok ? 'pos-text' : 'neg-text'} style={{ fontSize: 12, marginTop: 8 }}>{saveMsg.text}</div>
-            ) : null}
-          </div>
-
           <div style={{ borderTop: '1px solid var(--line)', marginTop: 22, paddingTop: 16 }}>
             <div className="settings-help" style={{ marginBottom: 8 }}>
-              First-time setup or want to reconnect Bitget keys?
+              {activated ? 'Reconfigure your tier, capital, or compound mode.' : 'Configure your tier and activate the bot.'}
             </div>
-            <Link
-              href="/onboarding"
-              prefetch
+            <button
+              type="button"
               className="settings-btn-primary"
-              style={{ display: 'inline-flex', textDecoration: 'none', alignItems: 'center', gap: 6 }}
+              onClick={() => setView('wizard')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              {t('bot.openWizard')}
-            </Link>
+              {activated ? 'Reconfigure bot' : t('bot.openWizard')}
+            </button>
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// ─── Bot Settings Wizard ────────────────────────────────────────────────────
+// 5-step inline wizard ported from v1 client-dashboard.html (#bwStep1..#bwStep5).
+//   1. Choose Trading Mode (Conservative / Bold / Aggressive)
+//   2. Set Capital (with Refresh Balance from /api/balance)
+//   3. How Sizing Works + Compound mode toggle
+//   4. 12-Month Projection (concise — backtest stats per tier)
+//   5. Review & Activate (POSTs to /api/bot-activate)
+//
+// Tier multipliers (TIER_RATIOS): 0.5× / 1.0× / 1.5× of balance.
+// SL is 4% across all tiers. Bitget leverage cap is set per tier (4/10/20×).
+
+const TIER_BACKTEST = {
+  conservative: { totalReturnPct: 4009 * 0.5, annualPct: 452 * 0.5, maxDdPct: 8.7,  winRatePct: 80.9, profitFactor: 4.74, riskPos: 10 },
+  bold:         { totalReturnPct: 4009,        annualPct: 452,        maxDdPct: 17.4, winRatePct: 80.9, profitFactor: 4.74, riskPos: 40 },
+  aggressive:   { totalReturnPct: 4009 * 1.5,  annualPct: 452 * 1.5,  maxDdPct: 26.1, winRatePct: 80.9, profitFactor: 4.74, riskPos: 75 },
+} as const
+
+function BotSettingsWizard({
+  initialTier, initialCapital, initialCompound, onClose, onSaved,
+}: {
+  initialTier: TierKey
+  initialCapital: number
+  initialCompound: boolean
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
+  const [preset, setPreset] = useState<TierKey>(initialTier)
+  const [capital, setCapital] = useState<string>(initialCapital ? String(Math.round(initialCapital)) : '10000')
+  const [maxBalance, setMaxBalance] = useState<number>(0)
+  const [fetchingBalance, setFetchingBalance] = useState(false)
+  const [showProjected, setShowProjected] = useState(false)
+  const [compound, setCompound] = useState(initialCompound)
+  const [activating, setActivating] = useState(false)
+  const [activateMsg, setActivateMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const ratios = TIER_RATIOS[preset]
+  const bt = TIER_BACKTEST[preset]
+  const capNum = Math.max(0, Number(capital) || 0)
+  const posSize = capNum * ratios.mult
+  const maxLoss = posSize * (ratios.sl / 100)
+  const overBalance = maxBalance > 0 && capNum > maxBalance
+
+  async function fetchBalance() {
+    setFetchingBalance(true)
+    try {
+      const j = await authedFetch<{ equity?: number; available?: number; error?: string }>('/api/balance')
+      const eq = Number(j?.equity || j?.available || 0)
+      if (eq > 0) {
+        setMaxBalance(eq)
+        setCapital(String(Math.round(eq)))
+      }
+    } catch { /* silent */ }
+    finally { setFetchingBalance(false) }
+  }
+
+  useEffect(() => { fetchBalance() /* preload on mount */ }, []) // eslint-disable-line
+
+  function next() { setStep(s => (s < 5 ? ((s + 1) as any) : s)) }
+  function back() { setStep(s => (s > 1 ? ((s - 1) as any) : s)) }
+
+  async function activateBot() {
+    if (activating) return
+    if (capNum < 100) { setActivateMsg({ ok: false, text: 'Capital must be at least $100.' }); return }
+    setActivating(true); setActivateMsg(null)
+    try {
+      await authedFetch('/api/bot-activate', {
+        method: 'POST',
+        body: JSON.stringify({
+          preset,
+          capital: capNum,
+          leverage: ratios.leverage,
+          notional: capNum * ratios.mult,
+          compound,
+          smart_sizing_enabled: false,
+        }),
+      })
+      setActivateMsg({ ok: true, text: 'Bot activated! Returning to settings…' })
+      setTimeout(onSaved, 1200)
+    } catch (e: any) {
+      const raw = String(e?.message || '')
+      let msg = 'Failed to activate.'
+      const j = raw.match(/\{.*\}/)
+      if (j) { try { msg = JSON.parse(j[0])?.error || msg } catch {} }
+      setActivateMsg({ ok: false, text: msg })
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="card card-pad settings-card">
+      {/* Step pip row */}
+      <div className="bw-pips">
+        {[1, 2, 3, 4].map((n, i) => (
+          <div key={n} className="bw-pip-wrap">
+            <div className={'bw-pip ' + (n < step ? 'bw-done' : n === step ? 'bw-active' : 'bw-idle')}>
+              {n < step ? '✓' : n}
+            </div>
+            {i < 4 && <div className={'bw-line ' + (n < step ? 'bw-done' : 'bw-idle')} />}
+          </div>
+        ))}
+        <div className={'bw-pip ' + (step === 5 ? 'bw-active' : 'bw-idle')}>✓</div>
+      </div>
+
+      {/* Step 1 — Trading Mode */}
+      {step === 1 && (
+        <div className="bw-step-body">
+          <div className="bw-step-title">Choose Your Trading Mode</div>
+          <div className="bw-step-sub">This controls your risk exposure. The strategy logic (entries, exits, stop loss) stays the same — only position sizing changes.</div>
+          <div className="bw-step-meta">
+            All tiers trade the same 5-asset basket: <strong>BTC, ETH, SOL, XRP, SUI</strong> /USDT — same VolumeProfile breakout strategy on every asset. Tier choice scales position size, not which assets trade.
+          </div>
+
+          <div className="bw-tier-grid">
+            {(['conservative', 'bold', 'aggressive'] as const).map(p => {
+              const r = TIER_RATIOS[p]
+              const sel = preset === p
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  className={'bw-tier-card' + (sel ? ' bw-selected' : '')}
+                  onClick={() => setPreset(p)}
+                >
+                  {r.recommended ? <span className="bw-recommend">RECOMMENDED</span> : null}
+                  <div className="bw-tier-ico">
+                    {p === 'conservative' ? <SVG><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></SVG>
+                      : p === 'bold' ? <SVG><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></SVG>
+                      : <SVG><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></SVG>}
+                  </div>
+                  <div className="bw-tier-name">{r.label}</div>
+                  <div className="bw-tier-mult">{r.mult}× of balance</div>
+                  <div className="bw-tier-blurb">{r.blurb}</div>
+                </button>
+              )
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="bw-toggle-projected"
+            onClick={() => setShowProjected(s => !s)}
+          >
+            {showProjected ? '▲ Hide' : '▼ Show'} Projected Performance
+          </button>
+          {showProjected ? (
+            <div className="bw-projected">
+              <div className="bw-proj-row">
+                <ProjStat label="Total Return"     val={`+${bt.totalReturnPct.toFixed(0)}%`} positive />
+                <ProjStat label="Annual Return"    val={`+${bt.annualPct.toFixed(0)}%`}      positive />
+                <ProjStat label="Max Drawdown"     val={`-${bt.maxDdPct.toFixed(1)}%`}       negative />
+              </div>
+              <div className="bw-proj-row">
+                <ProjStat label="Win Rate"         val={`${bt.winRatePct.toFixed(1)}%`} />
+                <ProjStat label="Profit Factor"    val={bt.profitFactor.toFixed(2)} />
+                <ProjStat label="Months Profitable" val="94/102" />
+              </div>
+              <div className="bw-proj-disclaimer">Based on 8 years of backtested data. Past performance does not guarantee future results.</div>
+            </div>
+          ) : null}
+
+          <div className="bw-actions">
+            <button type="button" className="bw-btn-back" onClick={onClose}>Cancel</button>
+            <button type="button" className="bw-btn-primary" onClick={next}>Next →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2 — Capital */}
+      {step === 2 && (
+        <div className="bw-step-body">
+          <div className="bw-step-title">Set Your Capital</div>
+          <div className="bw-step-sub">Enter your starting balance or fetch it directly from your exchange. This determines your position size and risk per trade.</div>
+
+          <div className="bw-cap-row">
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <label className="bw-label">Starting Capital ($)</label>
+              <input
+                type="number"
+                value={capital}
+                min={100}
+                step={100}
+                onChange={e => setCapital(e.target.value)}
+                className="settings-input"
+                style={{ borderColor: overBalance ? 'var(--neg)' : undefined }}
+              />
+            </div>
+            <button type="button" className="bw-btn-secondary" disabled={fetchingBalance} onClick={fetchBalance}>
+              {fetchingBalance ? 'Fetching…' : 'Refresh Balance'}
+            </button>
+          </div>
+          {overBalance ? (
+            <div className="neg-text" style={{ fontSize: 12, fontWeight: 600 }}>
+              Cannot exceed your exchange balance (${Math.floor(maxBalance).toLocaleString()})
+            </div>
+          ) : (
+            <div className="settings-help">Your available exchange balance. Adjust if you want to trade with a portion of your funds.</div>
+          )}
+
+          <div className="bw-position-card">
+            <div className="bw-position-head">Position Parameters</div>
+            <div className="bw-position-grid">
+              <ProjStat label="Tier Multiplier"  val={`${ratios.mult}× of balance`} />
+              <ProjStat label="Position Size"    val={`$${Math.round(posSize).toLocaleString()}`} />
+              <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} />
+              <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} negative />
+            </div>
+          </div>
+
+          <div className="bw-explain">
+            <strong>How it works:</strong> Your capital × tier multiplier = position size per trade. A {ratios.sl}% stop loss on a ${Math.round(posSize).toLocaleString()} position means you risk ${Math.round(maxLoss).toLocaleString()} per trade. Bitget leverage is set to {ratios.leverage}× by the bot — used only to free up margin, not to scale position size.
+          </div>
+
+          <div className="bw-actions">
+            <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
+            <button type="button" className="bw-btn-primary" onClick={next} disabled={overBalance || capNum < 100}>Next →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3 — Sizing + Compound */}
+      {step === 3 && (
+        <div className="bw-step-body">
+          <div className="bw-step-title">How Position Sizing Works</div>
+          <div className="bw-step-sub">Position size is set when you activate the bot — based on your balance at that moment. From there, you choose: keep it <strong>fixed</strong> (default; risk shrinks as you win) or let it <strong>compound</strong> with your balance (constant risk %, faster compounding).</div>
+
+          <div className="bw-compound-card">
+            <div className="bw-compound-head">
+              <div>
+                <div className="bw-compound-ttl">Compound mode</div>
+                <div className="bw-compound-help">When ON, every trade is sized as <em>current balance × your tier ratio</em>. Wins and losses both affect the next trade's size. <strong>Default OFF</strong>: trade size stays fixed at your activation balance.</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={compound}
+                className={'toggle-switch' + (compound ? ' on' : '')}
+                onClick={() => setCompound(c => !c)}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+            <div className="bw-compound-conseq">
+              {compound
+                ? <><strong>On:</strong> on a ${capNum.toLocaleString()} starting balance, every trade scales with your current equity. As your account grows, position sizes grow too — drawdowns also hit larger positions.</>
+                : <><strong>Off (recommended):</strong> on a ${capNum.toLocaleString()} starting balance, every trade is sized from ${capNum.toLocaleString()} forever. As your account grows, % drawdowns shrink — you de-leverage as you win.</>
+              }
+            </div>
+          </div>
+
+          <div className="bw-pyramid-card">
+            <div className="bw-pyramid-head">Pyramid stacking</div>
+            <div className="bw-step-sub">Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> (winning trades that retrace to EMA21 in profit). Peak exposure is 1.5× the base notional ({ratios.mult * 1.5}× of balance).</div>
+            <div className="bw-pyramid-grid">
+              <div className="bw-pyramid-row">
+                <span>Base entry (no pyramid)</span>
+                <span className="num">${Math.round(posSize).toLocaleString()} · {ratios.mult}×</span>
+              </div>
+              <div className="bw-pyramid-row">
+                <span>+ Pyramid leg (EMA21 retrace, in profit)</span>
+                <span className="num">${Math.round(posSize * 1.5).toLocaleString()} · {(ratios.mult * 1.5).toFixed(2)}×</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bw-actions">
+            <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
+            <button type="button" className="bw-btn-primary" onClick={next}>Next →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4 — Projection */}
+      {step === 4 && (
+        <div className="bw-step-body">
+          <div className="bw-step-title">12-Month Projection</div>
+          <div className="bw-step-sub">Based on the 5-asset Satoshi Stacker portfolio backtest (BTC + ETH + SOL + XRP + SUI, VolumeProfile breakout, 6.8 yr Bitget data). Past performance ≠ future results.</div>
+
+          <div className="bw-proj-row">
+            <ProjStat
+              label="Projected Return"
+              val={`+$${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}`}
+              sub={`+${bt.annualPct.toFixed(0)}%`}
+              positive
+              big
+            />
+            <ProjStat
+              label="Est. Ending Balance"
+              val={`$${Math.round(capNum * (1 + bt.annualPct / 100)).toLocaleString()}`}
+              sub={`from $${capNum.toLocaleString()}`}
+              big
+            />
+          </div>
+
+          <div className="bw-proj-row">
+            <ProjStat label="Max Drawdown"     val={`-${bt.maxDdPct.toFixed(1)}%`} sub={`-$${Math.round(capNum * bt.maxDdPct / 100).toLocaleString()}`} negative />
+            <ProjStat label="Win Rate"         val={`${bt.winRatePct.toFixed(1)}%`} />
+            <ProjStat label="Risk per Trade"   val={`$${Math.round(maxLoss).toLocaleString()}`} sub={`${(maxLoss / capNum * 100).toFixed(1)}% of capital`} />
+          </div>
+
+          <div className="bw-risk-band">
+            <div className="bw-risk-track" />
+            <div className="bw-risk-dot" style={{ left: `${bt.riskPos}%` }} />
+            <div className="bw-risk-ends">
+              <span>Conservative</span>
+              <span>Bold</span>
+              <span>Aggressive</span>
+            </div>
+          </div>
+
+          <div className="bw-disclaimer">These projections are based on historical backtests. Actual results may vary. Never invest more than you can afford to lose.</div>
+
+          <div className="bw-actions">
+            <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
+            <button type="button" className="bw-btn-primary" onClick={next}>Next →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5 — Review & Activate */}
+      {step === 5 && (
+        <div className="bw-step-body">
+          <div className="bw-step-title">Review & Activate</div>
+          <div className="bw-step-sub">Double-check your settings below. You can change them anytime from Bot Settings.</div>
+
+          <div className="bw-review-card">
+            <div className="bw-review-row"><span>Trading Mode</span><span>{TIER_RATIOS[preset].label}</span></div>
+            <div className="bw-review-row"><span>Starting Capital</span><span className="num">${capNum.toLocaleString()}</span></div>
+            <div className="bw-review-row"><span>Position Size (per trade)</span><span className="num">${Math.round(posSize).toLocaleString()}</span></div>
+            <div className="bw-review-row"><span>Bitget Leverage</span><span className="num">{ratios.leverage}×</span></div>
+            <div className="bw-review-row"><span>Max Loss / Trade</span><span className="num neg-text">-${Math.round(maxLoss).toLocaleString()}</span></div>
+            <div className="bw-review-row"><span>Compound mode</span><span>{compound ? 'On (proportional)' : 'Off (fixed)'}</span></div>
+            <div className="bw-review-row"><span>Projected Annual Return</span><span className="num pos-text">+${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}</span></div>
+          </div>
+
+          {activateMsg ? (
+            <div className={activateMsg.ok ? 'pos-text' : 'neg-text'} style={{ fontSize: 13, fontWeight: 600, padding: '10px 12px', background: activateMsg.ok ? 'rgba(46,204,113,0.06)' : 'rgba(255,77,79,0.06)', border: '1px solid ' + (activateMsg.ok ? 'rgba(46,204,113,0.22)' : 'rgba(255,77,79,0.22)'), borderRadius: 8 }}>
+              {activateMsg.text}
+            </div>
+          ) : null}
+
+          <button type="button" className="bw-btn-activate" onClick={activateBot} disabled={activating}>
+            {activating ? 'Activating…' : 'Activate Bot →'}
+          </button>
+
+          <div className="bw-actions">
+            <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
+            <button type="button" className="bw-btn-back" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SVG = ({ children }: { children: React.ReactNode }) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+)
+
+function ProjStat({
+  label, val, sub, positive, negative, big,
+}: { label: string; val: string; sub?: string; positive?: boolean; negative?: boolean; big?: boolean }) {
+  const cls = positive ? 'pos-text' : negative ? 'neg-text' : ''
+  return (
+    <div className="bw-proj-stat">
+      <div className="bw-proj-stat-label">{label}</div>
+      <div className={'bw-proj-stat-val num ' + cls + (big ? ' big' : '')}>{val}</div>
+      {sub ? <div className="bw-proj-stat-sub">{sub}</div> : null}
     </div>
   )
 }
