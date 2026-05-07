@@ -242,9 +242,18 @@ const fmtMonthYear = (ts: string | null | undefined) => {
   return new Date(ts).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
+// Empty default — page renders instantly against this; real data swaps in.
+const EMPTY_BILLING: BillingData = {
+  plan: null,
+  currentPeriod: null,
+  history: [],
+  profile: { isVip: false, isBroker: false },
+}
+
 function BillingPanel() {
-  const [data, setData] = useState<BillingData | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Render the v1-faithful billing layout instantly with empty values, swap
+  // in real data when /api/billing resolves. No 'Loading…' card.
+  const [data, setData] = useState<BillingData>(EMPTY_BILLING)
 
   useEffect(() => {
     let cancelled = false
@@ -252,17 +261,10 @@ function BillingPanel() {
       try {
         const j = await authedFetch<BillingData>('/api/billing')
         if (!cancelled) setData(j)
-      } catch {
-        if (!cancelled) setData(null)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+      } catch { /* silent — keep empty defaults */ }
     })()
     return () => { cancelled = true }
   }, [])
-
-  if (loading) return <div className="card card-pad settings-card"><div className="settings-help">Loading…</div></div>
-  if (!data) return <div className="card card-pad settings-card"><div className="settings-help">Unable to load billing.</div></div>
 
   const plan = data.plan
   const cp = data.currentPeriod
@@ -505,9 +507,10 @@ type TierKey = keyof typeof TIER_RATIOS
 
 function BotPanel() {
   const t = useT()
+  // Render content instantly with empty defaults — real values swap in when
+  // /api/bot-activate resolves. No 'Loading…' guard.
   const [cfg, setCfg] = useState<BotConfig | null>(null)
   const [activated, setActivated] = useState(false)
-  const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'summary' | 'wizard'>('summary')
 
   const loadConfig = useCallback(async () => {
@@ -515,8 +518,7 @@ function BotPanel() {
       const j = await authedFetch<{ activated: boolean; config: BotConfig | null }>('/api/bot-activate')
       setCfg(j?.config || null)
       setActivated(!!j?.activated)
-    } catch { /* keep current state */ }
-    finally { setLoading(false) }
+    } catch { /* silent — keep zero state */ }
   }, [])
 
   useEffect(() => { loadConfig() }, [loadConfig])
@@ -547,38 +549,32 @@ function BotPanel() {
   return (
     <div className="card card-pad settings-card">
       <h3 className="settings-card-title">{t('bot.title')}</h3>
-      {loading ? (
-        <div className="settings-help">{t('common.loading')}</div>
-      ) : (
-        <>
-          <div className="bot-summary">
-            <BotRow label={t('bot.status')} value={
-              <span className={activated ? 'pos-text' : 'neg-text'} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {activated ? <span className="dot-live" /> : null}
-                {activated ? t('bot.active') : t('bot.notActivated')}
-              </span>
-            } />
-            <BotRow label={t('bot.tier')} value={<span className="bot-tier-pill">{tierLabel}</span>} />
-            <BotRow label={t('bot.leverage')} value={`${lev}×`} />
-            {capital ? <BotRow label="Capital" value={`$${Number(capital).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
-            {notional ? <BotRow label={t('bot.notional')} value={`$${Number(notional).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
-          </div>
+      <div className="bot-summary">
+        <BotRow label={t('bot.status')} value={
+          <span className={activated ? 'pos-text' : 'neg-text'} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {activated ? <span className="dot-live" /> : null}
+            {activated ? t('bot.active') : t('bot.notActivated')}
+          </span>
+        } />
+        <BotRow label={t('bot.tier')} value={<span className="bot-tier-pill">{tierLabel}</span>} />
+        <BotRow label={t('bot.leverage')} value={`${lev}×`} />
+        {capital ? <BotRow label="Capital" value={`$${Number(capital).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
+        {notional ? <BotRow label={t('bot.notional')} value={`$${Number(notional).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
+      </div>
 
-          <div style={{ borderTop: '1px solid var(--line)', marginTop: 22, paddingTop: 16 }}>
-            <div className="settings-help" style={{ marginBottom: 8 }}>
-              {activated ? 'Reconfigure your tier, capital, or compound mode.' : 'Configure your tier and activate the bot.'}
-            </div>
-            <button
-              type="button"
-              className="settings-btn-primary"
-              onClick={() => setView('wizard')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              {activated ? 'Reconfigure bot' : t('bot.openWizard')}
-            </button>
-          </div>
-        </>
-      )}
+      <div style={{ borderTop: '1px solid var(--line)', marginTop: 22, paddingTop: 16 }}>
+        <div className="settings-help" style={{ marginBottom: 8 }}>
+          {activated ? 'Reconfigure your tier, capital, or compound mode.' : 'Configure your tier and activate the bot.'}
+        </div>
+        <button
+          type="button"
+          className="settings-btn-primary"
+          onClick={() => setView('wizard')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        >
+          {activated ? 'Reconfigure bot' : t('bot.openWizard')}
+        </button>
+      </div>
     </div>
   )
 }

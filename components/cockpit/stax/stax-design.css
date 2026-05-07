@@ -111,28 +111,11 @@ html.light .stax-app {
     box-shadow 0.28s ease;
 }
 
-/* Cursor-tracking spotlight — a soft gold radial gradient that follows the
-   pointer inside the card. CSS variables --mx/--my are written by the
-   global mousemove handler in StaxAppShell. The ::after pseudo-element
-   layers above the bg but below content (z-index between bg and content). */
-.stax-app .card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    600px circle at var(--mx, 50%) var(--my, 50%),
-    rgba(212, 160, 23, 0.08),
-    transparent 40%
-  );
-  opacity: 0;
-  transition: opacity 0.35s ease;
-  pointer-events: none;
-  z-index: 1;
-}
-.stax-app .card > * { position: relative; z-index: 2; }
-@media (hover: hover) {
-  .stax-app .card:hover::after { opacity: 1; }
-}
+/* Cursor-tracking spotlight removed per user request — felt like a
+   permanent yellow halo following the cursor across every page.
+   The mousemove handler in StaxAppShell still writes --mx/--my but
+   nothing reads them now, so it's a no-op until we want it back. */
+.stax-app .card > * { position: relative; }
 
 /* Hover state — lift, gold-tinted border, gold outer glow, brighter top edge */
 @media (hover: hover) {
