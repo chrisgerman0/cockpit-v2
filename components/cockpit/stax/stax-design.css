@@ -829,18 +829,47 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
 
 /* streak */
 .stax-app .streak-val { font-size: 30px; font-weight: 600; color: var(--pos); margin: 6px 0 4px; letter-spacing: -0.01em; }
-.stax-app .streak-dots { display: flex; gap: 5px; flex-wrap: nowrap; margin-top: 16px; overflow: hidden; }
-.stax-app .sd { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; box-shadow: 0 0 6px currentColor; }
+.stax-app .streak-dots { display: flex; gap: 5px; flex-wrap: nowrap; margin-top: 16px; /* allow tooltip to escape */ overflow: visible; position: relative; }
+.stax-app .sd {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px;
+  box-shadow: 0 0 6px currentColor;
+  /* Tooltip plumbing — make hover area 100% reliable. The 9px dot itself is
+     too small to land a cursor on consistently; pad the hit area via a
+     pseudo-element. */
+  position: relative; cursor: help;
+}
+.stax-app .sd::before {
+  content: ''; position: absolute; inset: -6px;  /* expand hit zone */
+  border-radius: 50%;
+}
+/* CSS tooltip on hover — no JS, fires instantly (no native-title 1.5s wait). */
+.stax-app .sd[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: rgba(10, 10, 12, 0.96); color: #f3f4f6;
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+  padding: 6px 10px; font-size: 11.5px; font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap; pointer-events: none; z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  letter-spacing: 0.02em;
+}
 .stax-app .sd.w { background: var(--pos); color: rgba(46,204,113,0.6); }
 .stax-app .sd.l { background: var(--neg); color: rgba(255,77,79,0.5); }
-/* Open trade — same colour scheme as W/L based on current pnl, but pulses
-   to signal "this is a live position, the colour can still flip." Uses the
-   existing stax-pulse keyframes for visual consistency with other live
-   indicators on the page. */
-/* Match the rest of the site's live-dot heartbeat: same keyframe and same
-   1.8s cadence as .dot-live (used in Bot Status, the top-bar "Live" badge,
-   activated bot indicator). Keeps every flashing dot in sync visually. */
-.stax-app .sd.open { animation: stax-pulse 1.8s ease-in-out infinite; }
+/* Open trade — pulses with a HALO MATCHING THE DOT'S COLOUR. The previous
+   single keyframe used a hardcoded green ring which looked wrong on red
+   (losing) open positions: red dot with green expanding halo. Now W open
+   pulses green, L open pulses red — both visually consistent with the
+   .dot-live heartbeat used elsewhere on the site. */
+.stax-app .sd.w.open { animation: stax-pulse-pos 1.8s ease-in-out infinite; }
+.stax-app .sd.l.open { animation: stax-pulse-neg 1.8s ease-in-out infinite; }
+@keyframes stax-pulse-pos {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 6px var(--pos), 0 0 0 0 rgba(46, 204, 113, 0.45); }
+  50%      { transform: scale(1.18); box-shadow: 0 0 12px var(--pos), 0 0 0 6px rgba(46, 204, 113, 0); }
+}
+@keyframes stax-pulse-neg {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 6px var(--neg), 0 0 0 0 rgba(255, 77, 79, 0.45); }
+  50%      { transform: scale(1.18); box-shadow: 0 0 12px var(--neg), 0 0 0 6px rgba(255, 77, 79, 0); }
+}
 
 /* ticker */
 .stax-app .ticker {

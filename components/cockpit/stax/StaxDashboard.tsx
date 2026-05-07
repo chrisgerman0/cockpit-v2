@@ -1049,7 +1049,10 @@ function StreakCard({ value, sub, recent, recentLabels, isWin }: { value: string
           const isOpen = c === 'OW' || c === 'OL'
           const isW = c === 'W' || c === 'OW'
           const label = recentLabels?.[i] || ''
-          return <span key={i} className={'sd ' + (isW ? 'w' : 'l') + (isOpen ? ' open' : '')} title={label} aria-label={label} />
+          // data-tip drives the CSS-only tooltip in stax-design.css (instant
+          // on hover, unlike the native title attribute which has a 1-2s
+          // delay). aria-label keeps it accessible.
+          return <span key={i} className={'sd ' + (isW ? 'w' : 'l') + (isOpen ? ' open' : '')} data-tip={label || undefined} aria-label={label} />
         })}
       </div>
     </div>
