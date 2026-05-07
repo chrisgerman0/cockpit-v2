@@ -345,7 +345,7 @@ const SETTINGS_TABS = [
 
 function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerItems?: TickerAsset[] }) {
   const { latencyMs, connected } = useTickerStreamHealth()
-  const tone = !connected ? 'stale' : latencyMs > 800 ? 'high' : latencyMs > 400 ? 'mid' : 'good'
+  const tone = !connected ? 'stale' : latencyMs > 1000 ? 'high' : latencyMs > 500 ? 'mid' : 'good'
   const latencyTitle = connected
     ? `WebSocket round-trip: ${latencyMs}ms (sampled every 5s)`
     : 'Reconnecting to Bitget WebSocket — values fall back to a 5s REST poll'
@@ -1080,7 +1080,7 @@ function Ticker({ items, className }: { items: TickerAsset[]; className?: string
   // ping/pong RTT (was hardcoded "28" before) — colour-codes the signal
   // icon so a quick glance tells you whether the feed is healthy.
   const { latencyMs, connected } = useTickerStreamHealth()
-  const tone = !connected ? 'stale' : latencyMs > 800 ? 'high' : latencyMs > 400 ? 'mid' : 'good'
+  const tone = !connected ? 'stale' : latencyMs > 1000 ? 'high' : latencyMs > 500 ? 'mid' : 'good'
   const latencyTitle = connected
     ? `WebSocket round-trip: ${latencyMs}ms (sampled every 5s)`
     : 'Reconnecting to Bitget WebSocket — values fall back to a 5s REST poll'
