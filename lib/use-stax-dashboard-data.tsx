@@ -175,24 +175,22 @@ function streakFromUser(closed: RawTrade[], openPositions: RawTrade[]): StaxDash
   const closedSlice = closedSorted.slice(-maxClosedDots)
   const dots: Array<'W' | 'L' | 'OW' | 'OL'> = []
   const labels: string[] = []
+  // Tooltip is intentionally minimal: just COIN-SIDE (e.g. "BTC-LONG").
+  // Pure ASCII so it renders consistently across fonts/browsers (unicode
+  // arrows can fall back to '?' boxes in some monospace fonts).
   for (const t of closedSlice) {
     const pnl = Number(t.pnl_usd) || 0
     const sym = (t.symbol || '').replace('USDT', '')
     const side = (t.side || 'long').toUpperCase()
-    const dt = t.closed_at ? new Date(t.closed_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : ''
-    const pnlStr = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2)
     dots.push(pnl > 0 ? 'W' : 'L')
-    labels.push(`${sym} ${side} · ${pnlStr} · ${dt}`)
+    labels.push(`${sym}-${side}`)
   }
   for (const t of opensSorted) {
     const pnl = Number(t.pnl_usd) || 0
     const sym = (t.symbol || '').replace('USDT', '')
     const side = (t.side || 'long').toUpperCase()
-    const entry = Number(t.entry_price) || 0
-    const pnlStr = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2)
-    const entryStr = entry < 1 ? '$' + entry.toFixed(4) : '$' + entry.toLocaleString(undefined, { maximumFractionDigits: 2 })
     dots.push(pnl >= 0 ? 'OW' : 'OL')
-    labels.push(`${sym} ${side} · OPEN · ${pnlStr} · entry ${entryStr}`)
+    labels.push(`${sym}-${side}`)
   }
 
   if (!kind || len === 0) {
