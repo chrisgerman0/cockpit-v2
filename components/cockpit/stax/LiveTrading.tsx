@@ -57,24 +57,28 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
   // backtesting List of Trades layout) so the live page reads as one
   // consistent surface — same columns, same coin/side filters, same row
   // tints, same OPEN pulsing label, same pagination.
+  // Open positions = USER's actual Bitget positions (not strategy backtest state).
+  // Source of truth: /api/trades-live → data.open. Same source the Dashboard page
+  // uses, so both pages agree. assetStates (strategy view) is intentionally NOT
+  // used here — it would surface the strategy's intended positions, which can
+  // diverge from the user's actual exchange state (e.g., during catch-up windows
+  // or when a trade fails to fill).
   const openRows: LiveTradeRow[] = useMemo(() =>
-    data.assetStates
-      .filter(s => s.side !== 'FLAT')
-      .map(s => ({
-        symbol: s.symbol,
-        sym: s.sym,
-        side: s.side as 'LONG' | 'SHORT',
-        notional: s.notionalUsd ?? 0,
-        entryPx: s.entry ?? 0,
-        entryTs: s.entryTs ?? 0,
-        exitPx: null,
-        exitTs: null,
-        pnl: s.unrealizedUsd ?? 0,
-        pnlPct: s.unrealizedPct ?? 0,
-        reason: s.pyramided ? 'Open · Pyramided' : 'Open',
-        open: true,
-      })),
-    [data.assetStates],
+    data.open.map(t => ({
+      symbol: t.pair,
+      sym: t.sym,
+      side: t.side,
+      notional: t.sizeUsd,
+      entryPx: t.entry,
+      entryTs: t.openedAt ?? 0,
+      exitPx: null,
+      exitTs: null,
+      pnl: t.pnlUsd,
+      pnlPct: t.pnlPct,
+      reason: t.pyramided ? 'Open · Pyramided' : 'Open',
+      open: true,
+    })),
+    [data.open],
   )
 
   const closedRows: LiveTradeRow[] = useMemo(() =>
@@ -145,10 +149,10 @@ function StatsRow({ totals, unrealizedPnl }: { totals: LiveTradingData['totals']
   const realizedClass = totals.realizedPnl >= 0 ? 'pos' : 'neg'
   return (
     <div className="row row-stats">
-      <Stat icon={Icons.Check} label="Realized PnL"   value={totals.closedCount === 0 ? '$0' : fmtUsdSign(totals.realizedPnl)} sub={totals.closedCount === 0 ? 'No closed trades yet' : `${fmtPctSign(totals.realizedPct)} of activation`} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
-      <Stat icon={Icons.TrendUp} label="Win Rate"     value={totals.closedCount === 0 ? '—' : `${totals.winRate}%`} sub={`${totals.wins} wins · ${totals.losses} losses`} />
-      <Stat icon={Icons.Bars}    label="Total Trades" value={String(totals.closedCount)} sub={totals.closedCount === 0 ? 'No history' : `Avg win ${fmtUsdSign(totals.avgWin)} · Avg loss ${fmtUsdSign(-totals.avgLoss)}`} />
-      <Stat icon={Icons.Star}    label="Best / Worst" value={fmtUsdSign(totals.bestTrade)} sub={`Worst ${fmtUsdSign(totals.worstTrade)}`} valueClass="pos" />
+      <Stat icon={Icons.Bars}    label="Total Trades"  value={String(totals.closedCount)} sub={totals.closedCount === 0 ? 'No history' : `Avg win ${fmtUsdSign(totals.avgWin)} · Avg loss ${fmtUsdSign(-totals.avgLoss)}`} />
+      <Stat icon={Icons.TrendUp} label="Win Rate"      value={totals.closedCount === 0 ? '—' : `${totals.winRate}%`} sub={`${totals.wins} wins · ${totals.losses} losses`} />
+      <Stat icon={Icons.Check}   label="Realized PnL"  value={totals.closedCount === 0 ? '$0' : fmtUsdSign(totals.realizedPnl)} sub={totals.closedCount === 0 ? 'No closed trades yet' : `Best ${fmtUsdSign(totals.bestTrade)} · Worst ${fmtUsdSign(totals.worstTrade)}`} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
+      <Stat icon={Icons.Star}    label="Total Return"  value={totals.closedCount === 0 ? '—' : fmtPctSign(totals.realizedPct)} sub="Since activation" valueClass={totals.closedCount === 0 ? '' : realizedClass} />
     </div>
   )
 }
@@ -200,7 +204,7 @@ const SIDE_FILTERS: SideFilter[] = ['ALL', 'LONG', 'SHORT']
 function fmtTradeTs(ms: number): string {
   if (!ms) return '—'
   const d = new Date(ms)
-  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
   const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
   return `${date}, ${time}`
 }
