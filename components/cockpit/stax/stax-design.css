@@ -586,7 +586,7 @@ html.light .stax-app .menu-item:hover { background: rgba(0,0,0,0.04); }
 .stax-app .row-hero { grid-template-columns: 1fr 1.85fr; }
 .stax-app .row-hero > .hero-left { display: grid; grid-template-rows: auto; gap: 14px; }
 .stax-app .row-stats { grid-template-columns: repeat(4, 1fr); }
-.stax-app .row-tables { grid-template-columns: 1.3fr 2fr; }
+.stax-app .row-tables { grid-template-columns: 1fr 1fr; }
 .stax-app .row-bottom { grid-template-columns: 1.3fr 1fr 1fr 1.2fr; }
 
 /* hero balance card */
@@ -837,7 +837,10 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
    to signal "this is a live position, the colour can still flip." Uses the
    existing stax-pulse keyframes for visual consistency with other live
    indicators on the page. */
-.stax-app .sd.open { animation: stax-pulse 1.6s ease-in-out infinite; }
+/* Match the rest of the site's live-dot heartbeat: same keyframe and same
+   1.8s cadence as .dot-live (used in Bot Status, the top-bar "Live" badge,
+   activated bot indicator). Keeps every flashing dot in sync visually. */
+.stax-app .sd.open { animation: stax-pulse 1.8s ease-in-out infinite; }
 
 /* ticker */
 .stax-app .ticker {
