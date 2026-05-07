@@ -10,7 +10,7 @@
  * porting the 5-step wizard is a separate ~6h job).
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Icons } from './Icons'
 import { useT } from '@/lib/i18n'
@@ -292,57 +292,298 @@ function BotRow({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 // ─── Notifications ──────────────────────────────────────────────────────────
+// Three blocks (mirrors v1 client-dashboard.html § settings-notifications):
+//   1. Telegram — connect / linked status / disconnect (POST/GET/DELETE /api/telegram/link)
+//   2. Notification preferences — 4 events × 2 channels (PUT /api/telegram/prefs)
+//   3. Notification Log — recent items from /api/trades?limit=500, manual refresh
+
+const PREF_EVENTS = [
+  { key: 'trade_alerts',   labelEn: 'Trade Alerts',     labelPt: 'Alertas de Trade',     helpEn: 'Get notified when a trade opens or closes',                helpPt: 'Receba quando um trade abre ou fecha' },
+  { key: 'weekly_reports', labelEn: 'Weekly Reports',   labelPt: 'Relatórios Semanais',  helpEn: 'Performance summary every Monday',                          helpPt: 'Resumo de desempenho toda segunda' },
+  { key: 'system_alerts',  labelEn: 'System Alerts',    labelPt: 'Alertas do Sistema',   helpEn: 'Bot status changes, downtime alerts',                       helpPt: 'Mudanças de status do bot, alertas de inatividade' },
+  { key: 'billing',        labelEn: 'Billing & Payouts',labelPt: 'Cobrança & Pagamentos',helpEn: 'Invoice reminders, payment confirmations, commission payouts', helpPt: 'Lembretes de fatura, confirmações de pagamento, comissões' },
+] as const
+
+type PrefKey = (typeof PREF_EVENTS)[number]['key']
+type PrefMap = Record<string, boolean>
+
+type TelegramLinkStatus = {
+  linked: boolean
+  username: string | null
+  linkedAt: string | null
+  prefs: PrefMap
+}
+
+type NotifLogItem = {
+  id: string
+  type: string
+  icon: string
+  timestamp: string
+  message: string
+  isWin?: boolean
+}
 
 function NotificationsPanel() {
   const t = useT()
-  const [prefs, setPrefs] = useState({ trades: true, weekly: true, system: true })
+  const isPt = t('common.lang') === 'PT' || (typeof navigator !== 'undefined' && navigator.language?.startsWith('pt'))
+  const tt = (en: string, pt: string) => (isPt ? pt : en)
+
+  // ── Telegram link state
+  const [tgLinked, setTgLinked] = useState(false)
+  const [tgUsername, setTgUsername] = useState<string | null>(null)
+  const [tgLinkedAt, setTgLinkedAt] = useState<string | null>(null)
+  const [tgDeepLink, setTgDeepLink] = useState<string | null>(null)
+  const [tgConnecting, setTgConnecting] = useState(false)
+  const tgPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── Prefs
+  const [prefs, setPrefs] = useState<PrefMap>({
+    trade_alerts: true, weekly_reports: true, system_alerts: true, billing: true,
+    tg_trade_alerts: true, tg_weekly_reports: true, tg_system_alerts: true, tg_billing: true,
+  })
+
+  // ── Notification log
+  const [logItems, setLogItems] = useState<NotifLogItem[]>([])
+  const [logState, setLogState] = useState<'loading' | 'ready' | 'error' | 'empty'>('loading')
+  const [logErrorCode, setLogErrorCode] = useState<string>('')
+  const [logRefreshing, setLogRefreshing] = useState(false)
+
+  // ─── Telegram status loader (also seeds prefs on first load) ──────────
+  const loadTelegramStatus = useCallback(async () => {
+    try {
+      const j = await authedFetch<TelegramLinkStatus>('/api/telegram/link')
+      setTgLinked(!!j.linked)
+      setTgUsername(j.username)
+      setTgLinkedAt(j.linkedAt)
+      if (j.prefs && typeof j.prefs === 'object') {
+        // Server canonicalises only base keys — preserve our tg_ defaults.
+        setPrefs(p => ({ ...p, ...j.prefs }))
+      }
+    } catch { /* silent — keep current state */ }
+  }, [])
+
+  useEffect(() => {
+    loadTelegramStatus()
+    return () => { if (tgPollRef.current) clearInterval(tgPollRef.current) }
+  }, [loadTelegramStatus])
+
+  // ─── Notification log loader ──────────────────────────────────────────
+  const loadLog = useCallback(async (manual: boolean = false) => {
+    if (manual) setLogRefreshing(true)
+    else setLogState('loading')
+    try {
+      const j = await authedFetch<{ notifications: NotifLogItem[] }>('/api/trades?limit=500')
+      const items = (j?.notifications || []).filter(n => {
+        if (!n.timestamp) return false
+        // Same 24h auto-dismiss window as v1 (loadNotifications).
+        return new Date(n.timestamp).getTime() > Date.now() - 24 * 3600 * 1000
+      })
+      setLogItems(items)
+      setLogState(items.length ? 'ready' : 'empty')
+    } catch (e: any) {
+      const m = String(e?.message || '')
+      const code = m.match(/^(\d{3})/)?.[1] || 'network'
+      setLogErrorCode(`HTTP ${code}`)
+      setLogState('error')
+    } finally {
+      setLogRefreshing(false)
+    }
+  }, [])
+
+  useEffect(() => { loadLog(false) }, [loadLog])
+
+  // ─── Telegram connect / disconnect ────────────────────────────────────
+  async function handleConnectTelegram() {
+    setTgConnecting(true)
+    try {
+      const j = await authedFetch<{ deepLink: string; expiresAt: string }>('/api/telegram/link', { method: 'POST' })
+      setTgDeepLink(j.deepLink)
+      // Poll every 3s for up to 3 minutes for the user to complete the link.
+      let polls = 0
+      if (tgPollRef.current) clearInterval(tgPollRef.current)
+      tgPollRef.current = setInterval(async () => {
+        polls++
+        if (polls > 60) { if (tgPollRef.current) clearInterval(tgPollRef.current); return }
+        try {
+          const s = await authedFetch<TelegramLinkStatus>('/api/telegram/link')
+          if (s.linked) {
+            if (tgPollRef.current) clearInterval(tgPollRef.current)
+            setTgLinked(true)
+            setTgUsername(s.username)
+            setTgLinkedAt(s.linkedAt)
+            setTgDeepLink(null)
+            setTgConnecting(false)
+          }
+        } catch { /* keep polling */ }
+      }, 3000)
+    } catch {
+      setTgConnecting(false)
+    }
+  }
+
+  async function handleDisconnectTelegram() {
+    if (!confirm(tt('Disconnect Telegram? You will no longer receive notifications there.', 'Desconectar o Telegram? Você deixará de receber notificações por lá.'))) return
+    try {
+      await authedFetch('/api/telegram/link', { method: 'DELETE' })
+      setTgLinked(false)
+      setTgUsername(null)
+      setTgLinkedAt(null)
+      setTgDeepLink(null)
+      // Clear telegram-side toggles UI-only — server defaults will repopulate on next load.
+      setPrefs(p => ({ ...p, tg_trade_alerts: false, tg_weekly_reports: false, tg_system_alerts: false, tg_billing: false }))
+    } catch { /* show in UI later if needed */ }
+  }
+
+  // ─── Save prefs ───────────────────────────────────────────────────────
+  // Debounced — clicking many checkboxes shouldn't fire a request per click.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function savePrefs(next: PrefMap) {
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      authedFetch('/api/telegram/prefs', { method: 'PUT', body: JSON.stringify(next) }).catch(() => {})
+    }, 350)
+  }
+
+  function togglePref(key: string, on: boolean) {
+    setPrefs(prev => {
+      const next = { ...prev, [key]: on }
+      savePrefs(next)
+      return next
+    })
+  }
 
   return (
-    <div className="card card-pad settings-card">
-      <h3 className="settings-card-title">{t('notif.title')}</h3>
-      <div className="notif-list">
-        <ToggleRow
-          label={t('notif.tradeAlerts')}
-          help={t('notif.tradeAlertsHelp')}
-          checked={prefs.trades}
-          onChange={v => setPrefs(p => ({ ...p, trades: v }))}
-        />
-        <ToggleRow
-          label={t('notif.weeklyReport')}
-          help={t('notif.weeklyHelp')}
-          checked={prefs.weekly}
-          onChange={v => setPrefs(p => ({ ...p, weekly: v }))}
-        />
-        <ToggleRow
-          label={t('notif.systemAlerts')}
-          help={t('notif.systemHelp')}
-          checked={prefs.system}
-          onChange={v => setPrefs(p => ({ ...p, system: v }))}
-        />
-      </div>
-      <div className="settings-help" style={{ marginTop: 12 }}>
-        Telegram channel + email integration is configured in the wizard. Toggles here control which events get sent.
-      </div>
-    </div>
-  )
-}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-function ToggleRow({ label, help, checked, onChange }: { label: string; help: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div className="toggle-row">
-      <div>
-        <div className="toggle-label">{label}</div>
-        <div className="toggle-help">{help}</div>
+      {/* ── Telegram block ──────────────────────────────────────────── */}
+      <div className="card card-pad">
+        <div className="bt-card-head">
+          <div className="bt-card-title"><span className="bt-card-bar" />{tt('TELEGRAM', 'TELEGRAM')}</div>
+        </div>
+        <div className="tg-block">
+          {!tgLinked ? (
+            <>
+              <div className="tg-blurb">
+                {tt(
+                  'Connect your Telegram to receive instant trade alerts, payment notifications, and weekly reports directly in your chat.',
+                  'Conecte seu Telegram para receber alertas instantâneos de trade, notificações de pagamento e relatórios semanais direto no seu chat.'
+                )}
+              </div>
+              <button
+                type="button"
+                className="tg-connect-btn"
+                disabled={tgConnecting}
+                onClick={handleConnectTelegram}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+                {tgConnecting ? tt('Generating link…', 'Gerando link…') : tt('Connect Telegram', 'Conectar Telegram')}
+              </button>
+              {tgDeepLink ? (
+                <div className="tg-deeplink-card">
+                  <div className="lbl">{tt('Click the link below to open Telegram and connect:', 'Clique no link abaixo para abrir o Telegram e conectar:')}</div>
+                  <a href={tgDeepLink} target="_blank" rel="noreferrer noopener">{tgDeepLink}</a>
+                  <div className="expiry">{tt('Link expires in 15 minutes.', 'O link expira em 15 minutos.')}</div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="tg-linked-card">
+                <span className="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                <div>
+                  <div className="ttl">{tt('Telegram Connected', 'Telegram Conectado')}</div>
+                  <div className="sub">{tgUsername ? `@${tgUsername}` : tgLinkedAt ? `${tt('Connected', 'Conectado')} ${new Date(tgLinkedAt).toLocaleDateString()}` : ''}</div>
+                </div>
+              </div>
+              <button type="button" className="tg-disconnect-btn" onClick={handleDisconnectTelegram}>
+                {tt('Disconnect Telegram', 'Desconectar Telegram')}
+              </button>
+            </>
+          )}
+        </div>
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        className={'toggle-switch' + (checked ? ' on' : '')}
-        onClick={() => onChange(!checked)}
-      >
-        <span className="toggle-knob" />
-      </button>
+
+      {/* ── Notification preferences ───────────────────────────────── */}
+      <div className="card card-pad">
+        <div className="bt-card-head">
+          <div className="bt-card-title"><span className="bt-card-bar" />{tt('NOTIFICATIONS', 'NOTIFICAÇÕES')}</div>
+        </div>
+        <div className="notif-prefs-grid">
+          <div className="head first" />
+          <div className="head">{tt('Email', 'E-mail')}</div>
+          <div className="head">{tt('Telegram', 'Telegram')}</div>
+
+          {PREF_EVENTS.map(ev => (
+            <div key={ev.key} style={{ display: 'contents' }}>
+              <div className="row-name">
+                <div className="pref-label">{isPt ? ev.labelPt : ev.labelEn}</div>
+                <div className="pref-help">{isPt ? ev.helpPt : ev.helpEn}</div>
+              </div>
+              <div className="row-cb">
+                <input
+                  type="checkbox"
+                  className="notif-cb"
+                  checked={!!prefs[ev.key]}
+                  onChange={e => togglePref(ev.key, e.target.checked)}
+                />
+              </div>
+              <div className="row-cb">
+                <input
+                  type="checkbox"
+                  className="notif-cb tg"
+                  checked={!!prefs[`tg_${ev.key}`]}
+                  disabled={!tgLinked}
+                  onChange={e => togglePref(`tg_${ev.key}`, e.target.checked)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Notification Log ───────────────────────────────────────── */}
+      <div className="card card-pad">
+        <div className="notif-log-head">
+          <div>
+            <div className="bt-card-title"><span className="bt-card-bar" />{tt('NOTIFICATION LOG', 'HISTÓRICO DE NOTIFICAÇÕES')}</div>
+            <div className="notif-log-head-meta">
+              {tt('Recent in-app history for trades, billing, and broker payouts.', 'Histórico recente de trades, cobrança e comissões.')}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="notif-log-refresh"
+            disabled={logRefreshing}
+            onClick={() => loadLog(true)}
+          >
+            {logRefreshing ? tt('Refreshing…', 'Atualizando…') : `↻ ${tt('Refresh', 'Atualizar')}`}
+          </button>
+        </div>
+
+        <div className="notif-log-list">
+          {logState === 'loading' ? (
+            <div className="notif-log-empty">{tt('Loading notifications…', 'Carregando notificações…')}</div>
+          ) : logState === 'empty' ? (
+            <div className="notif-log-empty">{tt('No notification history yet.', 'Ainda não há histórico de notificações.')}</div>
+          ) : logState === 'error' ? (
+            <div className="notif-log-error">
+              {tt('Unable to load notification history.', 'Não foi possível carregar o histórico.')} ({logErrorCode}) — <a onClick={() => loadLog(true)}>{tt('retry', 'tentar novamente')}</a>
+            </div>
+          ) : (
+            logItems.map(n => (
+              <div key={n.id} className="notif-log-row">
+                <span className="ico">{n.icon || '⚡️'}</span>
+                <div className="body">
+                  <div className="row-top">
+                    <div className="msg">{n.message}</div>
+                    <div className="ts">{n.timestamp ? new Date(n.timestamp).toLocaleString() : ''}</div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   )
 }

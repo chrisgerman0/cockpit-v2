@@ -2183,3 +2183,287 @@ html.light .stax-app .mobile-bottom-nav {
 /* scrollbar light touch */
 .stax-app ::-webkit-scrollbar { height: 8px; width: 8px; }
 .stax-app ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+/* ── Notifications — bell dropdown ────────────────────────────────── */
+
+.stax-app .notif-wrap { position: relative; display: inline-flex; }
+
+.stax-app .notif-badge {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px;
+  background: var(--neg);
+  color: #fff; font-size: 10px; font-weight: 700; line-height: 16px;
+  text-align: center;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  pointer-events: none;
+}
+
+.stax-app .notif-dropdown {
+  position: absolute; top: calc(100% + 6px); right: 0;
+  min-width: 300px; max-width: 360px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.4),
+              0 1px 2px rgba(0,0,0,0.2);
+  z-index: 200;
+}
+.stax-app.light .notif-dropdown,
+html.light .stax-app .notif-dropdown {
+  box-shadow: 0 12px 36px rgba(28,22,10,0.16),
+              0 1px 2px rgba(28,22,10,0.06);
+}
+
+.stax-app .notif-dropdown-head {
+  padding: 10px 12px 8px;
+  font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  font-weight: 700; color: var(--muted);
+}
+
+.stax-app .notif-dropdown-list {
+  max-height: 320px; overflow-y: auto;
+}
+
+.stax-app .notif-dropdown-empty {
+  padding: 12px;
+}
+.stax-app .notif-dropdown-empty .ttl {
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.stax-app .notif-dropdown-empty .sub {
+  font-size: 11px; color: var(--muted); margin-top: 2px;
+}
+
+.stax-app .notif-dropdown-row {
+  display: flex; gap: 10px; padding: 10px 12px;
+  border-radius: 8px;
+  cursor: default;
+  transition: background 0.12s ease;
+}
+.stax-app .notif-dropdown-row:hover { background: rgba(255,255,255,0.04); }
+.stax-app.light .notif-dropdown-row:hover,
+html.light .stax-app .notif-dropdown-row:hover { background: rgba(0,0,0,0.04); }
+
+.stax-app .notif-dropdown-icon {
+  font-size: 16px; flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.stax-app .notif-dropdown-body { min-width: 0; flex: 1 1 auto; }
+.stax-app .notif-dropdown-msg {
+  font-size: 12.5px; font-weight: 500; color: var(--text);
+  line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stax-app .notif-dropdown-ts {
+  font-size: 10.5px; color: var(--muted); margin-top: 2px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.stax-app .notif-dropdown-divider {
+  margin: 4px 6px;
+  border-top: 1px solid var(--line);
+}
+
+.stax-app .notif-dropdown-settings {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.stax-app .notif-dropdown-settings:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+}
+.stax-app.light .notif-dropdown-settings:hover,
+html.light .stax-app .notif-dropdown-settings:hover { background: rgba(0,0,0,0.04); }
+
+@media (max-width: 480px) {
+  .stax-app .notif-dropdown { min-width: 260px; right: -8px; }
+}
+
+/* ── Notifications — Settings panel (Telegram + prefs + log) ─────── */
+
+.stax-app .tg-block {
+  display: flex; flex-direction: column; gap: 12px;
+}
+.stax-app .tg-blurb {
+  font-size: 12.5px; color: var(--muted); line-height: 1.55;
+}
+.stax-app .tg-connect-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(0,136,204,0.10);
+  border: 1px solid rgba(0,136,204,0.30);
+  border-radius: 10px;
+  padding: 10px 18px;
+  color: #0088cc;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+  align-self: flex-start;
+}
+.stax-app .tg-connect-btn:hover { background: rgba(0,136,204,0.16); border-color: rgba(0,136,204,0.45); }
+.stax-app .tg-connect-btn:disabled { opacity: 0.6; cursor: progress; }
+
+.stax-app .tg-deeplink-card {
+  padding: 14px;
+  background: rgba(0,136,204,0.06);
+  border: 1px solid rgba(0,136,204,0.20);
+  border-radius: 10px;
+}
+.stax-app .tg-deeplink-card .lbl {
+  font-size: 11.5px; color: var(--muted); margin-bottom: 8px;
+}
+.stax-app .tg-deeplink-card a {
+  color: #0088cc; font-size: 12.5px; font-weight: 600;
+  word-break: break-all; text-decoration: underline;
+}
+.stax-app .tg-deeplink-card .expiry {
+  font-size: 10.5px; color: var(--muted); margin-top: 8px;
+}
+
+.stax-app .tg-linked-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: rgba(46,204,113,0.06);
+  border: 1px solid rgba(46,204,113,0.22);
+  border-radius: 10px;
+}
+.stax-app .tg-linked-card .ico { color: var(--pos); display: inline-flex; }
+.stax-app .tg-linked-card .ttl { font-size: 13px; font-weight: 600; color: var(--pos); }
+.stax-app .tg-linked-card .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.stax-app .tg-disconnect-btn {
+  background: transparent; border: 0; padding: 0;
+  color: var(--muted); font-size: 12px; text-decoration: underline;
+  cursor: pointer; align-self: flex-start;
+}
+.stax-app .tg-disconnect-btn:hover { color: var(--neg); }
+
+/* Prefs grid: label | email cb | telegram cb */
+.stax-app .notif-prefs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 100px;
+  align-items: center;
+}
+.stax-app .notif-prefs-grid .head {
+  padding: 8px 10px; text-align: center;
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  font-weight: 700; color: var(--muted);
+}
+.stax-app .notif-prefs-grid .head.first { text-align: left; padding-left: 0; }
+.stax-app .notif-prefs-grid .row-name {
+  padding: 12px 0; border-top: 1px solid var(--line);
+}
+.stax-app .notif-prefs-grid .row-cb {
+  padding: 12px 10px; border-top: 1px solid var(--line);
+  text-align: center;
+}
+.stax-app .notif-prefs-grid .pref-label {
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.stax-app .notif-prefs-grid .pref-help {
+  font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4;
+}
+
+/* Custom checkbox — gold for email, blue for telegram */
+.stax-app .notif-cb {
+  appearance: none; -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.02);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s ease, background 0.12s ease;
+  vertical-align: middle;
+}
+.stax-app.light .notif-cb,
+html.light .stax-app .notif-cb { background: rgba(0,0,0,0.02); }
+.stax-app .notif-cb:hover { border-color: var(--gold); }
+.stax-app .notif-cb:checked {
+  background: var(--gold); border-color: var(--gold);
+}
+.stax-app .notif-cb:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px; top: 1px;
+  width: 5px; height: 10px;
+  border: solid #0b0b0f;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.stax-app .notif-cb.tg:checked { background: #0088cc; border-color: #0088cc; }
+.stax-app .notif-cb.tg:checked::after { border-color: #fff; }
+.stax-app .notif-cb:disabled {
+  opacity: 0.4; cursor: not-allowed; border-color: var(--line);
+}
+.stax-app .notif-cb:disabled:hover { border-color: var(--line); }
+
+/* Notification log entries */
+.stax-app .notif-log-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
+}
+.stax-app .notif-log-head-meta {
+  font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4;
+}
+.stax-app .notif-log-list {
+  max-height: 360px; overflow-y: auto;
+}
+.stax-app .notif-log-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 4px;
+  border-top: 1px solid var(--line);
+}
+.stax-app .notif-log-row:first-child { border-top: 0; }
+.stax-app .notif-log-row .ico {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; flex: 0 0 24px;
+}
+.stax-app .notif-log-row .body { flex: 1 1 auto; min-width: 0; }
+.stax-app .notif-log-row .row-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px;
+}
+.stax-app .notif-log-row .msg {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis;
+}
+.stax-app .notif-log-row .ts {
+  font-size: 10.5px; color: var(--muted); white-space: nowrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.stax-app .notif-log-empty {
+  padding: 16px 4px; color: var(--muted); font-size: 12.5px;
+}
+.stax-app .notif-log-error {
+  padding: 12px 4px; color: var(--muted); font-size: 12.5px;
+}
+.stax-app .notif-log-error a {
+  color: var(--gold); text-decoration: underline; cursor: pointer;
+}
+
+.stax-app .notif-log-refresh {
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.stax-app.light .notif-log-refresh,
+html.light .stax-app .notif-log-refresh { background: rgba(0,0,0,0.03); }
+.stax-app .notif-log-refresh:hover {
+  color: var(--text); background: rgba(255,255,255,0.06);
+}
+.stax-app.light .notif-log-refresh:hover,
+html.light .stax-app .notif-log-refresh:hover { background: rgba(0,0,0,0.05); }
+.stax-app .notif-log-refresh:disabled { opacity: 0.5; cursor: progress; }

@@ -364,6 +364,16 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [langOpen, setLangOpen] = useState(false)
   const langRef = useRef<HTMLDivElement | null>(null)
+  const [notifOpen, setNotifOpen] = useState(false)
+  const notifRef = useRef<HTMLDivElement | null>(null)
+  // Notifications + last-seen-at (24h auto-dismiss). Mirrors v1
+  // staxs_last_seen_notification_at logic in client-dashboard.html.
+  const [notifications, setNotifications] = useState<Array<{ id: string; type: string; icon: string; timestamp: string; message: string; isWin?: boolean }>>([])
+  const [seenAt, setSeenAt] = useState<number>(() => {
+    if (typeof window === 'undefined') return 0
+    const raw = localStorage.getItem('staxs_last_seen_notification_at')
+    return raw ? new Date(raw).getTime() || 0 : 0
+  })
 
   useEffect(() => {
     const html = document.documentElement
@@ -409,6 +419,66 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
       document.removeEventListener('keydown', onKey)
     }
   }, [langOpen])
+
+  // Close notif dropdown on outside / Esc — and mark all read on close.
+  useEffect(() => {
+    if (!notifOpen) return
+    function onClick(e: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setNotifOpen(false) }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [notifOpen])
+
+  // Fetch notifications on mount + every 60s. Source: /api/trades.
+  // Uses a session-cached access token via supabase-browser; if unauth'd
+  // (e.g. login screen) we silently skip rather than crash the topbar.
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setInterval> | null = null
+    async function load() {
+      try {
+        const { getAccessToken } = await import('@/lib/supabase-browser')
+        const token = await getAccessToken()
+        if (!token) return
+        const res = await fetch('/api/trades?limit=20', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({} as any))
+        if (cancelled) return
+        const list = (data?.notifications || []) as Array<any>
+        setNotifications(list)
+      } catch { /* silent */ }
+    }
+    load()
+    timer = setInterval(load, 60_000)
+    return () => { cancelled = true; if (timer) clearInterval(timer) }
+  }, [])
+
+  // Unread count = items newer than max(seenAt, now-24h). Auto-dismiss old
+  // items so the badge doesn't stick after multi-day-old trades.
+  const AUTO_DISMISS_MS = 24 * 3600 * 1000
+  const effectiveSeenAt = Math.max(seenAt, Date.now() - AUTO_DISMISS_MS)
+  const unreadCount = notifications.filter(n => {
+    const t = n.timestamp ? new Date(n.timestamp).getTime() : 0
+    return t > effectiveSeenAt
+  }).length
+
+  // When the user opens the bell, persist the seenAt so unread badge clears.
+  function handleNotifToggle() {
+    if (!notifOpen && unreadCount > 0) {
+      const iso = new Date().toISOString()
+      try { localStorage.setItem('staxs_last_seen_notification_at', iso) } catch {}
+      setSeenAt(Date.now())
+    }
+    setNotifOpen(o => !o)
+  }
 
   const isPt = lang === 'PT'
 
@@ -482,9 +552,59 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
         />
         <span className="num" style={{ fontSize: 13 }}>${btcPrice.toLocaleString()}</span>
       </div>
-      <button className="icon-btn" aria-label="Notifications">
-        <Icons.Bell size={16} />
-      </button>
+      <div ref={notifRef} className="notif-wrap">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label={isPt ? 'Notificações' : 'Notifications'}
+          aria-expanded={notifOpen}
+          onClick={handleNotifToggle}
+        >
+          <Icons.Bell size={16} />
+          {unreadCount > 0 ? <span className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span> : null}
+        </button>
+        {notifOpen ? (
+          <div className="notif-dropdown" role="menu">
+            <div className="notif-dropdown-head">{isPt ? 'NOTIFICAÇÕES' : 'NOTIFICATIONS'}</div>
+            <div className="notif-dropdown-list">
+              {notifications.filter(n => {
+                const t = n.timestamp ? new Date(n.timestamp).getTime() : 0
+                return t > Date.now() - AUTO_DISMISS_MS
+              }).slice(0, 5).map(n => (
+                <div key={n.id} className="notif-dropdown-row">
+                  <span className="notif-dropdown-icon">{n.icon || '⚡️'}</span>
+                  <div className="notif-dropdown-body">
+                    <div className="notif-dropdown-msg">{n.message}</div>
+                    <div className="notif-dropdown-ts">
+                      {n.timestamp ? new Date(n.timestamp).toLocaleString() : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {notifications.filter(n => {
+                const t = n.timestamp ? new Date(n.timestamp).getTime() : 0
+                return t > Date.now() - AUTO_DISMISS_MS
+              }).length === 0 ? (
+                <div className="notif-dropdown-empty">
+                  <div className="ttl">{isPt ? 'Sem notificações novas' : 'No new notifications'}</div>
+                  <div className="sub">{isPt ? 'Você está em dia.' : "You're all caught up."}</div>
+                </div>
+              ) : null}
+            </div>
+            <div className="notif-dropdown-divider" />
+            <Link
+              href="/settings?tab=notifications"
+              prefetch
+              className="notif-dropdown-settings"
+              onClick={() => setNotifOpen(false)}
+              role="menuitem"
+            >
+              <Icons.Gear size={14} />
+              <span>{isPt ? 'Configurações de notificações' : 'Notification Settings'}</span>
+            </Link>
+          </div>
+        ) : null}
+      </div>
       {/* Language dropdown — Globe icon → menu with English / Português options.
           Ported verbatim from v1 client-dashboard.html (#langToggle / #langDropdown). */}
       <div ref={langRef} className="lang-wrap">
