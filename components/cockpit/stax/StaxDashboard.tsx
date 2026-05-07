@@ -345,7 +345,7 @@ const SETTINGS_TABS = [
 
 function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerItems?: TickerAsset[] }) {
   const { latencyMs, connected } = useTickerStreamHealth()
-  const tone = !connected ? 'stale' : latencyMs > 400 ? 'high' : latencyMs > 200 ? 'mid' : 'good'
+  const tone = !connected ? 'stale' : latencyMs > 800 ? 'high' : latencyMs > 400 ? 'mid' : 'good'
   const latencyTitle = connected
     ? `WebSocket round-trip: ${latencyMs}ms (sampled every 5s)`
     : 'Reconnecting to Bitget WebSocket — values fall back to a 5s REST poll'
@@ -890,9 +890,8 @@ function OpenPositions({ rows }: { rows: Position[] }) {
             ) : rows.map((r, i) => (
               <tr key={i} className="bt-trade-open">
                 <td>
-                  <div className="pair-cell">
+                  <div className="pair-cell" title={r.pair}>
                     <CoinDot sym={r.sym} size={16} />
-                    <span className="num">{r.pair}</span>
                   </div>
                 </td>
                 <td><span className={'badge ' + (r.side === 'LONG' ? 'badge-long' : 'badge-short')}>{r.side}</span></td>
@@ -947,7 +946,7 @@ function RecentTrades({ rows }: { rows: Trade[] }) {
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--muted)' }}>{t('status.noTrades')}</td></tr>
             ) : rows.map((r, i) => (
               <tr key={i} className={r.pos ? 'bt-trade-win' : 'bt-trade-loss'}>
-                <td><div className="pair-cell"><CoinDot sym={r.sym} size={16} /><span className="num">{r.pair}</span></div></td>
+                <td><div className="pair-cell" title={r.pair}><CoinDot sym={r.sym} size={16} /></div></td>
                 <td><span className={'badge ' + (r.side === 'LONG' ? 'badge-long' : 'badge-short')}>{r.side}</span></td>
                 <td className="num hide-mobile">{r.size}</td>
                 <td className="num bt-price-cell">
@@ -1077,7 +1076,7 @@ function Ticker({ items, className }: { items: TickerAsset[]; className?: string
   // ping/pong RTT (was hardcoded "28" before) — colour-codes the signal
   // icon so a quick glance tells you whether the feed is healthy.
   const { latencyMs, connected } = useTickerStreamHealth()
-  const tone = !connected ? 'stale' : latencyMs > 400 ? 'high' : latencyMs > 200 ? 'mid' : 'good'
+  const tone = !connected ? 'stale' : latencyMs > 800 ? 'high' : latencyMs > 400 ? 'mid' : 'good'
   const latencyTitle = connected
     ? `WebSocket round-trip: ${latencyMs}ms (sampled every 5s)`
     : 'Reconnecting to Bitget WebSocket — values fall back to a 5s REST poll'
