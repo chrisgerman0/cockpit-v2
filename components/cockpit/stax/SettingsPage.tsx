@@ -255,15 +255,27 @@ function BillingPanel() {
   // in real data when /api/billing resolves. No 'Loading…' card.
   const [data, setData] = useState<BillingData>(EMPTY_BILLING)
 
+  // Initial load + 60s poll + reload on tab-focus so PnL stays current as
+  // trades close. Period roll-overs are server-driven; the panel just reads.
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    async function load() {
       try {
         const j = await authedFetch<BillingData>('/api/billing')
         if (!cancelled) setData(j)
-      } catch { /* silent — keep empty defaults */ }
-    })()
-    return () => { cancelled = true }
+      } catch { /* silent — keep current state */ }
+    }
+    load()
+    const timer = setInterval(load, 60_000)
+    function onFocus() { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onFocus)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   const plan = data.plan
@@ -820,8 +832,11 @@ function BotSettingsWizard({
             <div className="bw-projected">
               <div className="bw-proj-head">
                 <span>Projected Performance</span>
-                <span title="Based on 8 years of backtested data. Past performance does not guarantee future results.">
+                <span className="bw-tip-wrap" tabIndex={0}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span className="bw-tip" role="tooltip">
+                    Based on 8 years of backtested data. Past performance does not guarantee future results.
+                  </span>
                 </span>
               </div>
               {/* Row 1: Win Rate / Total Trades / Months Profitable — neutral */}

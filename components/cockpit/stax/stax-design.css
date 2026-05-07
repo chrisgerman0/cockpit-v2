@@ -2321,6 +2321,53 @@ html.light .stax-app .bw-proj-stat { background: rgba(0,0,0,0.02); }
 }
 .stax-app .bw-proj-head svg { color: var(--gold); cursor: help; }
 
+/* Step 1 — Projected Performance (i) tooltip — dark popover with arrow.
+   Mirrors v1 .wz-tooltip-wrap / .wz-tip. Hover or focus to reveal. */
+.stax-app .bw-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+}
+.stax-app .bw-tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 280px;
+  padding: 12px 14px;
+  background: #0d0d14;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 50;
+  text-align: left;
+  white-space: normal;
+}
+.stax-app .bw-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #0d0d14;
+}
+.stax-app .bw-tip-wrap:hover .bw-tip,
+.stax-app .bw-tip-wrap:focus .bw-tip,
+.stax-app .bw-tip-wrap:focus-within .bw-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* In light mode, keep the tooltip dark (matches v1 — popovers stay dark). */
+
 /* Tone classes on projected stat cards — reuse the dashboard's pos/neg vars. */
 .stax-app .bw-proj-stat-val.pos-text { color: var(--pos); }
 .stax-app .bw-proj-stat-val.neg-text { color: var(--neg); }
