@@ -835,8 +835,9 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
   box-shadow: 0 0 6px currentColor;
   /* Tooltip plumbing — make hover area 100% reliable. The 9px dot itself is
      too small to land a cursor on consistently; pad the hit area via a
-     pseudo-element. */
-  position: relative; cursor: help;
+     pseudo-element. Cursor stays default (no '?' help-cursor — that
+     reads like a UI question mark to users). */
+  position: relative;
 }
 .stax-app .sd::before {
   content: ''; position: absolute; inset: -6px;  /* expand hit zone */
