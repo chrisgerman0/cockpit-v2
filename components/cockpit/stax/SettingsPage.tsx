@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Icons } from './Icons'
 import { useT } from '@/lib/i18n'
 import { browserClient } from '@/lib/supabase-browser'
@@ -220,37 +221,91 @@ function BillingPanel() {
 }
 
 // ─── Bot ────────────────────────────────────────────────────────────────────
+// Reads /api/bot-activate (GET) → { activated, config } sourced from Supabase
+// auth.users.user_metadata.bot_config (the canonical place since 2026-05-01).
+// This is NOT the same as /api/bot-config which reads bot_assignments — that
+// table holds legacy/observed sizing data, not the activation truth.
+//
+// Tier change posts to /api/bot-activate (POST) — server runs Bitget
+// pre-flight (leverage cap check) + margin headroom guard before persisting.
+
+type BotConfig = {
+  preset?: 'conservative' | 'bold' | 'aggressive'
+  tier?: 'conservative' | 'bold' | 'aggressive'
+  leverage?: number
+  capital?: number
+  activation_balance?: number
+  hb_base_notional_usd?: number
+  notional?: number
+  compound?: boolean
+  smart_sizing_enabled?: boolean
+  updatedAt?: string
+}
+
+const TIER_LEVERAGE: Record<'conservative' | 'bold' | 'aggressive', number> = {
+  conservative: 4,
+  bold: 10,
+  aggressive: 20,
+}
 
 function BotPanel() {
   const t = useT()
-  const [cfg, setCfg] = useState<any>(null)
+  const [cfg, setCfg] = useState<BotConfig | null>(null)
+  const [activated, setActivated] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const r = await authedFetch('/api/bot-config')
-        if (r.ok) {
-          const j = await r.json()
-          if (!cancelled) setCfg(j?.bot_config || null)
-        }
-      } catch {}
-      finally { if (!cancelled) setLoading(false) }
-    })()
-    return () => { cancelled = true }
+  const loadConfig = useCallback(async () => {
+    try {
+      const j = await authedFetch<{ activated: boolean; config: BotConfig | null }>('/api/bot-activate')
+      setCfg(j?.config || null)
+      setActivated(!!j?.activated)
+    } catch { /* keep current state — will show empty defaults */ }
+    finally { setLoading(false) }
   }, [])
 
-  const tier = cfg?.tier || 'conservative'
-  const lev = cfg?.leverage || 4
-  const notional = cfg?.hb_base_notional_usd
-  const activated = !!cfg?.activated
+  useEffect(() => { loadConfig() }, [loadConfig])
+
+  const tier = (cfg?.tier || cfg?.preset || 'conservative') as 'conservative' | 'bold' | 'aggressive'
+  const lev = cfg?.leverage || TIER_LEVERAGE[tier]
+  const capital = cfg?.activation_balance || cfg?.capital
+  const notional = cfg?.hb_base_notional_usd || cfg?.notional
 
   const tierLabel = ({
     conservative: t('bot.tierConservative'),
     bold: t('bot.tierBold'),
     aggressive: t('bot.tierAggressive'),
   } as any)[tier] || t('bot.tierConservative')
+
+  async function changeTier(next: 'conservative' | 'bold' | 'aggressive') {
+    if (saving || next === tier) return
+    setSaving(true); setSaveMsg(null)
+    try {
+      // POST /api/bot-activate — uses existing capital. Server derives all
+      // sizing from the tier (incl. leverage, hb_base_notional_usd, etc.).
+      await authedFetch('/api/bot-activate', {
+        method: 'POST',
+        body: JSON.stringify({
+          preset: next,
+          capital: capital || 1000,
+          notional: notional || 1000,
+          compound: !!cfg?.compound,
+          smart_sizing_enabled: !!cfg?.smart_sizing_enabled,
+        }),
+      })
+      setSaveMsg({ ok: true, text: `Tier set to ${next}.` })
+      await loadConfig()
+    } catch (e: any) {
+      const raw = String(e?.message || '')
+      let msg = 'Failed to change tier.'
+      const j = raw.match(/\{.*\}/)
+      if (j) { try { msg = JSON.parse(j[0])?.error || msg } catch {} }
+      setSaveMsg({ ok: false, text: msg })
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="card card-pad settings-card">
@@ -268,14 +323,45 @@ function BotPanel() {
             } />
             <BotRow label={t('bot.tier')} value={<span className="bot-tier-pill">{tierLabel}</span>} />
             <BotRow label={t('bot.leverage')} value={`${lev}×`} />
+            {capital ? <BotRow label="Capital" value={`$${Number(capital).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
             {notional ? <BotRow label={t('bot.notional')} value={`$${Number(notional).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} /> : null}
           </div>
-          <div className="settings-help" style={{ marginTop: 16 }}>
-            {t('bot.openWizard')}
+
+          {/* Inline tier change — runs Bitget pre-flight server-side */}
+          <div style={{ marginTop: 18 }}>
+            <div className="settings-help" style={{ marginBottom: 8 }}>Change tier</div>
+            <div className="bt-tier-pills">
+              {(['conservative', 'bold', 'aggressive'] as const).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  className={'bt-tier-pill' + (tier === p ? ' active' : '')}
+                  disabled={saving}
+                  onClick={() => changeTier(p)}
+                >
+                  {p === 'conservative' ? t('bot.tierConservative') : p === 'bold' ? t('bot.tierBold') : t('bot.tierAggressive')}
+                  <span style={{ opacity: 0.55, marginLeft: 6, fontSize: 10 }}>{TIER_LEVERAGE[p]}×</span>
+                </button>
+              ))}
+            </div>
+            {saveMsg ? (
+              <div className={saveMsg.ok ? 'pos-text' : 'neg-text'} style={{ fontSize: 12, marginTop: 8 }}>{saveMsg.text}</div>
+            ) : null}
           </div>
-          <a href="/?setup=bot" className="settings-btn-primary" style={{ marginTop: 8, display: 'inline-block', textDecoration: 'none' }}>
-            {t('bot.openWizard')}
-          </a>
+
+          <div style={{ borderTop: '1px solid var(--line)', marginTop: 22, paddingTop: 16 }}>
+            <div className="settings-help" style={{ marginBottom: 8 }}>
+              First-time setup or want to reconnect Bitget keys?
+            </div>
+            <Link
+              href="/onboarding"
+              prefetch
+              className="settings-btn-primary"
+              style={{ display: 'inline-flex', textDecoration: 'none', alignItems: 'center', gap: 6 }}
+            >
+              {t('bot.openWizard')}
+            </Link>
+          </div>
         </>
       )}
     </div>

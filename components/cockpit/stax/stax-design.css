@@ -2467,3 +2467,260 @@ html.light .stax-app .notif-log-refresh { background: rgba(0,0,0,0.03); }
 .stax-app.light .notif-log-refresh:hover,
 html.light .stax-app .notif-log-refresh:hover { background: rgba(0,0,0,0.05); }
 .stax-app .notif-log-refresh:disabled { opacity: 0.5; cursor: progress; }
+
+/* ── Onboarding wizard ─────────────────────────────────────────────── */
+
+.stax-app .ow-card { display: flex; flex-direction: column; gap: 24px; }
+
+/* Progress bar */
+.stax-app .ow-progress {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 4px; padding: 4px 0 12px;
+  flex-wrap: nowrap;
+}
+.stax-app .ow-step-wrap {
+  display: flex; align-items: center;
+  gap: 8px; flex: 0 0 auto;
+}
+.stax-app .ow-step-dot {
+  width: 36px; height: 36px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.02);
+  color: var(--muted);
+  flex: 0 0 36px;
+}
+.stax-app.light .ow-step-dot,
+html.light .stax-app .ow-step-dot { background: rgba(0,0,0,0.02); }
+.stax-app .ow-step-dot.ow-active {
+  background: rgba(212,160,23,0.10);
+  border-color: var(--gold);
+  color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(212,160,23,0.18);
+}
+.stax-app .ow-step-dot.ow-done {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #0b0b0f;
+}
+.stax-app .ow-step-label {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.stax-app .ow-step-label.ow-active { color: var(--text); }
+.stax-app .ow-step-label.ow-done   { color: var(--gold); }
+.stax-app .ow-step-bar {
+  flex: 1 0 24px; height: 1px; min-width: 24px;
+  background: var(--line);
+  margin: 0 4px;
+}
+.stax-app .ow-step-bar.ow-done { background: var(--gold); }
+@media (max-width: 720px) {
+  .stax-app .ow-step-label { display: none; }
+  .stax-app .ow-step-bar { min-width: 12px; }
+}
+
+/* Step body */
+.stax-app .ow-step-body {
+  display: flex; flex-direction: column; gap: 14px;
+}
+.stax-app .ow-step-title {
+  font-size: 20px; font-weight: 700; color: var(--text);
+  letter-spacing: -0.01em; margin: 4px 0 0;
+}
+.stax-app .ow-step-sub {
+  font-size: 13px; color: var(--muted); margin: 0; line-height: 1.55;
+}
+
+/* Info cards (numbered steps + intro card) */
+.stax-app .ow-info-list { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .ow-info-card {
+  display: flex; gap: 14px;
+  padding: 16px 18px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.stax-app.light .ow-info-card,
+html.light .stax-app .ow-info-card { background: rgba(0,0,0,0.015); }
+.stax-app .ow-info-ico {
+  flex: 0 0 36px;
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(212,160,23,0.10);
+  color: var(--gold);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.stax-app .ow-info-num {
+  flex: 0 0 28px;
+  width: 28px; height: 28px; border-radius: 999px;
+  background: rgba(212,160,23,0.18);
+  color: var(--gold);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 12px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.stax-app .ow-info-ttl {
+  font-size: 13.5px; font-weight: 600; color: var(--text);
+  margin-bottom: 6px;
+}
+.stax-app .ow-info-body { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.stax-app .ow-info-body strong { color: var(--text); font-weight: 600; }
+.stax-app .ow-info-body p { margin: 0 0 4px; }
+.stax-app .ow-info-body p:last-child { margin-bottom: 0; }
+
+.stax-app .ow-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.stax-app .ow-list li {
+  font-size: 12.5px; color: var(--muted);
+  display: flex; gap: 8px;
+}
+.stax-app .ow-num { color: var(--gold); font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600; flex: 0 0 auto; }
+
+.stax-app .ow-link-cta {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 12px;
+  font-size: 12.5px; font-weight: 600; color: var(--gold);
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+.stax-app .ow-link-cta:hover { color: var(--gold-hi); }
+.stax-app .ow-link-cta-sm {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 6px;
+  font-size: 11px; font-weight: 600; color: var(--gold);
+  text-decoration: none;
+}
+
+.stax-app .ow-mono-gold {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.stax-app .ow-shield-card {
+  display: flex; gap: 12px;
+  padding: 14px 16px;
+  background: rgba(212,160,23,0.05);
+  border: 1px solid rgba(212,160,23,0.20);
+  border-radius: 12px;
+  color: var(--gold);
+}
+.stax-app .ow-shield-card > div { color: var(--text); }
+.stax-app .ow-shield-ttl { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.stax-app .ow-shield-sub { font-size: 12px; color: var(--muted); line-height: 1.55; }
+
+.stax-app .ow-ip-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(212,160,23,0.10);
+  border: 1px solid rgba(212,160,23,0.25);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.12s ease;
+}
+.stax-app .ow-ip-pill:hover { background: rgba(212,160,23,0.18); }
+
+.stax-app .ow-warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 10px 12px;
+  margin-top: 10px;
+  background: rgba(212,160,23,0.06);
+  border: 1px solid rgba(212,160,23,0.20);
+  border-radius: 8px;
+  color: var(--gold);
+}
+.stax-app .ow-warn p { color: var(--text); font-size: 11.5px; margin: 0; line-height: 1.45; }
+
+/* Form (step 2) */
+.stax-app .ow-form { display: flex; flex-direction: column; gap: 14px; }
+.stax-app .ow-label {
+  display: block;
+  font-size: 12px; font-weight: 600; color: var(--text);
+  margin-bottom: 6px;
+}
+.stax-app .ow-input-wrap { position: relative; }
+.stax-app .ow-input-wrap .ow-input-ico {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none;
+}
+.stax-app .ow-input-wrap .settings-input {
+  padding-left: 36px;
+  padding-right: 40px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  height: 40px;
+}
+.stax-app .ow-input-wrap .ow-input-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.stax-app .ow-input-eye {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--muted); padding: 6px; border-radius: 6px;
+}
+.stax-app .ow-input-eye:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+
+/* Error */
+.stax-app .ow-error {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 10px 12px;
+  background: rgba(255,77,79,0.06);
+  border: 1px solid rgba(255,77,79,0.22);
+  border-radius: 8px;
+  color: var(--neg);
+}
+.stax-app .ow-error p { color: var(--neg); font-size: 12.5px; margin: 0; line-height: 1.45; }
+
+/* Buttons row */
+.stax-app .ow-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 6px;
+}
+.stax-app .ow-btn-skip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 16px;
+  background: transparent; border: 0;
+  color: var(--muted); cursor: pointer;
+  font-size: 13px; font-weight: 500;
+  border-radius: 8px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.stax-app .ow-btn-skip:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.stax-app.light .ow-btn-skip:hover,
+html.light .stax-app .ow-btn-skip:hover { background: rgba(0,0,0,0.04); }
+
+.stax-app .ow-btn-primary {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 18px;
+  border: 0; border-radius: 8px;
+  background: var(--gold);
+  color: #0b0b0f;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.18s cubic-bezier(0.2,0.8,0.2,1);
+}
+.stax-app .ow-btn-primary:hover:not(:disabled) {
+  background: var(--gold-hi);
+  transform: translateY(-1px);
+}
+.stax-app .ow-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Success step */
+.stax-app .ow-success { align-items: center; padding: 18px 0 4px; }
+.stax-app .ow-success-ring {
+  width: 80px; height: 80px;
+  border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(46,204,113,0.10);
+  color: var(--pos);
+  margin: 0 auto 6px;
+}
+.stax-app .ow-success-list {
+  list-style: none; padding: 0; margin: 12px auto 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 13px; color: var(--muted);
+}
+.stax-app .ow-success-list li {
+  display: flex; gap: 8px; align-items: center;
+}
