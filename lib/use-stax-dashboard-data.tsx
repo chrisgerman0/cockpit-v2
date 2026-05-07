@@ -235,18 +235,37 @@ function buildStats(opts: {
   openCount: number
   closedCount: number
   activated: boolean
-  openSide?: 'long' | 'short'
-  openSymbol?: string
+  openLegs?: Array<{ symbol: string; side: 'long' | 'short' }>
 }): StatCardSpec[] {
-  const { unrealizedPnl, realizedPnl, totalReturnPct, openCount, closedCount, activated, openSide, openSymbol } = opts
+  const { unrealizedPnl, realizedPnl, totalReturnPct, openCount, closedCount, activated, openLegs = [] } = opts
+  // Bot Status — handle 0, 1, or many legs across BTC/ETH/SOL/XRP/SUI with
+  // mixed long/short directions. Examples:
+  //   0 legs (active):     "Active" / "Watching"
+  //   1 leg:               "LONG" / "BTC"
+  //   3 legs same side:    "3 LONG" / "BTC · SOL · XRP"
+  //   mixed sides:         "MIXED" / "2L · 1S"
+  const longCount = openLegs.filter(l => l.side === 'long').length
+  const shortCount = openLegs.filter(l => l.side === 'short').length
+  const allLong = openCount > 0 && shortCount === 0
+  const allShort = openCount > 0 && longCount === 0
+  const mixed = longCount > 0 && shortCount > 0
+  const symList = openLegs.map(l => l.symbol.replace('USDT', '')).join(' · ')
+  const botStatusValue = openCount === 0
+    ? (activated ? <span className="pos-text"><span className="dot-live" />Active</span> : <span style={{ color: 'var(--muted)' }}>Off</span>)
+    : mixed
+      ? <span className="pos-text"><span className="dot-live" />MIXED</span>
+      : <span className={allShort ? 'neg-text' : 'pos-text'}><span className="dot-live" />{openCount > 1 ? `${openCount} ` : ''}{allShort ? 'SHORT' : 'LONG'}</span>
+  const botStatusSub = openCount === 0
+    ? (activated ? 'Watching' : 'Activate to start')
+    : mixed
+      ? `${longCount}L · ${shortCount}S — ${symList}`
+      : symList
   return [
     {
       label: 'Bot Status',
       icon: Icons.Robot,
-      value: openCount > 0
-        ? <span className={openSide === 'short' ? 'neg-text' : 'pos-text'}><span className="dot-live" />{openSide === 'short' ? 'SHORT' : 'LONG'}</span>
-        : (activated ? <span className="pos-text"><span className="dot-live" />Active</span> : <span style={{ color: 'var(--muted)' }}>Off</span>),
-      sub: openCount > 0 ? (openSymbol || 'in market') : (activated ? 'Watching' : 'Activate to start'),
+      value: botStatusValue,
+      sub: botStatusSub,
     },
     {
       label: 'Unrealized PnL',
@@ -326,10 +345,20 @@ export function useStaxDashboardData(): StaxLoadState {
         const portfolio = await fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[])
         if (cancelled) return
 
-        // Realised pnl + return % — strategy view. Matches the Backtesting page.
-        const realizedPnl = portfolio.reduce((s, t) => s + (t.pnl || 0), 0)
-        const startCapital = 10000  // strategy account base used by the daemon
-        const totalReturnPct = startCapital > 0 ? (realizedPnl / startCapital) * 100 : 0
+        // Realised pnl + return % — USER's account, not the backtest. The
+        // Backtesting page already shows strategy performance; these widgets
+        // need to reflect what the user has actually made/lost. Total Return
+        // is computed against the user's activation balance (their starting
+        // amount when they switched the bot on), so a fresh user with no
+        // closed trades shows 0%, not the backtest's 9997%.
+        const userClosedTrades = userTrades.filter(t => t.status === 'closed')
+        const realizedPnl = userClosedTrades.reduce((s, t) => s + (Number(t.pnl_usd) || 0), 0)
+        const startCapital = 10000  // strategy account base — kept for equity-curve simulation only
+        const userActivationBalance = Number((cfg as { activation_balance?: number })?.activation_balance) || 0
+        const userBaseline = userActivationBalance > 0 ? userActivationBalance : (equity > 0 ? equity - realizedPnl - unrealizedPnl : 0)
+        const totalReturnPct = userBaseline > 0
+          ? ((equity + realizedPnl - userBaseline) / userBaseline) * 100
+          : 0
 
         const tickerBySymbol: Record<string, PublicTicker | undefined> = {}
         tickers.forEach(t => { tickerBySymbol[t.symbol] = t })
@@ -453,10 +482,9 @@ export function useStaxDashboardData(): StaxLoadState {
           realizedPnl,
           totalReturnPct,
           openCount: openTrades.length,
-          closedCount: portfolio.length,
+          closedCount: userClosedTrades.length,  // user's real closed trades, not backtest
           activated: !!botRes?.activated,
-          openSide: openTrades[0]?.side,
-          openSymbol: openTrades[0]?.symbol,
+          openLegs: openTrades.map(t => ({ symbol: t.symbol, side: t.side as 'long' | 'short' })),
         })
 
         const data: StaxDashboardData = {
