@@ -2350,11 +2350,26 @@ html.light .stax-app .bw-equity-card { background: rgba(0,0,0,0.02); }
 }
 .stax-app .bw-equity-foot strong { color: var(--text); font-weight: 600; }
 
-/* Step 2 — Capital */
+/* Step 2 — Capital. Outer .bw-inner-card wraps all step content (matches v1
+   <div class="card" max-width:600> wrapper). */
+.stax-app .bw-inner-card {
+  max-width: 600px; margin: 0 auto; width: 100%;
+  padding: 18px 20px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.stax-app.light .bw-inner-card,
+html.light .stax-app .bw-inner-card { background: rgba(0,0,0,0.015); }
 .stax-app .bw-cap-row {
   display: flex; gap: 12px; align-items: flex-end;
   flex-wrap: wrap;
-  max-width: 600px; margin: 0 auto; width: 100%;
+  margin-bottom: 16px;
+}
+.stax-app .bw-cap-help {
+  font-size: 11px; color: var(--muted);
+  line-height: 1.5;
+  margin: -6px 0 16px;
 }
 .stax-app .bw-label {
   display: block;
@@ -2367,7 +2382,8 @@ html.light .stax-app .bw-equity-card { background: rgba(0,0,0,0.02); }
   background: rgba(255,255,255,0.02);
   border: 1px solid var(--line);
   border-radius: 10px;
-  max-width: 600px; margin: 0 auto; width: 100%;
+  width: 100%;
+  margin-bottom: 12px;
 }
 .stax-app.light .bw-position-card,
 html.light .stax-app .bw-position-card { background: rgba(0,0,0,0.02); }
@@ -2387,7 +2403,7 @@ html.light .stax-app .bw-position-card { background: rgba(0,0,0,0.02); }
   background: rgba(212,160,23,0.05);
   border: 1px solid rgba(212,160,23,0.18);
   border-radius: 8px;
-  max-width: 600px; margin: 0 auto; width: 100%;
+  width: 100%;
 }
 .stax-app .bw-explain strong { color: var(--text); }
 
@@ -2437,6 +2453,123 @@ html.light .stax-app .bw-compound-card { background: rgba(0,0,0,0.02); }
 .stax-app .bw-pyramid-row:first-child { border-top: 0; }
 .stax-app .bw-pyramid-row span:first-child { color: var(--muted); }
 .stax-app .bw-pyramid-row span:last-child { color: var(--text); font-weight: 600; }
+
+/* Step 3 — pyramid eyebrow + intro text */
+.stax-app .bw-pyramid-eyebrow {
+  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+  font-weight: 700; color: var(--gold);
+  text-align: center;
+  max-width: 600px; margin: 8px auto 8px; width: 100%;
+}
+.stax-app .bw-pyramid-intro {
+  font-size: 12px; color: var(--muted); line-height: 1.55;
+  text-align: center;
+  max-width: 600px; margin: 0 auto 8px; width: 100%;
+}
+.stax-app .bw-pyramid-intro strong { color: var(--text); }
+
+/* Step 3 — Worked example block (neutral card with rows). */
+.stax-app .bw-worked-card {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(212,160,23,0.04);
+  max-width: 600px; margin: 0 auto; width: 100%;
+}
+.stax-app .bw-worked-head {
+  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+  font-weight: 700; color: var(--gold);
+  margin-bottom: 10px;
+}
+.stax-app .bw-worked-intro {
+  font-size: 11px; color: var(--muted); line-height: 1.55;
+  margin-bottom: 10px;
+}
+.stax-app .bw-worked-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.stax-app .bw-worked-row:last-child { border-bottom: 0; }
+.stax-app .bw-worked-row span:first-child { color: var(--muted); }
+.stax-app .bw-worked-row span:last-child { color: var(--text); font-weight: 600; }
+
+/* Step 3 — Pyramid header changes (added icon) */
+.stax-app .bw-pyramid-card .bw-pyramid-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.stax-app .bw-pyramid-card .bw-pyramid-head svg { color: var(--gold); }
+.stax-app .bw-pyramid-blurb {
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+  margin: 0 0 10px;
+}
+.stax-app .bw-pyramid-blurb strong { color: var(--text); }
+.stax-app .bw-pyramid-foot {
+  font-size: 11px; color: var(--muted); line-height: 1.5;
+  margin: 8px 0 0;
+  font-style: italic;
+}
+
+/* Step 3 — "You stay in control" callout */
+.stax-app .bw-control-card {
+  padding: 14px 16px;
+  background: rgba(212,160,23,0.06);
+  border: 1px solid rgba(212,160,23,0.20);
+  border-radius: 10px;
+  font-size: 12px; line-height: 1.6;
+  color: var(--text);
+  max-width: 600px; margin: 0 auto; width: 100%;
+}
+.stax-app .bw-control-card strong { color: var(--text); font-weight: 700; }
+.stax-app .bw-control-card em { color: var(--muted); font-style: italic; }
+
+/* Step 3 — Compound drawdown warning (only when compound is ON) */
+.stax-app .bw-compound-warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 12px 14px;
+  background: rgba(255,77,79,0.05);
+  border: 1px solid rgba(255,77,79,0.20);
+  border-radius: 10px;
+  font-size: 12px; line-height: 1.5;
+  color: var(--muted);
+  max-width: 600px; margin: 0 auto; width: 100%;
+}
+.stax-app .bw-compound-warn svg { color: var(--neg); flex: 0 0 16px; margin-top: 2px; }
+.stax-app .bw-compound-warn em { color: var(--text); font-style: italic; }
+
+/* Step 5 — Exchange not connected warning */
+.stax-app .bw-no-exchange {
+  padding: 12px 14px;
+  background: rgba(255,77,79,0.08);
+  border: 1px solid rgba(255,77,79,0.20);
+  border-radius: 10px;
+  max-width: 500px; margin: 0 auto; width: 100%;
+}
+.stax-app .bw-no-exchange-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; color: var(--neg);
+  margin-bottom: 4px;
+}
+.stax-app .bw-no-exchange-body {
+  font-size: 11px; color: var(--muted); line-height: 1.5;
+}
+.stax-app .bw-no-exchange-body a { color: var(--gold); text-decoration: underline; }
+
+/* Step 5 — full-width Back button */
+.stax-app .bw-btn-back-wide {
+  width: 100%; max-width: 500px; margin: 0 auto;
+  display: block;
+  padding: 12px 28px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.stax-app .bw-btn-back-wide:hover { color: var(--text); border-color: var(--line-2); }
 
 /* Step 4 — Risk band */
 .stax-app .bw-risk-band {

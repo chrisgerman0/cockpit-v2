@@ -692,6 +692,7 @@ function BotSettingsWizard({
   const [capital, setCapital] = useState<string>(initialCapital ? String(Math.round(initialCapital)) : '10000')
   const [maxBalance, setMaxBalance] = useState<number>(0)
   const [fetchingBalance, setFetchingBalance] = useState(false)
+  const [exchangeConnected, setExchangeConnected] = useState(true)
   const [showProjected, setShowProjected] = useState(false)
   const [compound, setCompound] = useState(initialCompound)
   const [activating, setActivating] = useState(false)
@@ -708,12 +709,22 @@ function BotSettingsWizard({
     setFetchingBalance(true)
     try {
       const j = await authedFetch<{ equity?: number; available?: number; error?: string }>('/api/balance')
-      const eq = Number(j?.equity || j?.available || 0)
-      if (eq > 0) {
-        setMaxBalance(eq)
-        setCapital(String(Math.round(eq)))
+      // 'no api keys' style error → exchange not yet connected.
+      if (j?.error && /no api keys|unauthorized|missing/i.test(j.error)) {
+        setExchangeConnected(false)
+      } else {
+        setExchangeConnected(true)
+        const eq = Number(j?.equity || j?.available || 0)
+        if (eq > 0) {
+          setMaxBalance(eq)
+          setCapital(String(Math.round(eq)))
+        }
       }
-    } catch { /* silent */ }
+    } catch (e: any) {
+      // 401 from authedFetch → not authenticated yet, not the same as no keys.
+      const m = String(e?.message || '')
+      if (/401|404|NO[_-]?KEYS|no api keys/i.test(m)) setExchangeConnected(false)
+    }
     finally { setFetchingBalance(false) }
   }
 
@@ -845,8 +856,7 @@ function BotSettingsWizard({
             </div>
           ) : null}
 
-          <div className="bw-actions">
-            <button type="button" className="bw-btn-back" onClick={onClose}>Cancel</button>
+          <div className="bw-actions" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="bw-btn-primary" onClick={next}>Next →</button>
           </div>
         </div>
@@ -858,43 +868,45 @@ function BotSettingsWizard({
           <div className="bw-step-title">Set Your Capital</div>
           <div className="bw-step-sub">Enter your starting balance or fetch it directly from your exchange. This determines your position size and risk per trade.</div>
 
-          <div className="bw-cap-row">
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <label className="bw-label">Starting Capital ($)</label>
-              <input
-                type="number"
-                value={capital}
-                min={100}
-                step={100}
-                onChange={e => setCapital(e.target.value)}
-                className="settings-input"
-                style={{ borderColor: overBalance ? 'var(--neg)' : undefined }}
-              />
+          {/* Inner card wrapping ALL step 2 content — matches v1 layout. */}
+          <div className="bw-inner-card">
+            <div className="bw-cap-row">
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <label className="bw-label">Starting Capital ($)</label>
+                <input
+                  type="number"
+                  value={capital}
+                  min={100}
+                  step={100}
+                  onChange={e => setCapital(e.target.value)}
+                  className="settings-input"
+                  style={{ borderColor: overBalance ? 'var(--neg)' : undefined, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}
+                />
+              </div>
+              <button type="button" className="bw-btn-secondary" disabled={fetchingBalance} onClick={fetchBalance}>
+                {fetchingBalance ? 'Fetching…' : 'Refresh Balance'}
+              </button>
             </div>
-            <button type="button" className="bw-btn-secondary" disabled={fetchingBalance} onClick={fetchBalance}>
-              {fetchingBalance ? 'Fetching…' : 'Refresh Balance'}
-            </button>
-          </div>
-          {overBalance ? (
-            <div className="neg-text" style={{ fontSize: 12, fontWeight: 600 }}>
-              Cannot exceed your exchange balance (${Math.floor(maxBalance).toLocaleString()})
-            </div>
-          ) : (
-            <div className="settings-help">Your available exchange balance. Adjust if you want to trade with a portion of your funds.</div>
-          )}
+            <div className="bw-cap-help">Your available exchange balance. Adjust if you want to trade with a portion of your funds.</div>
+            {overBalance ? (
+              <div className="neg-text" style={{ fontSize: 12, fontWeight: 600, marginTop: -4, marginBottom: 12 }}>
+                Cannot exceed your exchange balance (${Math.floor(maxBalance).toLocaleString()})
+              </div>
+            ) : null}
 
-          <div className="bw-position-card">
-            <div className="bw-position-head">Position Parameters</div>
-            <div className="bw-position-grid">
-              <ProjStat label="Tier Multiplier"  val={`${ratios.mult}× of balance`} />
-              <ProjStat label="Position Size"    val={`$${Math.round(posSize).toLocaleString()}`} />
-              <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} />
-              <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} negative />
+            <div className="bw-position-card">
+              <div className="bw-position-head">Position Parameters</div>
+              <div className="bw-position-grid">
+                <ProjStat label="Tier Multiplier"  val={`${ratios.mult}× of balance`} />
+                <ProjStat label="Position Size"    val={`$${Math.round(posSize).toLocaleString()}`} />
+                <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} />
+                <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} negative />
+              </div>
             </div>
-          </div>
 
-          <div className="bw-explain">
-            <strong>How it works:</strong> Your capital × tier multiplier = position size per trade. A {ratios.sl}% stop loss on a ${Math.round(posSize).toLocaleString()} position means you risk ${Math.round(maxLoss).toLocaleString()} per trade. Bitget leverage is set to {ratios.leverage}× by the bot — used only to free up margin, not to scale position size.
+            <div className="bw-explain">
+              <strong>How it works:</strong> Your capital × tier multiplier = position size per trade. A {ratios.sl}% stop loss on a ${Math.round(posSize).toLocaleString()} position means you risk ${Math.round(maxLoss).toLocaleString()} per trade. Bitget leverage is set to {ratios.leverage}× by the bot — used only to free up margin, not to scale position size.
+            </div>
           </div>
 
           <div className="bw-actions">
@@ -934,20 +946,72 @@ function BotSettingsWizard({
             </div>
           </div>
 
-          <div className="bw-pyramid-card">
-            <div className="bw-pyramid-head">Pyramid stacking</div>
-            <div className="bw-step-sub">Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> (winning trades that retrace to EMA21 in profit). Peak exposure is 1.5× the base notional ({ratios.mult * 1.5}× of balance).</div>
-            <div className="bw-pyramid-grid">
-              <div className="bw-pyramid-row">
-                <span>Base entry (no pyramid)</span>
-                <span className="num">${Math.round(posSize).toLocaleString()} · {ratios.mult}×</span>
-              </div>
-              <div className="bw-pyramid-row">
-                <span>+ Pyramid leg (EMA21 retrace, in profit)</span>
-                <span className="num">${Math.round(posSize * 1.5).toLocaleString()} · {(ratios.mult * 1.5).toFixed(2)}×</span>
-              </div>
+          {/* Pyramid stacking eyebrow + intro (matches v1) */}
+          <div className="bw-pyramid-eyebrow">Pyramid stacking</div>
+          <p className="bw-pyramid-intro">
+            Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> (winning trades that retrace to EMA21 in profit). Worst case below shows what peak exposure looks like.
+          </p>
+
+          {/* Worked example block — same numbers v1 hard-codes for $10k Conservative */}
+          <div className="bw-worked-card">
+            <div className="bw-worked-head">
+              Worked example · {TIER_RATIOS[preset].label} tier on ${(capNum || 10000).toLocaleString()} balance
+            </div>
+            <div className="bw-worked-intro">
+              {TIER_RATIOS[preset].label} = {ratios.mult}× of your balance per position. Same VolumeProfile breakout strategy on each of the 5 basket assets, longs &amp; shorts, with pyramiding when a winner retraces to its 4H EMA21.
+            </div>
+            <div className="bw-worked-row">
+              <span>Base entry — any of 5 assets</span>
+              <span className="num">${Math.round((capNum || 10000) * ratios.mult).toLocaleString()} ({ratios.mult}×)</span>
+            </div>
+            <div className="bw-worked-row">
+              <span>Stop loss — {ratios.sl}% from entry</span>
+              <span className="num neg-text">-${Math.round((capNum || 10000) * ratios.mult * (ratios.sl / 100)).toLocaleString()} max / leg</span>
+            </div>
+            <div className="bw-worked-row">
+              <span>After profits — balance ${Math.round((capNum || 10000) * 1.4).toLocaleString()} (Off mode)</span>
+              <span className="num pos-text">unchanged (${Math.round((capNum || 10000) * ratios.mult).toLocaleString()})</span>
+            </div>
+            <div className="bw-worked-row">
+              <span>After profits — balance ${Math.round((capNum || 10000) * 1.4).toLocaleString()} (Compound ON)</span>
+              <span className="num pos-text">${Math.round((capNum || 10000) * 1.4 * ratios.mult).toLocaleString()} ({ratios.mult}×)</span>
             </div>
           </div>
+
+          {/* Pyramid exposure card — gold-tinted with peak exposure breakdown */}
+          <div className="bw-pyramid-card">
+            <div className="bw-pyramid-head">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
+              Peak exposure (with pyramid)
+            </div>
+            <p className="bw-pyramid-blurb">
+              When a winning trade retraces to its 4H EMA21 still in profit, the bot adds a single pyramid leg sized at 50% of the base. Peak exposure on <em>{TIER_RATIOS[preset].label}</em> on a ${(capNum || 10000).toLocaleString()} account therefore tops out at <strong>${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} per position</strong> ({(ratios.mult * 1.5).toFixed(2)}× of balance).
+            </p>
+            <div className="bw-pyramid-row">
+              <span>Base entry (no pyramid)</span>
+              <span className="num">${Math.round((capNum || 10000) * ratios.mult).toLocaleString()} · {ratios.mult}×</span>
+            </div>
+            <div className="bw-pyramid-row">
+              <span>+ Pyramid leg (EMA21 retrace, in profit)</span>
+              <span className="num">${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} · {(ratios.mult * 1.5).toFixed(2)}×</span>
+            </div>
+            <p className="bw-pyramid-foot">
+              A single pyramid fires when a winning trade retraces to the 4H EMA21 with a 1m bar that straddles it. Approximately 1 in 5 winners pyramid. Pyramid losses can exceed the {ratios.sl}% base SL because the pyramid enters at a higher price.
+            </p>
+          </div>
+
+          {/* "You stay in control" callout (gold) */}
+          <div className="bw-control-card">
+            <strong>You stay in control.</strong> You can switch tiers (Conservative / Bold / Aggressive) at any time, and withdrawing from your exchange reduces exposure proportionally. Your next trade always sizes from your balance and tier <em>at that moment</em> — nothing is locked in.
+          </div>
+
+          {/* Compound drawdown warning — only when compound mode is ON */}
+          {compound ? (
+            <div className="bw-compound-warn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>Compound mode is ON: position scales with your balance, so drawdowns hit larger positions harder. A higher tier means bigger swings in both directions. Pick a tier you can live with through a losing streak <em>at peak exposure</em>.</span>
+            </div>
+          ) : null}
 
           <div className="bw-actions">
             <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
@@ -978,10 +1042,17 @@ function BotSettingsWizard({
             />
           </div>
 
+          {/* Bottom row — Liquidation Risk in the middle (matches v1 #simLiqRisk).
+              Risk is per-tier: Conservative=Very Low, Bold=Low, Aggressive=Medium. */}
           <div className="bw-proj-row">
-            <ProjStat label="Max Drawdown"     val={`-${bt.maxDdPct.toFixed(1)}%`} sub={`-$${Math.round(capNum * bt.maxDdPct / 100).toLocaleString()}`} negative />
-            <ProjStat label="Win Rate"         val={`${bt.winRatePct.toFixed(1)}%`} />
-            <ProjStat label="Risk per Trade"   val={`$${Math.round(maxLoss).toLocaleString()}`} sub={`${(maxLoss / capNum * 100).toFixed(1)}% of capital`} />
+            <ProjStat label="Max Drawdown" val={`-${bt.maxDdPct.toFixed(1)}%`} sub={`-$${Math.round(capNum * bt.maxDdPct / 100).toLocaleString()}`} negative />
+            <ProjStat
+              label="Liquidation Risk"
+              val={preset === 'conservative' ? 'Very Low' : preset === 'bold' ? 'Low' : 'Medium'}
+              sub={preset === 'conservative' ? 'No liquidation risk' : preset === 'bold' ? '~50% adverse to liquidate' : '~33% adverse to liquidate'}
+              positive={preset !== 'aggressive'}
+            />
+            <ProjStat label="Risk per Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} sub={`${(maxLoss / capNum * 100).toFixed(1)}% of capital`} />
           </div>
 
           <div className="bw-risk-band">
@@ -1009,6 +1080,18 @@ function BotSettingsWizard({
           <div className="bw-step-title">Review & Activate</div>
           <div className="bw-step-sub">Double-check your settings below. You can change them anytime from Bot Settings.</div>
 
+          {!exchangeConnected ? (
+            <div className="bw-no-exchange">
+              <div className="bw-no-exchange-head">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span>Exchange not connected</span>
+              </div>
+              <div className="bw-no-exchange-body">
+                Connect your exchange API keys first to ensure capital matches your real balance. Go to <Link href="/settings?tab=api" prefetch>API Keys</Link> or complete the <Link href="/onboarding" prefetch>onboarding wizard</Link>.
+              </div>
+            </div>
+          ) : null}
+
           <div className="bw-review-card">
             <div className="bw-review-row"><span>Trading Mode</span><span>{TIER_RATIOS[preset].label}</span></div>
             <div className="bw-review-row"><span>Starting Capital</span><span className="num">${capNum.toLocaleString()}</span></div>
@@ -1029,10 +1112,8 @@ function BotSettingsWizard({
             {activating ? 'Activating…' : 'Activate Bot →'}
           </button>
 
-          <div className="bw-actions">
-            <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
-            <button type="button" className="bw-btn-back" onClick={onClose}>Cancel</button>
-          </div>
+          {/* Single full-width Back button — matches v1's "← Back to Review Projection" */}
+          <button type="button" className="bw-btn-back-wide" onClick={back}>← Back to Review Projection</button>
         </div>
       )}
     </div>
