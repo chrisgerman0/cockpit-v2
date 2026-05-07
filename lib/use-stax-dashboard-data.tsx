@@ -142,6 +142,68 @@ function buildStreak(trades: RawTrade[]): StaxDashboardData['streak'] {
   return { value: `${sign}${len}${kind}`, sub: `${len} consecutive ${word}`, recent, isWin: kind === 'W' }
 }
 
+// Streak built from REAL user trades + open positions, with hover labels.
+// - Closed trades render as W/L dots (oldest→newest, last 10).
+// - Open positions render as OW/OL dots (flashing) with current PnL.
+// - recentLabels carries a tooltip per dot for the StreakCard's title attr.
+// - Streak count uses only closed trades (open positions don't break streak).
+function streakFromUser(closed: RawTrade[], openPositions: RawTrade[]): StaxDashboardData['streak'] {
+  const closedSorted = [...closed].sort((a, b) => {
+    const at = a.closed_at ? new Date(a.closed_at).getTime() : 0
+    const bt = b.closed_at ? new Date(b.closed_at).getTime() : 0
+    return at - bt  // oldest → newest
+  })
+  const opensSorted = [...openPositions].sort((a, b) => {
+    const at = a.opened_at ? new Date(a.opened_at).getTime() : 0
+    const bt = b.opened_at ? new Date(b.opened_at).getTime() : 0
+    return at - bt
+  })
+
+  // Streak count — walk closed trades from newest backwards.
+  let len = 0
+  let kind: 'W' | 'L' | null = null
+  for (let i = closedSorted.length - 1; i >= 0; i--) {
+    const cur: 'W' | 'L' = Number(closedSorted[i].pnl_usd) > 0 ? 'W' : 'L'
+    if (kind === null) { kind = cur; len = 1; continue }
+    if (cur === kind) len++
+    else break
+  }
+
+  // Dots: keep the last (10 - opensCount) closed dots, then append open dots.
+  // Caps total at 10 + opens to leave breathing room when many positions open.
+  const maxClosedDots = Math.max(5, 10 - opensSorted.length)
+  const closedSlice = closedSorted.slice(-maxClosedDots)
+  const dots: Array<'W' | 'L' | 'OW' | 'OL'> = []
+  const labels: string[] = []
+  for (const t of closedSlice) {
+    const pnl = Number(t.pnl_usd) || 0
+    const sym = (t.symbol || '').replace('USDT', '')
+    const side = (t.side || 'long').toUpperCase()
+    const dt = t.closed_at ? new Date(t.closed_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+    const pnlStr = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2)
+    dots.push(pnl > 0 ? 'W' : 'L')
+    labels.push(`${sym} ${side} · ${pnlStr} · ${dt}`)
+  }
+  for (const t of opensSorted) {
+    const pnl = Number(t.pnl_usd) || 0
+    const sym = (t.symbol || '').replace('USDT', '')
+    const side = (t.side || 'long').toUpperCase()
+    const entry = Number(t.entry_price) || 0
+    const pnlStr = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2)
+    const entryStr = entry < 1 ? '$' + entry.toFixed(4) : '$' + entry.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    dots.push(pnl >= 0 ? 'OW' : 'OL')
+    labels.push(`${sym} ${side} · OPEN · ${pnlStr} · entry ${entryStr}`)
+  }
+
+  if (!kind || len === 0) {
+    // No closed trades — return empty count but keep open-position dots.
+    return { value: opensSorted.length > 0 ? '—' : '–', sub: opensSorted.length > 0 ? `${opensSorted.length} open` : 'No trades yet', recent: dots, recentLabels: labels, isWin: true }
+  }
+  const sign = kind === 'W' ? '+' : '−'
+  const word = kind === 'W' ? (len === 1 ? 'win' : 'wins') : (len === 1 ? 'loss' : 'losses')
+  return { value: `${sign}${len}${kind}`, sub: `${len} consecutive ${word}`, recent: dots, recentLabels: labels, isWin: kind === 'W' }
+}
+
 // ─── Strategy (portfolio backtest) helpers ──────────────────────────────────
 //
 // FUTURE-CUTOVER NOTE — 2026-05-02
@@ -433,27 +495,37 @@ export function useStaxDashboardData(): StaxLoadState {
           })
         }
 
-        // Recent Trades widget — last 5 CLOSED strategy backtest trades
-        // (newest first). Open trades (reason: 'eod') are filtered out so
-        // they don't duplicate the Open Positions card on the left.
-        const closedOnly = portfolio.filter(t => !isOpenPortfolioTrade(t))
-        const lastFive = closedOnly.slice(-5).reverse()
-        const trades: Trade[] = lastFive.map(t => {
-          const sizeUnits = t.entryPx > 0 ? t.notional / t.entryPx : 0
+        // Recent Trades widget — last 5 CLOSED USER trades (Bitget-sourced
+        // via /api/trades-live). Switched from backtest portfolio so the
+        // dashboard reflects actual money, not the strategy's track record.
+        const closedSorted = [...userClosedTrades].sort((a, b) => {
+          const at = a.closed_at ? new Date(a.closed_at).getTime() : 0
+          const bt = b.closed_at ? new Date(b.closed_at).getTime() : 0
+          return bt - at  // newest first
+        })
+        const trades: Trade[] = closedSorted.slice(0, 5).map(t => {
+          const entry = Number(t.entry_price) || 0
+          const exit = Number(t.exit_price) || 0
+          const sizeUsd = Number(t.size_usd) || 0
+          const sizeUnits = entry > 0 ? sizeUsd / entry : 0
+          const pnl = Number(t.pnl_usd) || 0
+          const pnlPct = Number(t.pnl_pct) || 0
+          const entryTsMs = t.opened_at ? new Date(t.opened_at).getTime() : null
+          const exitTsMs = t.closed_at ? new Date(t.closed_at).getTime() : null
           return {
             sym: symToCoin(t.symbol),
             pair: t.symbol,
-            side: t.dir === 1 ? 'LONG' : 'SHORT',
+            side: t.side === 'long' ? 'LONG' : 'SHORT',
             size: fmtSize(sizeUnits),
-            entry: fmtPx(t.entryPx),
-            exit: fmtPx(t.exitPx),
-            pnl: fmtUsdSign(t.pnl),
-            pnlPct: fmtPctSign(t.returnPct),
-            pos: t.pnl >= 0,
-            time: fmtTime(new Date(t.exitTs).toISOString()),
+            entry: fmtPx(entry),
+            exit: fmtPx(exit),
+            pnl: fmtUsdSign(pnl),
+            pnlPct: fmtPctSign(pnlPct),
+            pos: pnl >= 0,
+            time: fmtTime(t.closed_at),
             open: false,
-            entryTs: fmtTradeTs(t.entryTs),
-            exitTs: fmtTradeTs(t.exitTs),
+            entryTs: fmtTradeTs(entryTsMs),
+            exitTs: fmtTradeTs(exitTsMs),
           }
         })
 
@@ -472,10 +544,12 @@ export function useStaxDashboardData(): StaxLoadState {
           ? `${portfolio.length.toLocaleString()} backtest trades · ${fmtTime(new Date(portfolio[0].entryTs).toISOString())} – ${fmtTime(new Date(portfolio[portfolio.length - 1].exitTs).toISOString())}`
           : 'No backtest data — daemon may be warming up'
 
-        // Win rate / streak — most recent strategy trades (last N from portfolio).
-        const wr20 = winRateFromPortfolio(portfolio, 20)
-        const wr50 = winRateFromPortfolio(portfolio, 50)
-        const streak = streakFromPortfolio(portfolio)
+        // Win rate / streak — USER's actual trades. buildWinRate already takes
+        // RawTrade and counts only closed trades. streakFromUser builds dots
+        // from user closed + open positions with hover labels.
+        const wr20 = buildWinRate(userTrades, 20)
+        const wr50 = buildWinRate(userTrades, 50)
+        const streak = streakFromUser(userClosedTrades, openTrades)
 
         const stats = buildStats({
           unrealizedPnl,

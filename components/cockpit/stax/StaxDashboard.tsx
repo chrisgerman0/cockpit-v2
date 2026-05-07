@@ -112,7 +112,7 @@ export type StaxDashboardData = {
   leverageMax?: number               // gauge upper bound; defaults to max(10, leverage*1.2)
   winRate20: { pct: number; wins: number; losses: number }
   winRate50: { pct: number; wins: number; losses: number }
-  streak: { value: string; sub: string; recent: Array<'W' | 'L' | 'OW' | 'OL'>; isWin: boolean }
+  streak: { value: string; sub: string; recent: Array<'W' | 'L' | 'OW' | 'OL'>; recentLabels?: string[]; isWin: boolean }
   // Ticker
   ticker: TickerAsset[]
   // System status (sidebar foot)
@@ -1035,7 +1035,7 @@ function WinRateCard({ label, pct, wins, losses }: { label: string; pct: number;
   )
 }
 
-function StreakCard({ value, sub, recent, isWin }: { value: string; sub: string; recent: Array<'W' | 'L' | 'OW' | 'OL'>; isWin: boolean }) {
+function StreakCard({ value, sub, recent, recentLabels, isWin }: { value: string; sub: string; recent: Array<'W' | 'L' | 'OW' | 'OL'>; recentLabels?: string[]; isWin: boolean }) {
   const t = useT()
   return (
     <div className="card card-pad bottom-card">
@@ -1048,7 +1048,8 @@ function StreakCard({ value, sub, recent, isWin }: { value: string; sub: string;
         {recent.map((c, i) => {
           const isOpen = c === 'OW' || c === 'OL'
           const isW = c === 'W' || c === 'OW'
-          return <span key={i} className={'sd ' + (isW ? 'w' : 'l') + (isOpen ? ' open' : '')} />
+          const label = recentLabels?.[i] || ''
+          return <span key={i} className={'sd ' + (isW ? 'w' : 'l') + (isOpen ? ' open' : '')} title={label} aria-label={label} />
         })}
       </div>
     </div>
