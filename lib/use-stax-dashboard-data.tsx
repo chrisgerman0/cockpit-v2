@@ -407,19 +407,19 @@ export function useStaxDashboardData(): StaxLoadState {
         const portfolio = await fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[])
         if (cancelled) return
 
-        // Realised pnl + return % — USER's account, not the backtest. The
-        // Backtesting page already shows strategy performance; these widgets
-        // need to reflect what the user has actually made/lost. Total Return
-        // is computed against the user's activation balance (their starting
-        // amount when they switched the bot on), so a fresh user with no
-        // closed trades shows 0%, not the backtest's 9997%.
+        // Realised pnl + return % — USER's account, not the backtest.
+        // CRITICAL: Total Return is REALIZED-ONLY (closed trades vs activation
+        // balance). Do NOT include unrealized PnL or current equity — those
+        // would make the card flicker on every tick as mark prices move.
+        // Matches Live Trading page's realizedPct formula. Open positions
+        // contribute to Unrealized PnL card, never here.
         const userClosedTrades = userTrades.filter(t => t.status === 'closed')
         const realizedPnl = userClosedTrades.reduce((s, t) => s + (Number(t.pnl_usd) || 0), 0)
         const startCapital = 10000  // strategy account base — kept for equity-curve simulation only
         const userActivationBalance = Number((cfg as { activation_balance?: number })?.activation_balance) || 0
-        const userBaseline = userActivationBalance > 0 ? userActivationBalance : (equity > 0 ? equity - realizedPnl - unrealizedPnl : 0)
+        const userBaseline = userActivationBalance > 0 ? userActivationBalance : startCapital
         const totalReturnPct = userBaseline > 0
-          ? ((equity + realizedPnl - userBaseline) / userBaseline) * 100
+          ? (realizedPnl / userBaseline) * 100
           : 0
 
         const tickerBySymbol: Record<string, PublicTicker | undefined> = {}
