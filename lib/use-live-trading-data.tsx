@@ -188,11 +188,27 @@ export function useLiveTradingData(): LiveLoadState {
         const unrealizedPnl = Number(balance?.unrealizedPnl || 0)
 
         const all = (tradesRes?.trades || []).map(normalize)
-        const open = all.filter(t => t.status === 'open')
         const closed = all.filter(t => t.status === 'closed')
 
         const tickerByPair: Record<string, PublicTicker | undefined> = {}
         tickers.forEach(t => { tickerByPair[t.symbol] = t })
+
+        // Recompute pnl for ALL open positions using live ticker prices.
+        // The /api/trades-live response carries a server-side pnl computed
+        // from Bitget's markPrice, but if Bitget didn't return markPrice
+        // (or returned 0), the table would show $0 — confusing because the
+        // account-level Unrealized PnL card shows the real number. Now we
+        // overlay the public ticker price client-side so the table shows
+        // accurate per-leg PnL even if the server-side computation came
+        // back zero. Falls back to whatever the API returned.
+        const open = all.filter(t => t.status === 'open').map(t => {
+          const tickerPx = tickerByPair[t.pair]?.price || 0
+          if (tickerPx <= 0 || t.entry <= 0) return t
+          const dir = t.side === 'LONG' ? 1 : -1
+          const pnlUsd = (tickerPx - t.entry) * t.sizeUnits * dir
+          const pnlPct = ((tickerPx - t.entry) / t.entry) * 100 * dir
+          return { ...t, pnlUsd: Math.round(pnlUsd * 100) / 100, pnlPct: Math.round(pnlPct * 100) / 100, pos: pnlUsd >= 0 }
+        })
 
         let active: ActivePosition | null = null
         if (open.length > 0) {

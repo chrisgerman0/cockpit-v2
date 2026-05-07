@@ -255,9 +255,17 @@ export function LeverageGauge({ value = 7.5, max = 10, scale = 0.75 }: { value: 
 
   const displayAng = ang + jitter
   const [nx, ny] = polar(displayAng)
-  // Tip 92% of the way out for a longer, more visible needle.
+  // Tip 96% of the way out for a longer, more visible needle.
   const tipFactor = 0.96
   const [tipX, tipY] = [cx + (nx - cx) * tipFactor, cy + (ny - cy) * tipFactor]
+  // Tapered needle: wide at the hub, sharp at the tip. Compute the two
+  // base vertices by stepping perpendicular to the needle direction
+  // (displayAng + 90°). 2.6px half-width gives a chunky, RPM-style base.
+  const perpRad = ((displayAng + 90) * Math.PI) / 180
+  const baseHalfWidth = 2.6
+  const baseDx = Math.cos(perpRad) * baseHalfWidth
+  const baseDy = Math.sin(perpRad) * baseHalfWidth
+  const needlePoints = `${(cx + baseDx).toFixed(2)},${(cy + baseDy).toFixed(2)} ${tipX.toFixed(2)},${tipY.toFixed(2)} ${(cx - baseDx).toFixed(2)},${(cy - baseDy).toFixed(2)}`
   const [gx0, gy0] = polar(180)
   const [gx1, gy1] = polar(ang)
 
@@ -307,16 +315,19 @@ export function LeverageGauge({ value = 7.5, max = 10, scale = 0.75 }: { value: 
           </feMerge>
         </filter>
       </defs>
-      <line
-        x1={cx} y1={cy} x2={tipX} y2={tipY}
-        stroke="url(#needleGrad)" strokeWidth="2.4" strokeLinecap="round"
+      {/* Tapered needle: wide hub-side base, sharp tip. Polygon with 3
+          vertices (baseLeft → tip → baseRight) so it tapers smoothly. */}
+      <polygon
+        points={needlePoints}
+        fill="url(#needleGrad)"
         filter="url(#needleGlow)"
+        strokeLinejoin="round"
       />
-      {/* Tip dot — small gold cap to make the leading edge pop visually */}
-      <circle cx={tipX} cy={tipY} r="1.6" fill="var(--gold)" />
-      {/* Hub — outer dark, inner light dimple for a 3D-looking pivot */}
-      <circle cx={cx} cy={cy} r="3.6" fill="var(--text)" />
-      <circle cx={cx} cy={cy} r="2.2" fill="var(--gold)" opacity="0.9" />
+      {/* Hub — outer dark, gold ring, inner dimple for a 3D-looking pivot.
+          Slightly larger than the needle base so it visually anchors the
+          taper instead of leaving a flat edge. */}
+      <circle cx={cx} cy={cy} r="4" fill="var(--text)" />
+      <circle cx={cx} cy={cy} r="2.4" fill="var(--gold)" opacity="0.9" />
       <circle cx={cx} cy={cy} r="1.0" fill="var(--bg)" />
     </svg>
   )

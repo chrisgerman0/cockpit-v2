@@ -427,12 +427,29 @@ export function useStaxDashboardData(): StaxLoadState {
 
         let positions: Position[] = openTrades.map(t => {
           const entry = Number(t.entry_price || 0)
-          const mark = tickerBySymbol[t.symbol]?.price || entry
           const sizeUsd = Number(t.size_usd || 0)
           const sizeUnits = entry > 0 ? sizeUsd / entry : 0
           const dir = t.side === 'long' ? 1 : -1
-          const pnlUsd = (mark - entry) * sizeUnits * dir
-          const pnlPct = entry > 0 ? ((mark - entry) / entry) * 100 * dir : 0
+          // Mark/PnL preference order:
+          //   1. Public ticker (most live, updates client-side)
+          //   2. Bitget-sourced pnl from /api/trades-live (already mark-priced
+          //      server-side using Bitget's markPrice — accurate to within
+          //      the cache TTL)
+          //   3. Entry price fallback (zero PnL — never used in practice)
+          // Without this fallback chain, positions would show $0/$0 for the
+          // first ~5s after page load while the public ticker WS is still
+          // connecting, even though /api/trades-live already returned a
+          // valid mark-priced PnL. Now that initial render uses the
+          // server-computed PnL.
+          const tickerPx = tickerBySymbol[t.symbol]?.price || 0
+          const apiPnlUsd = Number(t.pnl_usd) || 0
+          const mark = tickerPx > 0 ? tickerPx : entry
+          const pnlUsd = tickerPx > 0
+            ? (tickerPx - entry) * sizeUnits * dir
+            : apiPnlUsd
+          const pnlPct = entry > 0 && tickerPx > 0
+            ? ((tickerPx - entry) / entry) * 100 * dir
+            : Number(t.pnl_pct) || 0
           const entryTsMs = t.opened_at ? new Date(t.opened_at).getTime() : null
           return {
             sym: symToCoin(t.symbol), pair: t.symbol,
