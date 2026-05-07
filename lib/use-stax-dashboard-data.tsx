@@ -461,6 +461,10 @@ export function useStaxDashboardData(): StaxLoadState {
             pnlPct: fmtPctSign(pnlPct),
             pos: pnlUsd >= 0,
             entryTs: fmtTradeTs(entryTsMs),
+            // Raw fields for the page-level live ticker overlay to use.
+            entryNum: entry,
+            sizeUnits,
+            dir: dir as 1 | -1,
           }
         })
 

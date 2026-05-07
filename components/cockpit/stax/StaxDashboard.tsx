@@ -49,6 +49,12 @@ export type Position = {
   fromStrategy?: boolean   // true if this is the strategy's currently-open position (bot is "watching"), not a real exchange position
   /** Pre-formatted entry timestamp ("6 May 2026, 13:14") rendered below the entry price. */
   entryTs?: string
+  // Raw numeric fields — used by the page-level live ticker overlay to
+  // recompute pnl on every WS tick without re-fetching. Optional for
+  // back-compat with sample/loading data.
+  entryNum?: number
+  sizeUnits?: number
+  dir?: 1 | -1
 }
 
 export type Trade = {
@@ -1223,13 +1229,55 @@ export function StaxAppShell({
 /**
  * Just the dashboard page content — Hero + StatsRow + TablesRow + BottomRow.
  * Use this inside StaxAppShell when rendering the dashboard route.
+ *
+ * Live ticker overlay: positions arrive from the data hook with an entry
+ * snapshot (entryNum/sizeUnits/dir). Here we re-derive PnL on every
+ * ticker tick using the current public ticker price, so the open
+ * positions table updates in real time without re-fetching anything.
  */
 export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
+  const tickers = usePublicTickers(30000)
+  const tickerByPair = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const t of tickers) m[t.symbol] = t.price
+    return m
+  }, [tickers])
+
+  const livePositions = useMemo<Position[]>(() => {
+    return data.positions.map(p => {
+      const tickerPx = tickerByPair[p.pair] || 0
+      // If the data hook didn't surface raw fields (loading state, sample
+      // data, or strategy-fallback positions), pass the existing formatted
+      // values through unchanged.
+      if (!tickerPx || !p.entryNum || !p.sizeUnits || !p.dir) return p
+      const pnlUsd = (tickerPx - p.entryNum) * p.sizeUnits * p.dir
+      const pnlPct = ((tickerPx - p.entryNum) / p.entryNum) * 100 * p.dir
+      const fmtUsd = (v: number) => {
+        const abs = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        return v >= 0 ? `+$${abs}` : `−$${abs}`
+      }
+      const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+      const fmtMark = (n: number) => {
+        if (!Number.isFinite(n) || n === 0) return '$—'
+        if (n < 1) return `$${n.toFixed(4)}`
+        if (n < 100) return `$${n.toFixed(2)}`
+        return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      }
+      return {
+        ...p,
+        mark: fmtMark(tickerPx),
+        pnl: fmtUsd(pnlUsd),
+        pnlPct: fmtPct(pnlPct),
+        pos: pnlUsd >= 0,
+      }
+    })
+  }, [data.positions, tickerByPair])
+
   return (
     <div className="stax-page">
       <Hero data={data} />
       <StatsRow stats={data.stats} />
-      <TablesRow positions={data.positions} trades={data.trades} />
+      <TablesRow positions={livePositions} trades={data.trades} />
       <BottomRow data={data} />
     </div>
   )

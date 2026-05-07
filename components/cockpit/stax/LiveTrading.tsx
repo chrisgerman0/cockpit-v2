@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import './stax-design.css'
 import { Icons } from './Icons'
 import { useLiveTradingData, type LiveTradingData } from '@/lib/use-live-trading-data'
+import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useT, getCurrentLang } from '@/lib/i18n'
 
 function fmtUsdSign(v: number): string {
@@ -53,32 +54,47 @@ export function LiveTradingContent() {
 }
 
 function LiveTradingView({ data }: { data: LiveTradingData }) {
-  // Open & closed rows both render through LiveTradesTable (a clone of the
-  // backtesting List of Trades layout) so the live page reads as one
-  // consistent surface — same columns, same coin/side filters, same row
-  // tints, same OPEN pulsing label, same pagination.
-  // Open positions = USER's actual Bitget positions (not strategy backtest state).
-  // Source of truth: /api/trades-live → data.open. Same source the Dashboard page
-  // uses, so both pages agree. assetStates (strategy view) is intentionally NOT
-  // used here — it would surface the strategy's intended positions, which can
-  // diverge from the user's actual exchange state (e.g., during catch-up windows
-  // or when a trade fails to fill).
+  // Live tickers — drive per-tick PnL recomputation in the openRows memo
+  // below. Critical: data hook does NOT depend on tickers (would cause a
+  // load loop), so per-tick mark price overlay happens HERE at render
+  // time. Cheap re-render, no fetch.
+  const tickers = usePublicTickers(30000)
+  const tickerByPair = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const t of tickers) m[t.symbol] = t.price
+    return m
+  }, [tickers])
+
+  // Open positions = USER's actual Bitget positions (not strategy backtest).
+  // PnL recomputed on every ticker tick using live mark prices. Falls back
+  // to whatever data.open's pnlUsd carries (server-side computed) if no
+  // ticker yet.
   const openRows: LiveTradeRow[] = useMemo(() =>
-    data.open.map(t => ({
-      symbol: t.pair,
-      sym: t.sym,
-      side: t.side,
-      notional: t.sizeUsd,
-      entryPx: t.entry,
-      entryTs: t.openedAt ?? 0,
-      exitPx: null,
-      exitTs: null,
-      pnl: t.pnlUsd,
-      pnlPct: t.pnlPct,
-      reason: t.pyramided ? 'Open · Pyramided' : 'Open',
-      open: true,
-    })),
-    [data.open],
+    data.open.map(t => {
+      const tickerPx = tickerByPair[t.pair] || 0
+      let pnl = t.pnlUsd
+      let pnlPct = t.pnlPct
+      if (tickerPx > 0 && t.entry > 0 && t.sizeUnits > 0) {
+        const dir = t.side === 'LONG' ? 1 : -1
+        pnl = (tickerPx - t.entry) * t.sizeUnits * dir
+        pnlPct = ((tickerPx - t.entry) / t.entry) * 100 * dir
+      }
+      return {
+        symbol: t.pair,
+        sym: t.sym,
+        side: t.side,
+        notional: t.sizeUsd,
+        entryPx: t.entry,
+        entryTs: t.openedAt ?? 0,
+        exitPx: null,
+        exitTs: null,
+        pnl,
+        pnlPct,
+        reason: t.pyramided ? 'Open · Pyramided' : 'Open',
+        open: true,
+      }
+    }),
+    [data.open, tickerByPair],
   )
 
   const closedRows: LiveTradeRow[] = useMemo(() =>
