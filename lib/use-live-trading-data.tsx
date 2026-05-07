@@ -292,8 +292,13 @@ export function useLiveTradingData(): LiveLoadState {
     load()
     intervalId = window.setInterval(load, 30000)
     return () => { cancelled = true; if (intervalId !== null) window.clearInterval(intervalId) }
+    // Empty deps — load() only fires on mount + every 30s via interval.
+    // Re-running on tickersKey was hammering the API (3+ authed fetches
+    // + a 4 MB portfolio JSON fetch) on every Bitget ticker tick — page
+    // would hang for minutes under live stream. Mark prices for open
+    // positions update via separate ticker overlay in render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickersKey])
+  }, [])
 
   return state
 }

@@ -595,10 +595,17 @@ export function useStaxDashboardData(): StaxLoadState {
     load()
     intervalId = window.setInterval(load, 30000)
     return () => { cancelled = true; if (intervalId !== null) window.clearInterval(intervalId) }
-    // tickers dependency intentional — re-run when ticker prices update so
-    // the ticker bar + open-position mark prices stay in sync.
+    // CRITICAL: do NOT depend on ticker prices here. Bitget WebSocket
+    // emits ticker updates several times per second; if this effect
+    // re-runs on each tick, every ticker change triggers a full data
+    // reload (3 authed API calls + a 4 MB portfolio JSON fetch).
+    // Result: dashboard hangs for minutes under live ticker stream
+    // (see commit log for the fix story). Mark prices in open
+    // positions are now overlaid via tickerBySymbol in render — see
+    // the StaxDashboard component, which re-renders on ticker tick
+    // without re-fetching anything.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(tickers.map(t => `${t.symbol}:${t.price.toFixed(2)}`))])
+  }, [])
 
   return state
 }
