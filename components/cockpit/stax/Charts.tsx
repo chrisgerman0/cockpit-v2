@@ -235,24 +235,29 @@ export function LeverageGauge({ value = 7.5, max = 10, scale = 0.75 }: { value: 
   const v = Math.min(Math.max(value, 0), max)
   const ang = 180 + (v / max) * 180
 
-  // RPM-style live needle jitter — small bounded random walk around the
-  // actual angle, updating ~8×/sec. Makes the needle feel alive (like a
-  // car's tachometer never sitting perfectly still) without distorting
-  // the reading. Disabled when leverage is 0 (gauge at zero stays put).
+  // RPM-style live needle jitter — bounded random walk around the actual
+  // angle, ~12×/sec. Tuned from ±1.2° (too subtle to see) to ±3.5° so
+  // the movement is clearly visible like a car tachometer that's never
+  // perfectly still. Doesn't distort the reading meaningfully — at full
+  // 180° span, ±3.5° is <2% of the gauge.
   const [jitter, setJitter] = useState(0)
   useEffect(() => {
     if (v === 0) { setJitter(0); return }
     const id = window.setInterval(() => {
       setJitter(prev => {
-        const next = prev + (Math.random() - 0.5) * 0.6
-        return Math.max(-1.2, Math.min(1.2, next))
+        // larger random impulse + slight pull-toward-zero for natural motion
+        const next = prev * 0.85 + (Math.random() - 0.5) * 2.4
+        return Math.max(-3.5, Math.min(3.5, next))
       })
-    }, 120)
+    }, 80)
     return () => window.clearInterval(id)
   }, [v])
 
   const displayAng = ang + jitter
   const [nx, ny] = polar(displayAng)
+  // Tip 92% of the way out for a longer, more visible needle.
+  const tipFactor = 0.96
+  const [tipX, tipY] = [cx + (nx - cx) * tipFactor, cy + (ny - cy) * tipFactor]
   const [gx0, gy0] = polar(180)
   const [gx1, gy1] = polar(ang)
 
@@ -285,9 +290,34 @@ export function LeverageGauge({ value = 7.5, max = 10, scale = 0.75 }: { value: 
           <text key={i} x={lx + dx} y={ly + dy + 3} fontSize="9" textAnchor="middle" fill="var(--muted)" fontFamily="JetBrains Mono">{l.t}</text>
         )
       })}
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="var(--text)" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx={cx} cy={cy} r="3" fill="var(--text)" />
-      <circle cx={cx} cy={cy} r="1.2" fill="var(--bg)" />
+      {/* Needle — RPM/tachometer style: thicker base, gold gradient,
+          subtle outer glow. The base is dark (text colour) for contrast
+          against the gauge arc, the tip glows gold matching the fill. */}
+      <defs>
+        <linearGradient id="needleGrad" gradientUnits="userSpaceOnUse" x1={cx} y1={cy} x2={nx} y2={ny}>
+          <stop offset="0%" stopColor="var(--text)" stopOpacity="0.9" />
+          <stop offset="60%" stopColor="var(--gold)" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="var(--gold)" stopOpacity="1" />
+        </linearGradient>
+        <filter id="needleGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="0.8" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <line
+        x1={cx} y1={cy} x2={tipX} y2={tipY}
+        stroke="url(#needleGrad)" strokeWidth="2.4" strokeLinecap="round"
+        filter="url(#needleGlow)"
+      />
+      {/* Tip dot — small gold cap to make the leading edge pop visually */}
+      <circle cx={tipX} cy={tipY} r="1.6" fill="var(--gold)" />
+      {/* Hub — outer dark, inner light dimple for a 3D-looking pivot */}
+      <circle cx={cx} cy={cy} r="3.6" fill="var(--text)" />
+      <circle cx={cx} cy={cy} r="2.2" fill="var(--gold)" opacity="0.9" />
+      <circle cx={cx} cy={cy} r="1.0" fill="var(--bg)" />
     </svg>
   )
 }

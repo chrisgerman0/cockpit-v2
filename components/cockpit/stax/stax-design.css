@@ -937,7 +937,10 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
 }
 /* Latency indicator inside the ticker. Color tracks WS RTT health: good
    (gold), mid (amber), high (red), stale (muted) when disconnected. */
-.stax-app .tk-latency-good { color: var(--gold); }
+/* Traffic-light tone: green good / amber mid / red high / muted stale.
+   Was gold/gold/red — "good" looked yellow because gold reads as yellow
+   on most monitors. Now matches user expectation: green = healthy. */
+.stax-app .tk-latency-good { color: var(--pos); }
 .stax-app .tk-latency-mid  { color: var(--gold-hi); }
 .stax-app .tk-latency-high { color: var(--neg); }
 .stax-app .tk-latency-stale { color: var(--muted-2); }
