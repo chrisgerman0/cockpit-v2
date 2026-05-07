@@ -93,6 +93,19 @@ function getTier(aum: number) {
   return 0
 }
 
+// Resolve the active tier index. The admin can set broker_split_pct to any of
+// the tier percentages (20/25/30/40/50) as an override — when that's set, it
+// wins over the AUM-derived tier. Falls back to AUM tier when split_pct is
+// the default 25% AND AUM places the user above Silver, or when split_pct
+// doesn't match any known tier.
+function getActiveTier(aum: number, splitPct: number) {
+  const aumTier = getTier(aum)
+  const splitMatch = TIERS.findIndex(t => t.pct === splitPct)
+  if (splitMatch < 0) return aumTier            // unknown split → trust AUM
+  if (splitMatch > aumTier) return splitMatch   // override raises the tier
+  return aumTier                                  // AUM has already earned higher
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const formatCurrency = (n: number) =>
@@ -260,12 +273,19 @@ export function BrokerContent() {
 
   const s = data.summary
   const currentAum = s.total_capital
-  const tierIndex = getTier(currentAum)
+  const tierIndex = getActiveTier(currentAum, splitPct)
+  const aumTierIndex = getTier(currentAum)
+  const isOverride = tierIndex !== aumTierIndex
   const currentTier = TIERS[tierIndex]
   const nextTier = tierIndex < TIERS.length - 1 ? TIERS[tierIndex + 1] : null
-  const progressPct = nextTier
-    ? Math.min(((currentAum - currentTier.min) / (nextTier.min - currentTier.min)) * 100, 100)
-    : 100
+  // Progress bar only makes sense when the AUM-derived tier matches the
+  // active tier — otherwise the bar would compare AUM against a min the
+  // user hasn't actually crossed.
+  const progressPct = isOverride
+    ? 100
+    : nextTier
+      ? Math.min(((currentAum - currentTier.min) / (nextTier.min - currentTier.min)) * 100, 100)
+      : 100
 
   const filteredUsers = data.users.filter(u => {
     if (referralFilter === 'active') return u.status === 'Active'
@@ -361,11 +381,20 @@ export function BrokerContent() {
           <div className="aum-meta">
             <strong>{currentTier.name}</strong>
             <span>{tt('current tier', 'tier atual')}</span>
+            {isOverride ? (
+              <span className="badge badge-long" style={{ marginLeft: 4 }}>
+                {tt('OVERRIDE', 'OVERRIDE')}
+              </span>
+            ) : null}
           </div>
           <div className="aum-bar-wrap">
             <div className="aum-bar-fill" style={{ width: `${progressPct}%` }} />
           </div>
-          {nextTier ? (
+          {isOverride ? (
+            <div className="aum-meta" style={{ color: 'var(--gold)', justifyContent: 'flex-end' }}>
+              <strong>{tt('Custom split — admin set', 'Comissão personalizada — definida pelo admin')}</strong>
+            </div>
+          ) : nextTier ? (
             <div className="aum-meta" style={{ justifyContent: 'flex-end' }}>
               <strong>{formatAum(currentAum)}</strong>
               <span>→</span>
