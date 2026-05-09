@@ -1443,10 +1443,13 @@ function AlertsPanel({ active }: { active: boolean }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // ────────────────────────────────────────────────────────────────────────────
-// 6. Users panel — sub-tabs for users / waitlist / brokers
+// 6. Users panel — sub-tabs for users / brokers
+// (Waitlist sub-tab removed 2026-05-09 — waitlist gating decommissioned;
+//  signup is open. WaitlistList component below kept dead in case a quick
+//  re-enable is needed but no longer rendered.)
 // ────────────────────────────────────────────────────────────────────────────
 
-type UserSub = 'users' | 'waitlist' | 'brokers'
+type UserSub = 'users' | 'brokers'
 
 function UsersPanel({ active }: { active: boolean }) {
   const [sub, setSub] = useState<UserSub>('users')
@@ -1454,21 +1457,19 @@ function UsersPanel({ active }: { active: boolean }) {
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · COMMUNITY"
-        lead="Users, waitlist,"
+        lead="Users and"
         accent="brokers."
-        blurb="Roster of paying users, waitlist queue, and broker-program partners. Search, paginate, drill down."
+        blurb="Roster of paying users and broker-program partners. Search, paginate, drill down."
       />
       <SubPills
         value={sub}
         onChange={setSub}
         items={[
           { id: 'users', label: 'Users' },
-          { id: 'waitlist', label: 'Waitlist' },
           { id: 'brokers', label: 'Brokers' },
         ]}
       />
       <div style={{ display: sub === 'users' ? 'block' : 'none' }}><UsersList active={active && sub === 'users'} /></div>
-      <div style={{ display: sub === 'waitlist' ? 'block' : 'none' }}><WaitlistList active={active && sub === 'waitlist'} /></div>
       <div style={{ display: sub === 'brokers' ? 'block' : 'none' }}><BrokersList active={active && sub === 'brokers'} /></div>
     </div>
   )
@@ -1565,47 +1566,6 @@ function UsersList({ active }: { active: boolean }) {
   )
 }
 
-type WaitlistResp = {
-  entries: Array<{ email: string; full_name?: string; queue_position?: number; referral_code?: string; notified_at?: string; created_at: string }>
-  total?: number
-  notified?: number
-  pending?: number
-}
-
-function WaitlistList({ active }: { active: boolean }) {
-  const w = usePanelData<WaitlistResp>(active, () => authedFetch('/api/admin/waitlist?limit=200'), 60_000)
-  return (
-    <>
-      <ErrorBox msg={w.error} />
-      <div className="row row-stats">
-        <StatCard label="Total" value={w.data?.total ?? '—'} />
-        <StatCard label="Notified" value={w.data?.notified ?? '—'} tone="pos" />
-        <StatCard label="Pending" value={w.data?.pending ?? '—'} tone="gold" />
-      </div>
-      <SectionCard title="WAITLIST">
-        {(w.data?.entries || []).length === 0 ? <EmptyBox>No waitlist entries.</EmptyBox> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="adm-table">
-              <thead><tr><th>Email</th><th>Name</th><th style={{ textAlign: 'right' }}>Position</th><th>Ref</th><th>Notified</th><th>Joined</th></tr></thead>
-              <tbody>
-                {w.data!.entries.map((e, i) => (
-                  <tr key={i}>
-                    <td className="adm-truncate" style={{ maxWidth: 240 }}>{e.email}</td>
-                    <td style={{ color: 'var(--muted)' }}>{e.full_name || '—'}</td>
-                    <td className="num" style={{ textAlign: 'right' }}>{e.queue_position ?? '—'}</td>
-                    <td className="num" style={{ color: 'var(--muted)' }}>{e.referral_code || '—'}</td>
-                    <td style={{ color: 'var(--muted)' }}>{e.notified_at ? new Date(e.notified_at).toISOString().slice(0, 10) : '—'}</td>
-                    <td style={{ color: 'var(--muted)' }}>{new Date(e.created_at).toISOString().slice(0, 10)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SectionCard>
-    </>
-  )
-}
 
 type BrokersResp = {
   applications: Array<{ broker_email?: string; referral_code?: string; split_pct?: number; referred_count?: number; total_earned_usd?: number; approved_at?: string }>
