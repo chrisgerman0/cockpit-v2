@@ -1031,48 +1031,20 @@ type ParityResp = {
   logTail: string[]
 }
 
-// 3.0 Execution panel — top-level wrapper with two sub-tabs:
-//   Signal Log → end-to-end trade/signal list (the live signal pipeline view)
-//   Parity     → per-signal live-vs-sim comparison (the Telegram-alert source)
-type ExecSub = 'log' | 'parity'
+// 3. Execution panel — single table per signal showing LIVE vs SIM side-by-
+// side, so you can scan for parity discrepancies at a glance. Sourced from
+// /api/admin/parity (the parity-validator output). One row per live signal;
+// each row carries: when it fired, what asset, type, side, what the LIVE
+// engine emitted (price), what the SIM engine recorded (price + reason),
+// the % difference, and the parity verdict.
 
 function ExecutionPanel({ active }: { active: boolean }) {
-  const [sub, setSub] = useState<ExecSub>('log')
-  return (
-    <div className="stax-page">
-      <PageHeader
-        eyebrow="ADMIN · EXECUTION"
-        lead="Signal pipeline and"
-        accent="parity."
-        blurb="End-to-end trade log + per-signal live-vs-backtest parity check. Auto-refreshes every 30s."
-      />
-      <SubPills
-        value={sub}
-        onChange={setSub}
-        items={[
-          { id: 'log', label: 'Signal Log' },
-          { id: 'parity', label: 'Parity' },
-        ]}
-      />
-      <div style={{ display: sub === 'log' ? 'block' : 'none' }}>
-        <SignalLogPanel active={active && sub === 'log'} />
-      </div>
-      <div style={{ display: sub === 'parity' ? 'block' : 'none' }}>
-        <ParityPanel active={active && sub === 'parity'} />
-      </div>
-    </div>
-  )
-}
-
-// 3.1 Parity sub-panel — was the entire Execution panel pre-2026-05-09.
-// Per-signal live-engine-vs-sim comparison from /api/admin/parity, sourced
-// from scripts/parity-validator.js (3-tier severity: ok / warning / critical).
-
-function ParityPanel({ active }: { active: boolean }) {
-  const [sevFilter, setSevFilter] = useState<'all' | ParitySeverity>('all')
+  const [sevFilter, setSevFilter] = useState<'all' | 'ok' | 'warning' | 'critical'>('all')
   const [symFilter, setSymFilter] = useState<string>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'ENTRY' | 'EXIT' | 'PYRAMID' | 'PYRAMID_EMA50'>('all')
+
   const fetcher = useCallback(async () => {
-    const q = new URLSearchParams({ limit: '100' })
+    const q = new URLSearchParams({ limit: '200' })
     if (sevFilter !== 'all') q.set('severity', sevFilter)
     if (symFilter !== 'all') q.set('symbol', symFilter)
     return authedFetch<ParityResp>(`/api/admin/parity?${q}`)
@@ -1080,38 +1052,59 @@ function ParityPanel({ active }: { active: boolean }) {
   const px = usePanelData<ParityResp>(active, fetcher, 30_000, `${sevFilter}|${symFilter}`)
   const r = px.data
 
+  // Combine new + legacy severity buckets so historic results still aggregate.
+  const okCount = r ? (r.counts.severity24h.ok || 0) : 0
+  const warnCount = r ? ((r.counts.severity24h.warning || 0) + (r.counts.severity24h.drift || 0) + (r.counts.severity24h.incomplete || 0)) : 0
+  const critCount = r ? ((r.counts.severity24h.critical || 0) + (r.counts.severity24h.fail || 0)) : 0
+  const total24h = r?.counts.last24h || 0
+
+  // Apply type filter client-side (server only filters by severity + symbol)
+  const visible = (r?.recent || []).filter(rec => {
+    if (typeFilter !== 'all' && rec.type !== typeFilter) return false
+    return true
+  })
+
   return (
-    <>
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · EXECUTION · PARITY"
+        lead="Live vs"
+        accent="sim."
+        blurb="One row per signal — what the live engine fired, what the backtest sim said, where they agree (✓) or drift (⚠/🚨). Auto-refreshes every 30s."
+        refreshing={px.loading}
+        onRefresh={px.refresh}
+      />
       <ErrorBox msg={px.error} />
 
       {/* 24h header stats */}
       <div className="row row-stats">
-        <StatCard label="Last 24h" value={r ? r.counts.last24h : '—'} sub="signals checked" />
-        {/* 3-tier severity: OK (suppressed) / Warning (0.25-1%) / Critical (>1% or missing) */}
-        <StatCard label="OK" value={r ? (r.counts.severity24h.ok || 0) : '—'} tone="pos" />
-        <StatCard label="Warning" value={r ? ((r.counts.severity24h.warning || 0) + (r.counts.severity24h.drift || 0) + (r.counts.severity24h.incomplete || 0)) : '—'} tone={((r?.counts.severity24h.warning || 0) + (r?.counts.severity24h.drift || 0) + (r?.counts.severity24h.incomplete || 0)) > 0 ? 'gold' : 'muted'} />
-        <StatCard label="Critical" value={r ? ((r.counts.severity24h.critical || 0) + (r.counts.severity24h.fail || 0)) : '—'} tone={((r?.counts.severity24h.critical || 0) + (r?.counts.severity24h.fail || 0)) > 0 ? 'neg' : 'muted'} />
+        <StatCard label="Last 24h" value={total24h} sub="signals checked" />
+        <StatCard label="OK" value={okCount} tone="pos" />
+        <StatCard label="Warning" value={warnCount} tone={warnCount > 0 ? 'gold' : 'muted'} />
+        <StatCard label="Critical" value={critCount} tone={critCount > 0 ? 'neg' : 'muted'} />
       </div>
 
-      {/* Sim file freshness — tells you why NOT_FOUND happens */}
-      <SectionCard title="SIM FILE FRESHNESS">
-        <div className="adm-feed-grid">
-          {(r?.simFreshness || []).map(s => {
-            const stale = s.missing || (s.ageMs != null && s.ageMs > 15 * 60 * 1000)
-            const ageLabel = s.ageMs == null ? '—' : s.ageMs < 60_000 ? Math.round(s.ageMs / 1000) + 's' : Math.round(s.ageMs / 60_000) + 'm'
-            return (
-              <div key={s.asset} className={'adm-feed-cell' + (stale ? ' adm-feed-stale' : '')}>
-                <div className="adm-feed-head">
-                  <span className={stale ? 'dot-stale' : 'dot-live'} />
-                  <span className="num" style={{ fontWeight: 600 }}>{s.sym}</span>
+      {/* Sim freshness — explains NOT_FOUND severities (sim daemon stale) */}
+      {r && r.simFreshness && r.simFreshness.length > 0 && (
+        <SectionCard title="SIM FILE FRESHNESS">
+          <div className="adm-feed-grid">
+            {r.simFreshness.map(s => {
+              const stale = s.missing || (s.ageMs != null && s.ageMs > 15 * 60 * 1000)
+              const ageLabel = s.ageMs == null ? '—' : s.ageMs < 60_000 ? Math.round(s.ageMs / 1000) + 's' : Math.round(s.ageMs / 60_000) + 'm'
+              return (
+                <div key={s.asset} className={'adm-feed-cell' + (stale ? ' adm-feed-stale' : '')}>
+                  <div className="adm-feed-head">
+                    <span className={stale ? 'dot-stale' : 'dot-live'} />
+                    <span className="num" style={{ fontWeight: 600 }}>{s.sym}</span>
+                  </div>
+                  <div className="adm-feed-meta">{s.tradeCount} trades</div>
+                  <div className="adm-feed-meta sub">{s.missing ? 'sim file missing' : `${ageLabel} ago`}</div>
                 </div>
-                <div className="adm-feed-meta">{s.tradeCount} trades</div>
-                <div className="adm-feed-meta sub">{s.missing ? 'sim file missing' : `last write ${ageLabel} ago`}</div>
-              </div>
-            )
-          })}
-        </div>
-      </SectionCard>
+              )
+            })}
+          </div>
+        </SectionCard>
+      )}
 
       {/* Filters */}
       <div className="adm-filter-row">
@@ -1121,17 +1114,18 @@ function ParityPanel({ active }: { active: boolean }) {
           items={[
             { id: 'all', label: 'All', count: r?.counts.total ?? null },
             { id: 'ok', label: 'OK', count: r?.counts.severity.ok ?? null },
-            // Combine new + legacy buckets so the count reflects all warnings/criticals
             { id: 'warning', label: 'Warning', count: r ? ((r.counts.severity.warning || 0) + (r.counts.severity.drift || 0) + (r.counts.severity.incomplete || 0)) : null },
             { id: 'critical', label: 'Critical', count: r ? ((r.counts.severity.critical || 0) + (r.counts.severity.fail || 0)) : null },
           ]}
         />
-        <select
-          value={symFilter}
-          onChange={(e) => setSymFilter(e.target.value)}
-          className="settings-input adm-select"
-          style={{ marginLeft: 'auto' }}
-        >
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as any)} className="settings-input adm-select">
+          <option value="all">All types</option>
+          <option value="ENTRY">Entry</option>
+          <option value="EXIT">Exit</option>
+          <option value="PYRAMID">Pyramid</option>
+          <option value="PYRAMID_EMA50">Pyramid EMA50</option>
+        </select>
+        <select value={symFilter} onChange={e => setSymFilter(e.target.value)} className="settings-input adm-select" style={{ marginLeft: 'auto' }}>
           <option value="all">All symbols</option>
           <option value="BTCUSDT">BTC</option>
           <option value="ETHUSDT">ETH</option>
@@ -1141,9 +1135,9 @@ function ParityPanel({ active }: { active: boolean }) {
         </select>
       </div>
 
-      {/* Pending checks (if any) */}
+      {/* Pending checks (still in retry window — verdict not in yet) */}
       {r && r.pendingChecks.length > 0 && (
-        <SectionCard title="PENDING CHECKS">
+        <SectionCard title={`PENDING CHECKS · ${r.pendingChecks.length} awaiting verdict`}>
           <div className="adm-pending-grid">
             {r.pendingChecks.map(p => {
               const minsToCheck = Math.max(0, Math.round((p.scheduledAt - Date.now()) / 60000))
@@ -1164,281 +1158,135 @@ function ParityPanel({ active }: { active: boolean }) {
         </SectionCard>
       )}
 
-      {/* Recent parity records */}
-      {!r || r.recent.length === 0 ? (
-        <SectionCard title="PARITY HISTORY">
-          <EmptyBox>{px.loading ? 'Loading…' : 'No parity checks in this filter yet.'}</EmptyBox>
-        </SectionCard>
-      ) : (
-        <div className="adm-parity-list">
-          {r.recent.map(rec => <ParityCard key={rec.id} r={rec} />)}
-        </div>
-      )}
-
-      {/* Log tail (collapsed by default) */}
-      {r && r.logTail.length > 0 && (
-        <SectionCard title="VALIDATOR LOG · last 30 lines">
-          <pre className="adm-log-tail">{r.logTail.join('\n')}</pre>
-        </SectionCard>
-      )}
-    </>
-  )
-}
-
-// 3.2 Signal Log sub-panel — pulls /api/admin/execution-logs (the v1 endpoint
-// that aggregates strategy trades + executor signals + DB confirmations) and
-// renders the full signal pipeline view: 6 stat tiles + match-rate progress
-// bar + filterable signal table. Replaces the v1 admin/execution page.
-
-type SignalRow = {
-  signalId: string
-  type: string                                                 // ENTRY | EXIT | PYRAMID | PYRAMID_EMA50 | TIMEOUT | STOP LOSS | TAKE PROFIT
-  side: string                                                 // LONG | SHORT
-  symbol: string
-  mode: string                                                 // live | paper
-  executedAt: string
-  limitPx: number | null
-  slPx: number | null
-  pnl: number | null
-  returnPct: number | null
-  reason: string | null
-  tradeNum: number | string | null
-  status: 'executed' | 'missed' | 'ignored'
-  exchange_status: string | null                               // 'Bitget' | 'Paper'
-  pipeline_status?: string                                     // 'confirmed' (live) | 'paper'
-  delay_ms: number | null
-  users_targeted: number
-  users_success: number
-  users_failed: number
-  error: string | null
-  source: 'strategy' | 'executor' | 'system'
-}
-
-type ExecLogResp = {
-  signals: SignalRow[]
-  stats: {
-    total_signals: number
-    total_trades: number
-    strategy_signals: number
-    system_signals: number
-    executed: number
-    missed: number
-    ignored: number
-    live_executions: number
-    paper_executions: number
-  }
-  fetched_at?: string
-}
-
-function SignalLogPanel({ active }: { active: boolean }) {
-  const [srcFilter, setSrcFilter] = useState<'all' | 'strategy' | 'system'>('all')
-  const [symFilter, setSymFilter] = useState<string>('all')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'executed' | 'missed' | 'ignored'>('all')
-  const [modeFilter, setModeFilter] = useState<'all' | 'live' | 'paper'>('all')
-
-  const fetcher = useCallback(async () => {
-    const q = new URLSearchParams({ limit: '200' })
-    if (srcFilter !== 'all') q.set('source', srcFilter)
-    return authedFetch<ExecLogResp>(`/api/admin/execution-logs?${q}`)
-  }, [srcFilter])
-  const px = usePanelData<ExecLogResp>(active, fetcher, 30_000, srcFilter)
-  const r = px.data
-  const stats = r?.stats
-
-  const matchRate = stats && stats.total_signals > 0
-    ? (stats.executed / stats.total_signals) * 100
-    : 0
-
-  const allSignals = r?.signals || []
-  const visibleSignals = allSignals.filter(s => {
-    if (symFilter !== 'all' && s.symbol !== symFilter) return false
-    if (statusFilter !== 'all' && s.status !== statusFilter) return false
-    if (modeFilter !== 'all' && s.mode !== modeFilter) return false
-    return true
-  })
-
-  return (
-    <>
-      <ErrorBox msg={px.error} />
-
-      {/* 6-stat row */}
-      <div className="adm-exec-stats">
-        <ExecStat label="Total Trades"    value={fmtNum(stats?.total_trades)} />
-        <ExecStat label="Total Signals"   value={fmtNum(stats?.total_signals)} />
-        <ExecStat label="Executed"        value={fmtNum(stats?.executed)} tone="pos" />
-        <ExecStat label="Missed"          value={fmtNum(stats?.missed)} tone={(stats?.missed || 0) > 0 ? 'neg' : 'muted'} />
-        <ExecStat label="Live Execs"      value={fmtNum(stats?.live_executions)} tone="gold" />
-        <ExecStat label="Paper Execs"     value={fmtNum(stats?.paper_executions)} tone="muted" />
-      </div>
-
-      {/* Match-rate bar */}
-      <SectionCard
-        title="SIGNAL → EXECUTION MATCH RATE"
-        right={
-          <span className="num" style={{ color: matchRate >= 99 ? 'var(--pos)' : matchRate >= 90 ? 'var(--gold)' : 'var(--neg)', fontSize: 16, fontWeight: 700 }}>
-            {stats ? `${matchRate.toFixed(1)}%` : '—'}
-          </span>
-        }
-      >
-        <div className="adm-match-bar">
-          <div className="adm-match-fill" style={{ width: `${matchRate}%`, background: matchRate >= 99 ? 'var(--pos)' : matchRate >= 90 ? 'var(--gold)' : 'var(--neg)' }} />
-        </div>
-      </SectionCard>
-
-      {/* Filters */}
-      <div className="adm-filter-row">
-        <SubPills
-          value={srcFilter}
-          onChange={setSrcFilter}
-          items={[
-            { id: 'all', label: 'All', count: stats?.total_signals ?? null },
-            { id: 'strategy', label: 'Strategy', count: stats?.strategy_signals ?? null },
-            { id: 'system', label: 'System', count: stats?.system_signals ?? null },
-          ]}
-        />
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} className="settings-input adm-select">
-          <option value="all">All status</option>
-          <option value="executed">Executed</option>
-          <option value="missed">Missed</option>
-          <option value="ignored">Ignored</option>
-        </select>
-        <select value={modeFilter} onChange={e => setModeFilter(e.target.value as any)} className="settings-input adm-select">
-          <option value="all">All modes</option>
-          <option value="live">Live</option>
-          <option value="paper">Paper</option>
-        </select>
-        <select value={symFilter} onChange={e => setSymFilter(e.target.value)} className="settings-input adm-select" style={{ marginLeft: 'auto' }}>
-          <option value="all">All symbols</option>
-          <option value="BTCUSDT">BTC</option>
-          <option value="ETHUSDT">ETH</option>
-          <option value="SOLUSDT">SOL</option>
-          <option value="XRPUSDT">XRP</option>
-          <option value="SUIUSDT">SUI</option>
-        </select>
-      </div>
-
-      {/* Signal log table */}
-      {visibleSignals.length === 0 ? (
-        <SectionCard title="SIGNAL LOG">
+      {/* The main table — one row per signal, LIVE + SIM side-by-side */}
+      {visible.length === 0 ? (
+        <SectionCard title="SIGNAL LOG · LIVE vs SIM">
           <EmptyBox>{px.loading ? 'Loading…' : 'No signals match this filter.'}</EmptyBox>
         </SectionCard>
       ) : (
-        <SectionCard title={`SIGNAL LOG · ${visibleSignals.length} of ${stats?.total_signals ?? 0}`}>
+        <SectionCard title={`SIGNAL LOG · LIVE vs SIM · ${visible.length} of ${r?.counts.total ?? 0}`}>
           <div style={{ overflowX: 'auto' }}>
-            <table className="adm-exec-table">
+            <table className="adm-parity-table">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Symbol</th>
+                  <th>When</th>
+                  <th>Asset</th>
                   <th>Type</th>
                   <th>Side</th>
-                  <th>Mode</th>
-                  <th style={{ textAlign: 'right' }}>Entry / Exit</th>
-                  <th style={{ textAlign: 'right' }}>SL</th>
-                  <th style={{ textAlign: 'right' }}>PnL</th>
-                  <th>Exchange</th>
+                  <th style={{ textAlign: 'right' }}>LIVE px</th>
+                  <th style={{ textAlign: 'right' }}>SIM px</th>
+                  <th style={{ textAlign: 'right' }}>Diff</th>
+                  <th>SIM reason</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleSignals.map((s, i) => <ExecRow key={s.signalId + i} s={s} />)}
+                {visible.map(rec => <ParityRow key={rec.id} r={rec} />)}
               </tbody>
             </table>
           </div>
         </SectionCard>
       )}
-    </>
-  )
-}
 
-// Helper: number formatter that handles null/undefined
-function fmtNum(n: number | null | undefined): string {
-  if (n == null) return '—'
-  return n.toLocaleString('en-US')
-}
-
-function ExecStat({ label, value, tone }: { label: string; value: string; tone?: 'pos' | 'neg' | 'gold' | 'muted' }) {
-  const toneCls = tone === 'pos' ? 'pos-text' : tone === 'neg' ? 'neg-text' : tone === 'gold' ? 'adm-tone-gold' : tone === 'muted' ? 'adm-tone-muted' : ''
-  return (
-    <div className="adm-exec-stat">
-      <div className="adm-exec-stat-label">{label}</div>
-      <div className={'adm-exec-stat-val num ' + toneCls}>{value}</div>
+      {/* Validator log tail */}
+      {r && r.logTail.length > 0 && (
+        <SectionCard title="VALIDATOR LOG · last 30 lines">
+          <pre className="adm-log-tail">{r.logTail.join('\n')}</pre>
+        </SectionCard>
+      )}
     </div>
   )
 }
 
-// Per-signal-type colour for the type pill
-const SIGNAL_TYPE_COLOR: Record<string, { bg: string; fg: string }> = {
-  ENTRY:          { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
-  PYRAMID:        { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
-  PYRAMID_EMA50:  { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
-  EXIT:           { bg: 'rgba(255,255,255,0.06)', fg: 'var(--text)' },
-  'TAKE PROFIT':  { bg: 'rgba(46,204,113,0.12)', fg: 'var(--pos)' },
-  'STOP LOSS':    { bg: 'rgba(255,77,79,0.12)',  fg: 'var(--neg)' },
-  TIMEOUT:        { bg: 'rgba(255,77,79,0.10)',  fg: 'var(--neg)' },
-}
+// One row per signal. Live numbers always present (live engine fired the
+// signal); SIM may be null if the validator couldn't find a match (then
+// severity = critical and SIM cells show "no match").
+function ParityRow({ r }: { r: ParityRecord }) {
+  const sym = r.asset.replace('USDT', '')
+  // Normalise legacy severity values to the 3-tier scheme.
+  const sev = (r.severity === 'drift' || r.severity === 'incomplete') ? 'warning'
+            : r.severity === 'fail' ? 'critical'
+            : (r.severity as 'ok' | 'warning' | 'critical')
+  const sevConfig = {
+    ok:       { icon: '✓',  label: 'OK',       color: 'var(--pos)',   bg: 'rgba(46,204,113,0.04)' },
+    warning:  { icon: '⚠️', label: 'Warning',  color: 'var(--gold)',  bg: 'rgba(212,160,23,0.04)' },
+    critical: { icon: '🚨', label: 'Critical', color: 'var(--neg)',   bg: 'rgba(255,77,79,0.04)' },
+  }[sev]
+  const m = r.match
+  const sideColor = r.dir === 1 ? 'var(--pos)' : 'var(--neg)'
 
-function ExecRow({ s }: { s: SignalRow }) {
-  // Map raw type + reason → display label (matches v1 client-dashboard naming)
-  let displayType = s.type
-  if (s.type === 'EXIT') {
-    if (s.reason === 'sl' || s.reason === 'pyramid_sl') displayType = 'STOP LOSS'
-    else if (s.reason === 'trail_tp' || s.reason === 'tp' || s.reason === 'partial_tp') displayType = 'TAKE PROFIT'
-    else if (s.reason === 'eod' || s.reason?.startsWith('eod_')) displayType = 'TIMEOUT'
-  }
-  const tCol = SIGNAL_TYPE_COLOR[displayType] || SIGNAL_TYPE_COLOR.EXIT
-  const sym = s.symbol?.replace('USDT', '') || '—'
-  const time = new Date(s.executedAt).toLocaleString('en-GB', {
+  // "When" column: live emit time + relative age. Sim cell shows offset (s).
+  const time = new Date(r.liveTs).toLocaleString('en-GB', {
     day: '2-digit', month: '2-digit', year: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   }).replace(',', '')
-  const isLive = s.pipeline_status === 'confirmed' || s.exchange_status === 'Bitget'
-  const pnlColor = s.pnl == null ? 'var(--muted)' : s.pnl >= 0 ? 'var(--pos)' : 'var(--neg)'
-  const sideColor = s.side === 'LONG' ? 'var(--pos)' : 'var(--neg)'
+  const offsetTag = m && m.offsetSec != null
+    ? (m.offsetSec >= 0 ? `+${m.offsetSec}s` : `${m.offsetSec}s`)
+    : null
+
+  // Type pill colours (entry/pyramid gold, exit muted)
+  const typeColor = r.type === 'ENTRY' || r.type.startsWith('PYRAMID')
+    ? { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' }
+    : { bg: 'rgba(255,255,255,0.06)', fg: 'var(--text)' }
 
   return (
-    <tr className={isLive ? 'adm-exec-row-live' : ''}>
-      <td className="adm-exec-time num">{time}</td>
+    <tr style={{ background: sevConfig.bg }}>
+      <td className="adm-parity-time">
+        <div className="num">{time}</div>
+        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{fmtAge(r.liveTs)}</div>
+      </td>
       <td>
-        <span className="adm-exec-sym">
-          <CoinDotMaybe sym={sym} />
+        <span className="adm-parity-sym">
+          <CoinDotMini sym={sym} />
           <span className="num">{sym}</span>
         </span>
       </td>
       <td>
-        <span className="adm-exec-type" style={{ background: tCol.bg, color: tCol.fg }}>
-          {displayType}
+        <span className="adm-exec-type" style={{ background: typeColor.bg, color: typeColor.fg }}>
+          {r.type}
         </span>
       </td>
       <td>
-        {s.side ? <span className={'badge ' + (s.side === 'LONG' ? 'badge-long' : 'badge-short')}>{s.side}</span> : '—'}
+        <span style={{ color: sideColor, fontWeight: 700, fontSize: 11, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
+          {(r.side || '').toUpperCase()}
+        </span>
+      </td>
+      <td className="num" style={{ textAlign: 'right' }}>
+        {fmtParityPx(r.livePx)}
+      </td>
+      <td className="num" style={{ textAlign: 'right' }}>
+        {m && m.simPx != null ? (
+          <>
+            {fmtParityPx(m.simPx)}
+            {offsetTag && <div className="adm-stat-sub" style={{ fontSize: 10 }}>{offsetTag}</div>}
+          </>
+        ) : (
+          <span style={{ color: 'var(--neg)', fontSize: 11 }}>no match</span>
+        )}
+      </td>
+      <td className="num" style={{ textAlign: 'right' }}>
+        {m && m.priceDiffPct != null ? (
+          <span style={{ color: m.priceDiffPct >= 1 ? 'var(--neg)' : m.priceDiffPct >= 0.25 ? 'var(--gold)' : 'var(--muted)' }}>
+            {m.priceDiffPct.toFixed(2)}%
+          </span>
+        ) : '—'}
       </td>
       <td>
-        <span className="adm-exec-mode">{s.mode || '—'}</span>
-      </td>
-      <td className="num" style={{ textAlign: 'right' }}>{fmtPxLog(s.limitPx)}</td>
-      <td className="num" style={{ textAlign: 'right', color: 'var(--neg)' }}>{fmtPxLog(s.slPx)}</td>
-      <td className="num" style={{ textAlign: 'right', color: pnlColor, fontWeight: s.pnl != null ? 600 : 400 }}>
-        {s.pnl != null ? (s.pnl >= 0 ? '+' : '') + s.pnl.toFixed(2) + (s.returnPct != null ? ` (${s.returnPct >= 0 ? '+' : ''}${s.returnPct.toFixed(2)}%)` : '') : '—'}
-      </td>
-      <td>
-        <span className={'adm-exec-exch ' + (isLive ? 'live' : 'paper')}>
-          {isLive ? 'Bitget' : 'Paper'}
+        <span className="adm-stat-sub" style={{ fontSize: 11 }}>
+          {m && m.simReason ? m.simReason : (r.notFoundReason ? 'no sim match' : '—')}
         </span>
       </td>
       <td>
-        <span className={'adm-exec-status adm-exec-status-' + s.status}>
-          {s.status === 'executed' && (isLive ? '✓ Executed' : '○ Paper')}
-          {s.status === 'missed' && '✗ Missed'}
-          {s.status === 'ignored' && '· Ignored'}
+        <span className="adm-parity-status" style={{ color: sevConfig.color, fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>
+          {sevConfig.icon} {sevConfig.label}
         </span>
       </td>
     </tr>
   )
 }
 
-function fmtPxLog(n: number | null | undefined): string {
+function fmtParityPx(n: number | null | undefined): string {
   if (n == null) return '—'
   if (n >= 1000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
   if (n >= 10)   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1446,7 +1294,7 @@ function fmtPxLog(n: number | null | undefined): string {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
 }
 
-function CoinDotMaybe({ sym }: { sym: string }) {
+function CoinDotMini({ sym }: { sym: string }) {
   const url: Record<string, string> = {
     BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
     ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
@@ -1457,86 +1305,6 @@ function CoinDotMaybe({ sym }: { sym: string }) {
   const src = url[sym]
   if (!src) return null
   return <img src={src} alt={sym} width={14} height={14} style={{ display: 'inline-block', borderRadius: '50%', verticalAlign: 'middle', marginRight: 4 }} />
-}
-
-function ParityCard({ r }: { r: ParityRecord }) {
-  // 3-tier severity (2026-05-09). Legacy values rendered with a sane mapping.
-  const sevConfig = {
-    ok:         { cls: 'adm-parity-ok',         icon: '✓',  label: 'PARITY OK',                tone: 'pos'  as const },
-    warning:    { cls: 'adm-parity-drift',      icon: '⚠️', label: 'PARITY DRIFT — Warning',  tone: 'gold' as const },
-    critical:   { cls: 'adm-parity-fail',       icon: '🚨', label: 'PARITY DRIFT — Critical', tone: 'neg'  as const },
-    // Legacy mappings — render but call out the source
-    drift:      { cls: 'adm-parity-drift',      icon: '⚠️', label: 'PARITY DRIFT (legacy)',   tone: 'gold' as const },
-    fail:       { cls: 'adm-parity-fail',       icon: '❌', label: 'PARITY FAILED (legacy)',  tone: 'neg'  as const },
-    incomplete: { cls: 'adm-parity-incomplete', icon: '·',  label: 'INCOMPLETE',               tone: 'muted' as const },
-  }[r.severity] || { cls: 'adm-parity-incomplete', icon: '·', label: 'INCOMPLETE', tone: 'muted' as const }
-  const dispatchedIso = new Date(r.dispatchedAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
-  const liveIso = new Date(r.liveTs).toISOString().slice(11, 16) + ' UTC'
-  const sideBadge = r.side === 'long' ? 'badge-long' : 'badge-short'
-  const sideEmoji = r.dir === 1 ? '🟢' : r.dir === -1 ? '🔴' : '⚪'
-
-  return (
-    <div className={'card card-pad adm-parity ' + sevConfig.cls}>
-      <div className="adm-parity-head">
-        <span className="adm-parity-icon">{sevConfig.icon}</span>
-        <span className={'adm-parity-label ' + sevConfig.tone + '-text'}>{sevConfig.label}</span>
-        <span className="adm-parity-time num adm-mono-sm">{dispatchedIso}</span>
-      </div>
-
-      <div className="adm-parity-body">
-        <div className="adm-parity-asset">
-          <span style={{ fontSize: 16 }}>{sideEmoji}</span>
-          <strong className="num" style={{ fontSize: 15 }}>{r.sym}</strong>
-          <span className="adm-stat-sub">{r.type}</span>
-          <span className={'badge ' + sideBadge}>{(r.side || '').toUpperCase()}</span>
-          {r.reason && <span className="adm-stat-sub" style={{ marginLeft: 8 }}>· {r.reason}</span>}
-        </div>
-
-        <div className="adm-parity-cmp">
-          <div className="adm-parity-row">
-            <span className="adm-parity-rowlab">Live</span>
-            <span className="num">{r.livePx != null ? fmtPx(r.livePx) : '—'}</span>
-            <span className="adm-stat-sub">@ {liveIso}</span>
-          </div>
-          {r.match ? (
-            <>
-              <div className="adm-parity-row">
-                <span className="adm-parity-rowlab">Sim</span>
-                <span className="num">{r.match.simPx != null ? fmtPx(r.match.simPx) : '—'}</span>
-                {r.match.offsetSec != null && (
-                  <span className="adm-stat-sub">offset {r.match.offsetSec >= 0 ? '+' : ''}{r.match.offsetSec}s</span>
-                )}
-                {r.match.simReason && <span className="adm-stat-sub">· sim reason: {r.match.simReason}</span>}
-              </div>
-              {r.match.priceDiffPct != null && (
-                <div className="adm-parity-row">
-                  <span className="adm-parity-rowlab">Diff</span>
-                  <span className={'num ' + (r.severity === 'ok' ? 'pos-text' : 'neg-text')}>
-                    {r.match.priceDiffPct.toFixed(3)}%
-                  </span>
-                  <span className="adm-stat-sub">
-                    {r.severity === 'ok' ? 'within 0.1% tolerance ✓' : 'exceeds 0.1% tolerance ⚠'}
-                  </span>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="adm-parity-row">
-              <span className="adm-parity-rowlab neg-text">Sim</span>
-              <span className="neg-text">no match</span>
-              {r.notFoundReason && <span className="adm-stat-sub">· {r.notFoundReason}</span>}
-              <span className="adm-stat-sub">retries: {r.retries}</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="adm-parity-footer">
-        <span className="adm-mono-sm">{r.id}</span>
-        {r.slPx != null && <span className="adm-stat-sub">SL {fmtPx(r.slPx)}</span>}
-      </div>
-    </div>
-  )
 }
 
 // ────────────────────────────────────────────────────────────────────────────

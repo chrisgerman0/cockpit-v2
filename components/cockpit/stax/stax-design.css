@@ -4615,3 +4615,41 @@ html.light .stax-app .adm-exec-exch.paper { background: rgba(0,0,0,0.03); }
   .stax-app .adm-exec-stats { grid-template-columns: repeat(2, 1fr); }
   .stax-app .adm-exec-stat-val { font-size: 20px; }
 }
+
+/* ── Admin Execution · Parity table (consolidated, replaces sub-tabs) ──── */
+
+.stax-app .adm-parity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.stax-app .adm-parity-table thead th {
+  padding: 10px 12px; text-align: left;
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stax-app .adm-parity-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.stax-app.light .adm-parity-table tbody td,
+html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(0,0,0,0.04); }
+.stax-app .adm-parity-table tbody tr:last-child td { border-bottom: 0; }
+.stax-app .adm-parity-table tbody tr:hover { filter: brightness(1.08); }
+
+.stax-app .adm-parity-time {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; line-height: 1.3;
+  color: var(--text);
+  white-space: nowrap;
+}
+.stax-app .adm-parity-sym {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; color: var(--text);
+}
+.stax-app .adm-parity-status {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
