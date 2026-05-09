@@ -1194,6 +1194,55 @@ type NotifLogItem = {
   isWin?: boolean
 }
 
+// SVG icon per notification type — ported from v1 client-dashboard.html
+// getNotifIconMarkup(). Replaces the emoji strings (⚡️ / 🟢 / 🔴) the API
+// returns in the `icon` field. Cleaner, scales properly, theme-aware.
+function NotifIcon({ n }: { n: NotifLogItem }) {
+  // Trade entry → gold lightning bolt (Bolt icon, filled)
+  if (n.type === 'trade_entry') {
+    return (
+      <span className="notif-log-svg" style={{ color: 'var(--gold)' }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M13 3L4 14h7v7l9-11h-7V3z" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+      </span>
+    )
+  }
+  // Trade close → 10px glowing dot, green for win / red for loss
+  if (n.type === 'trade_close') {
+    const cls = n.isWin ? 'notif-log-dot win' : 'notif-log-dot loss'
+    return <span className={cls} />
+  }
+  // Invoice notifications → document SVG, colour by status
+  if ((n.type || '').indexOf('invoice_') === 0) {
+    const color = n.type === 'invoice_paid' ? 'var(--pos)' : n.type === 'invoice_overdue' ? 'var(--neg)' : 'var(--gold)'
+    return (
+      <span className="notif-log-svg" style={{ color }}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+          <path d="M5 1.75h4.2L12.25 4.8V13a1.25 1.25 0 0 1-1.25 1.25h-6A1.25 1.25 0 0 1 3.75 13V3A1.25 1.25 0 0 1 5 1.75Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+          <path d="M9 1.75V4.5h2.75" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+          <path d="M5.75 7h4.5M5.75 9.5h4.5M5.75 12h3.25" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+        </svg>
+      </span>
+    )
+  }
+  // Commission / broker → coins-down SVG
+  if ((n.type || '').indexOf('commission_') === 0) {
+    const color = n.type === 'commission_processing' ? '#60a5fa' : 'var(--gold)'
+    return (
+      <span className="notif-log-svg" style={{ color }}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+          <circle cx="8" cy="10.25" r="3.5" stroke="currentColor" strokeWidth="1.2"/>
+          <path d="M8 2.5v5.1M5.9 5.55 8 7.8l2.1-2.25" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M6.45 10.25h3.1" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round"/>
+        </svg>
+      </span>
+    )
+  }
+  // Fallback → small green/red dot based on isWin
+  return <span className={n.isWin ? 'notif-log-dot win' : 'notif-log-dot loss'} />
+}
+
 function NotificationsPanel() {
   const t = useT()
   const isPt = t('common.lang') === 'PT' || (typeof navigator !== 'undefined' && navigator.language?.startsWith('pt'))
@@ -1213,11 +1262,17 @@ function NotificationsPanel() {
     tg_trade_alerts: true, tg_weekly_reports: true, tg_system_alerts: true, tg_billing: true,
   })
 
-  // ── Notification log
+  // ── Notification log (paginated, persistent)
+  // Pre-2026-05-09 the log filtered out anything > 24h old (auto-dismiss
+  // for the bell badge). Per user feedback, the history should now persist
+  // — every signal, all the way back. Bell still uses 24h client-side; the
+  // settings log shows the full history with 10-per-page pagination.
   const [logItems, setLogItems] = useState<NotifLogItem[]>([])
   const [logState, setLogState] = useState<'loading' | 'ready' | 'error' | 'empty'>('loading')
   const [logErrorCode, setLogErrorCode] = useState<string>('')
   const [logRefreshing, setLogRefreshing] = useState(false)
+  const [logPage, setLogPage] = useState(1)
+  const LOG_PAGE_SIZE = 10
 
   // ─── Telegram status loader (also seeds prefs on first load) ──────────
   const loadTelegramStatus = useCallback(async () => {
@@ -1239,18 +1294,21 @@ function NotificationsPanel() {
   }, [loadTelegramStatus])
 
   // ─── Notification log loader ──────────────────────────────────────────
+  // Pulls /api/trades?limit=500 (the user's full notification history) and
+  // keeps every entry. The 24h auto-dismiss only applies to the bell badge
+  // count, not this settings page — users want to scroll all the way back.
   const loadLog = useCallback(async (manual: boolean = false) => {
     if (manual) setLogRefreshing(true)
     else setLogState('loading')
     try {
       const j = await authedFetch<{ notifications: NotifLogItem[] }>('/api/trades?limit=500')
-      const items = (j?.notifications || []).filter(n => {
-        if (!n.timestamp) return false
-        // Same 24h auto-dismiss window as v1 (loadNotifications).
-        return new Date(n.timestamp).getTime() > Date.now() - 24 * 3600 * 1000
-      })
+      const items = (j?.notifications || []).filter(n => !!n.timestamp)
+      // Sort newest-first defensively in case the API doesn't.
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       setLogItems(items)
       setLogState(items.length ? 'ready' : 'empty')
+      // Reset to page 1 on every load so a fresh refresh shows the newest items.
+      setLogPage(1)
     } catch (e: any) {
       const m = String(e?.message || '')
       const code = m.match(/^(\d{3})/)?.[1] || 'network'
@@ -1375,50 +1433,62 @@ function NotificationsPanel() {
       </div>
 
       {/* ── Notification preferences ───────────────────────────────── */}
+      {/* Switched from CSS-grid + display:contents to a real <table> 2026-05-09.
+          The grid version had per-cell border-tops that visually fragmented
+          under the EMAIL/TELEGRAM column headers — the line looked broken.
+          A table gives one continuous border per row + clean column alignment. */}
       <div className="card card-pad">
         <div className="bt-card-head">
           <div className="bt-card-title"><span className="bt-card-bar" />{tt('NOTIFICATIONS', 'NOTIFICAÇÕES')}</div>
         </div>
-        <div className="notif-prefs-grid">
-          <div className="head first" />
-          <div className="head">{tt('Email', 'E-mail')}</div>
-          <div className="head">{tt('Telegram', 'Telegram')}</div>
-
-          {PREF_EVENTS.map(ev => (
-            <div key={ev.key} style={{ display: 'contents' }}>
-              <div className="row-name">
-                <div className="pref-label">{isPt ? ev.labelPt : ev.labelEn}</div>
-                <div className="pref-help">{isPt ? ev.helpPt : ev.helpEn}</div>
-              </div>
-              <div className="row-cb">
-                <input
-                  type="checkbox"
-                  className="notif-cb"
-                  checked={!!prefs[ev.key]}
-                  onChange={e => togglePref(ev.key, e.target.checked)}
-                />
-              </div>
-              <div className="row-cb">
-                <input
-                  type="checkbox"
-                  className="notif-cb tg"
-                  checked={!!prefs[`tg_${ev.key}`]}
-                  disabled={!tgLinked}
-                  onChange={e => togglePref(`tg_${ev.key}`, e.target.checked)}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
+        <table className="notif-prefs-table">
+          <thead>
+            <tr>
+              <th />
+              <th className="notif-col-cb">{tt('Email', 'E-mail')}</th>
+              <th className="notif-col-cb">{tt('Telegram', 'Telegram')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {PREF_EVENTS.map(ev => (
+              <tr key={ev.key}>
+                <td className="notif-prefs-name">
+                  <div className="pref-label">{isPt ? ev.labelPt : ev.labelEn}</div>
+                  <div className="pref-help">{isPt ? ev.helpPt : ev.helpEn}</div>
+                </td>
+                <td className="notif-col-cb">
+                  <input
+                    type="checkbox"
+                    className="notif-cb"
+                    checked={!!prefs[ev.key]}
+                    onChange={e => togglePref(ev.key, e.target.checked)}
+                  />
+                </td>
+                <td className="notif-col-cb">
+                  <input
+                    type="checkbox"
+                    className="notif-cb tg"
+                    checked={!!prefs[`tg_${ev.key}`]}
+                    disabled={!tgLinked}
+                    onChange={e => togglePref(`tg_${ev.key}`, e.target.checked)}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* ── Notification Log ───────────────────────────────────────── */}
+      {/* Persistent history (no 24h cap) + 10-per-page pagination.
+          Icons are SVG (gold lightning for entries, glowing dot for exits)
+          ported from v1 client-dashboard.html getNotifIconMarkup. */}
       <div className="card card-pad">
         <div className="notif-log-head">
           <div>
             <div className="bt-card-title"><span className="bt-card-bar" />{tt('NOTIFICATION LOG', 'HISTÓRICO DE NOTIFICAÇÕES')}</div>
             <div className="notif-log-head-meta">
-              {tt('Recent in-app history for trades, billing, and broker payouts.', 'Histórico recente de trades, cobrança e comissões.')}
+              {tt('Full history of trades, billing, and broker payouts.', 'Histórico completo de trades, cobrança e comissões.')}
             </div>
           </div>
           <button
@@ -1441,9 +1511,9 @@ function NotificationsPanel() {
               {tt('Unable to load notification history.', 'Não foi possível carregar o histórico.')} ({logErrorCode}) — <a onClick={() => loadLog(true)}>{tt('retry', 'tentar novamente')}</a>
             </div>
           ) : (
-            logItems.map(n => (
+            logItems.slice((logPage - 1) * LOG_PAGE_SIZE, logPage * LOG_PAGE_SIZE).map(n => (
               <div key={n.id} className="notif-log-row">
-                <span className="ico">{n.icon || '⚡️'}</span>
+                <NotifIcon n={n} />
                 <div className="body">
                   <div className="row-top">
                     <div className="msg">{n.message}</div>
@@ -1454,6 +1524,31 @@ function NotificationsPanel() {
             ))
           )}
         </div>
+
+        {/* Pagination footer — appears only when there are more than one page */}
+        {logState === 'ready' && logItems.length > LOG_PAGE_SIZE ? (
+          <div className="notif-log-pagination">
+            <button
+              type="button"
+              className="settings-btn-secondary"
+              disabled={logPage <= 1}
+              onClick={() => setLogPage(p => Math.max(1, p - 1))}
+            >
+              ← {tt('Prev', 'Anterior')}
+            </button>
+            <span className="notif-log-pagination-info">
+              {tt('Page', 'Página')} {logPage} {tt('of', 'de')} {Math.ceil(logItems.length / LOG_PAGE_SIZE)} · {logItems.length} {tt('total', 'total')}
+            </span>
+            <button
+              type="button"
+              className="settings-btn-secondary"
+              disabled={logPage >= Math.ceil(logItems.length / LOG_PAGE_SIZE)}
+              onClick={() => setLogPage(p => Math.min(Math.ceil(logItems.length / LOG_PAGE_SIZE), p + 1))}
+            >
+              {tt('Next', 'Próxima')} →
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

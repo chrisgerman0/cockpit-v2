@@ -3072,29 +3072,60 @@ html.light .stax-app .notif-dropdown-settings:hover { background: rgba(0,0,0,0.0
 .stax-app .tg-disconnect-btn:hover { color: var(--neg); }
 
 /* Prefs grid: label | email cb | telegram cb */
-.stax-app .notif-prefs-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 80px 100px;
-  align-items: center;
+/* Notification preferences — uses a real <table> so column alignment is
+   guaranteed and the line under EMAIL/TELEGRAM headers spans cleanly. */
+.stax-app .notif-prefs-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
-.stax-app .notif-prefs-grid .head {
-  padding: 8px 10px; text-align: center;
+.stax-app .notif-prefs-table thead th {
+  padding: 8px 10px;
   font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
   font-weight: 700; color: var(--muted);
-}
-.stax-app .notif-prefs-grid .head.first { text-align: left; padding-left: 0; }
-.stax-app .notif-prefs-grid .row-name {
-  padding: 12px 0; border-top: 1px solid var(--line);
-}
-.stax-app .notif-prefs-grid .row-cb {
-  padding: 12px 10px; border-top: 1px solid var(--line);
   text-align: center;
+  border-bottom: 1px solid var(--line);
 }
-.stax-app .notif-prefs-grid .pref-label {
+.stax-app .notif-prefs-table thead th:first-child { text-align: left; padding-left: 0; }
+.stax-app .notif-prefs-table tbody td {
+  padding: 12px 10px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+.stax-app .notif-prefs-table tbody tr:first-child td { border-top: 0; }
+.stax-app .notif-prefs-table .notif-prefs-name { padding-left: 0; padding-right: 12px; }
+.stax-app .notif-prefs-table .notif-col-cb { width: 80px; text-align: center; }
+.stax-app .notif-prefs-table .notif-col-cb + .notif-col-cb { width: 100px; }
+.stax-app .notif-prefs-table .pref-label {
   font-size: 13px; font-weight: 600; color: var(--text);
 }
-.stax-app .notif-prefs-grid .pref-help {
+.stax-app .notif-prefs-table .pref-help {
   font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4;
+}
+
+/* Notification log SVG icons + dot icons (replaces the emoji strings the
+   API returns). Mirrors v1 client-dashboard.html getNotifIconMarkup. */
+.stax-app .notif-log-svg {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 16px; width: 16px; height: 16px; margin-top: 2px;
+}
+.stax-app .notif-log-dot {
+  display: inline-block;
+  flex: 0 0 10px; width: 10px; height: 10px; border-radius: 50%;
+  margin-top: 6px;
+}
+.stax-app .notif-log-dot.win  { background: var(--pos); box-shadow: 0 0 6px var(--pos); }
+.stax-app .notif-log-dot.loss { background: var(--neg); box-shadow: 0 0 6px var(--neg); }
+
+/* Notification log pagination footer */
+.stax-app .notif-log-pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--line);
+}
+.stax-app .notif-log-pagination-info {
+  font-size: 12px; color: var(--muted);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 /* Custom checkbox — gold for email, blue for telegram */
