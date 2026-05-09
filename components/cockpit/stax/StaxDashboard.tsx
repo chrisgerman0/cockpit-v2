@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import './stax-design.css'
 import { Icons } from './Icons'
+import { NotifIcon } from './NotifIcon'
 import { EquityChart, LeverageGauge, Spark, genSpark, type EquityPoint } from './Charts'
 import { usePublicTickers, useTickerStreamHealth, type PublicTicker } from '@/lib/use-public-tickers'
 import { browserClient } from '@/lib/supabase-browser'
@@ -602,7 +603,7 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
                 return t > Date.now() - AUTO_DISMISS_MS
               }).slice(0, 5).map(n => (
                 <div key={n.id} className="notif-dropdown-row">
-                  <span className="notif-dropdown-icon">{n.icon || '⚡️'}</span>
+                  <span className="notif-dropdown-icon"><NotifIcon n={n} /></span>
                   <div className="notif-dropdown-body">
                     <div className="notif-dropdown-msg">{n.message}</div>
                     <div className="notif-dropdown-ts">
