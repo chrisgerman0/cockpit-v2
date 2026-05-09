@@ -793,7 +793,7 @@ function BotSettingsWizard({
           <div className="bw-step-title">Choose Your Trading Mode</div>
           <div className="bw-step-sub">This controls your risk exposure. The strategy logic (entries, exits, stop loss) stays the same — only position sizing changes.</div>
           <div className="bw-step-meta">
-            All tiers trade the same 5-asset basket: <strong>BTC, ETH, SOL, XRP, SUI</strong> /USDT — same VolumeProfile breakout strategy on every asset. Tier choice scales position size, not which assets trade.
+            All tiers trade the same 5-asset basket: <strong>BTC, ETH, SOL, XRP, SUI</strong> /USDT — same systematic strategy on every asset. Tier choice scales position size, not which assets trade.
           </div>
 
           <div className="bw-tier-grid">
@@ -964,7 +964,7 @@ function BotSettingsWizard({
           {/* Pyramid stacking eyebrow + intro (matches v1) */}
           <div className="bw-pyramid-eyebrow">Pyramid stacking</div>
           <p className="bw-pyramid-intro">
-            Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> (winning trades that retrace to EMA21 in profit). Worst case below shows what peak exposure looks like.
+            Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> — additional legs added on a small subset of qualifying winners. Worst case below shows what peak exposure looks like.
           </p>
 
           {/* Worked example block — same numbers v1 hard-codes for $10k Conservative */}
@@ -973,7 +973,7 @@ function BotSettingsWizard({
               Worked example · {TIER_RATIOS[preset].label} tier on ${(capNum || 10000).toLocaleString()} balance
             </div>
             <div className="bw-worked-intro">
-              {TIER_RATIOS[preset].label} = {ratios.mult}× of your balance per position. Same VolumeProfile breakout strategy on each of the 5 basket assets, longs &amp; shorts, with pyramiding when a winner retraces to its 4H EMA21.
+              {TIER_RATIOS[preset].label} = {ratios.mult}× of your balance per position. Same systematic strategy across all 5 basket assets, longs &amp; shorts, with pyramiding on a subset of qualifying winners.
             </div>
             <div className="bw-worked-row">
               <span>Base entry — any of 5 assets</span>
@@ -1000,18 +1000,18 @@ function BotSettingsWizard({
               Peak exposure (with pyramid)
             </div>
             <p className="bw-pyramid-blurb">
-              When a winning trade retraces to its 4H EMA21 still in profit, the bot adds a single pyramid leg sized at 50% of the base. Peak exposure on <em>{TIER_RATIOS[preset].label}</em> on a ${(capNum || 10000).toLocaleString()} account therefore tops out at <strong>${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} per position</strong> ({(ratios.mult * 1.5).toFixed(2)}× of balance).
+              When a winning trade meets the strategy&apos;s re-entry criteria, the bot adds a single pyramid leg sized at 50% of the base. Peak exposure on <em>{TIER_RATIOS[preset].label}</em> on a ${(capNum || 10000).toLocaleString()} account therefore tops out at <strong>${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} per position</strong> ({(ratios.mult * 1.5).toFixed(2)}× of balance).
             </p>
             <div className="bw-pyramid-row">
               <span>Base entry (no pyramid)</span>
               <span className="num">${Math.round((capNum || 10000) * ratios.mult).toLocaleString()} · {ratios.mult}×</span>
             </div>
             <div className="bw-pyramid-row">
-              <span>+ Pyramid leg (EMA21 retrace, in profit)</span>
+              <span>+ Pyramid leg (qualifying winner)</span>
               <span className="num">${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} · {(ratios.mult * 1.5).toFixed(2)}×</span>
             </div>
             <p className="bw-pyramid-foot">
-              A single pyramid fires when a winning trade retraces to the 4H EMA21 with a 1m bar that straddles it. Approximately 1 in 5 winners pyramid. Pyramid losses can exceed the {ratios.sl}% base SL because the pyramid enters at a higher price.
+              Roughly 1 in 5 winners pyramid. Pyramid losses can exceed the {ratios.sl}% base stop loss because the pyramid enters at a higher price.
             </p>
           </div>
 
@@ -1039,7 +1039,7 @@ function BotSettingsWizard({
       {step === 4 && (
         <div className="bw-step-body">
           <div className="bw-step-title">12-Month Projection</div>
-          <div className="bw-step-sub">Based on the 5-asset Satoshi Stacker portfolio backtest (BTC + ETH + SOL + XRP + SUI, VolumeProfile breakout, 6.8 yr Bitget data). Past performance ≠ future results.</div>
+          <div className="bw-step-sub">Based on the 5-asset Satoshi Stacker portfolio backtest (BTC + ETH + SOL + XRP + SUI, 6.8 yr Bitget data). Past performance ≠ future results.</div>
 
           <div className="bw-proj-row">
             <ProjStat

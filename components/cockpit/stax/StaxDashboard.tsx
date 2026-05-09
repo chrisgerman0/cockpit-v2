@@ -14,6 +14,7 @@ import { Icons } from './Icons'
 import { EquityChart, LeverageGauge, Spark, genSpark, type EquityPoint } from './Charts'
 import { usePublicTickers, useTickerStreamHealth, type PublicTicker } from '@/lib/use-public-tickers'
 import { browserClient } from '@/lib/supabase-browser'
+import { useIsAdmin } from '@/lib/use-is-admin'
 import { useT } from '@/lib/i18n'
 
 function fmtPrice(n: number): string {
@@ -258,6 +259,14 @@ function StaxSidebar({ active, collapsed = false, onToggleCollapsed }: {
     return effectivePath === it.href || effectivePath.startsWith(it.href + '/')
   })?.id
   const activeId = active ?? derived ?? 'dashboard'
+
+  // Hide Admin from the sidebar for non-admins. Defaults to hidden until the
+  // probe confirms admin role to avoid flashing the icon for regular users.
+  const { isAdmin } = useIsAdmin()
+  const visibleNavItems = useMemo(
+    () => isAdmin === true ? NAV_ITEMS : NAV_ITEMS.filter(it => it.id !== 'admin'),
+    [isAdmin]
+  )
   return (
     <aside className="side">
       <div className="brand">
@@ -291,7 +300,7 @@ function StaxSidebar({ active, collapsed = false, onToggleCollapsed }: {
           <Icons.ChevronLeft size={16} />
         </span>
       </div>
-      {NAV_ITEMS.map(it => {
+      {visibleNavItems.map(it => {
         const Ico = it.icon
         const label = t(it.tKey)
         return (
@@ -393,6 +402,13 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
     if (theme === 'light') { html.classList.add('light'); html.classList.remove('dark') }
     else { html.classList.add('dark'); html.classList.remove('light') }
     try { localStorage.setItem('stax-theme', theme) } catch {}
+    // Mirror to cookie so the SERVER can read it at SSR time and bake the
+    // right html class into the initial response — eliminates FOUC entirely.
+    // localStorage stays as a fallback for first-time visitors who have it
+    // set but no cookie yet (the inline pre-paint script handles that case).
+    try {
+      document.cookie = `stax-theme=${theme}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
+    } catch {}
   }, [theme])
 
   useEffect(() => {

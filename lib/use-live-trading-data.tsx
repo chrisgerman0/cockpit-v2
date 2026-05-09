@@ -29,6 +29,13 @@ export type LiveTrade = {
   reason: string | null
   pyramided: boolean
   pos: boolean        // true if pnlUsd >= 0
+  // Engine-state passthrough — only meaningful for open trades. Powers
+  // the colour + caption of /v2/live's "Pulse" meter.
+  mfePct?: number
+  mfePxPeak?: number
+  tpArmed?: boolean             // BB+RSI stretched-exit armed (separate from trail-TP)
+  trailFloor?: number | null    // engine has set a protective floor in profit territory
+  mfePeakTs?: number | null     // ms epoch of last MFE peak; drives the reprieve countdown
 }
 
 export type ActivePosition = LiveTrade & {
@@ -102,7 +109,16 @@ type RawTrade = {
   status: string
   opened_at: string | null
   closed_at: string | null
-  metadata?: { slPx?: number; pyramided?: boolean; reason?: string }
+  metadata?: {
+    slPx?: number
+    pyramided?: boolean
+    reason?: string
+    mfePct?: number
+    mfePxPeak?: number
+    tpArmed?: boolean
+    trailFloor?: number | null
+    mfePeakTs?: number | null
+  }
 }
 
 type StrategyStateResp = {
@@ -146,6 +162,11 @@ function normalize(t: RawTrade): LiveTrade {
     reason: t.metadata?.reason || null,
     pyramided: !!t.metadata?.pyramided,
     pos: pnlUsd >= 0,
+    mfePct: typeof t.metadata?.mfePct === 'number' ? t.metadata.mfePct : undefined,
+    mfePxPeak: typeof t.metadata?.mfePxPeak === 'number' ? t.metadata.mfePxPeak : undefined,
+    tpArmed: t.metadata?.tpArmed,
+    trailFloor: t.metadata?.trailFloor ?? null,
+    mfePeakTs: t.metadata?.mfePeakTs ?? null,
   }
 }
 

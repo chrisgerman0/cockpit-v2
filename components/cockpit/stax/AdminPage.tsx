@@ -1031,7 +1031,44 @@ type ParityResp = {
   logTail: string[]
 }
 
+// 3.0 Execution panel — top-level wrapper with two sub-tabs:
+//   Signal Log → end-to-end trade/signal list (the live signal pipeline view)
+//   Parity     → per-signal live-vs-sim comparison (the Telegram-alert source)
+type ExecSub = 'log' | 'parity'
+
 function ExecutionPanel({ active }: { active: boolean }) {
+  const [sub, setSub] = useState<ExecSub>('log')
+  return (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · EXECUTION"
+        lead="Signal pipeline and"
+        accent="parity."
+        blurb="End-to-end trade log + per-signal live-vs-backtest parity check. Auto-refreshes every 30s."
+      />
+      <SubPills
+        value={sub}
+        onChange={setSub}
+        items={[
+          { id: 'log', label: 'Signal Log' },
+          { id: 'parity', label: 'Parity' },
+        ]}
+      />
+      <div style={{ display: sub === 'log' ? 'block' : 'none' }}>
+        <SignalLogPanel active={active && sub === 'log'} />
+      </div>
+      <div style={{ display: sub === 'parity' ? 'block' : 'none' }}>
+        <ParityPanel active={active && sub === 'parity'} />
+      </div>
+    </div>
+  )
+}
+
+// 3.1 Parity sub-panel — was the entire Execution panel pre-2026-05-09.
+// Per-signal live-engine-vs-sim comparison from /api/admin/parity, sourced
+// from scripts/parity-validator.js (3-tier severity: ok / warning / critical).
+
+function ParityPanel({ active }: { active: boolean }) {
   const [sevFilter, setSevFilter] = useState<'all' | ParitySeverity>('all')
   const [symFilter, setSymFilter] = useState<string>('all')
   const fetcher = useCallback(async () => {
@@ -1044,15 +1081,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
   const r = px.data
 
   return (
-    <div className="stax-page">
-      <PageHeader
-        eyebrow="ADMIN · EXECUTION · PARITY"
-        lead="Live engine vs"
-        accent="sim."
-        blurb="Per-signal parity check — every live emission is matched against the backtest simulator's recorded trade and flagged when they drift. Same data as the Telegram report. Refreshes every 30s."
-        refreshing={px.loading}
-        onRefresh={px.refresh}
-      />
+    <>
       <ErrorBox msg={px.error} />
 
       {/* 24h header stats */}
@@ -1152,8 +1181,282 @@ function ExecutionPanel({ active }: { active: boolean }) {
           <pre className="adm-log-tail">{r.logTail.join('\n')}</pre>
         </SectionCard>
       )}
+    </>
+  )
+}
+
+// 3.2 Signal Log sub-panel — pulls /api/admin/execution-logs (the v1 endpoint
+// that aggregates strategy trades + executor signals + DB confirmations) and
+// renders the full signal pipeline view: 6 stat tiles + match-rate progress
+// bar + filterable signal table. Replaces the v1 admin/execution page.
+
+type SignalRow = {
+  signalId: string
+  type: string                                                 // ENTRY | EXIT | PYRAMID | PYRAMID_EMA50 | TIMEOUT | STOP LOSS | TAKE PROFIT
+  side: string                                                 // LONG | SHORT
+  symbol: string
+  mode: string                                                 // live | paper
+  executedAt: string
+  limitPx: number | null
+  slPx: number | null
+  pnl: number | null
+  returnPct: number | null
+  reason: string | null
+  tradeNum: number | string | null
+  status: 'executed' | 'missed' | 'ignored'
+  exchange_status: string | null                               // 'Bitget' | 'Paper'
+  pipeline_status?: string                                     // 'confirmed' (live) | 'paper'
+  delay_ms: number | null
+  users_targeted: number
+  users_success: number
+  users_failed: number
+  error: string | null
+  source: 'strategy' | 'executor' | 'system'
+}
+
+type ExecLogResp = {
+  signals: SignalRow[]
+  stats: {
+    total_signals: number
+    total_trades: number
+    strategy_signals: number
+    system_signals: number
+    executed: number
+    missed: number
+    ignored: number
+    live_executions: number
+    paper_executions: number
+  }
+  fetched_at?: string
+}
+
+function SignalLogPanel({ active }: { active: boolean }) {
+  const [srcFilter, setSrcFilter] = useState<'all' | 'strategy' | 'system'>('all')
+  const [symFilter, setSymFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'executed' | 'missed' | 'ignored'>('all')
+  const [modeFilter, setModeFilter] = useState<'all' | 'live' | 'paper'>('all')
+
+  const fetcher = useCallback(async () => {
+    const q = new URLSearchParams({ limit: '200' })
+    if (srcFilter !== 'all') q.set('source', srcFilter)
+    return authedFetch<ExecLogResp>(`/api/admin/execution-logs?${q}`)
+  }, [srcFilter])
+  const px = usePanelData<ExecLogResp>(active, fetcher, 30_000, srcFilter)
+  const r = px.data
+  const stats = r?.stats
+
+  const matchRate = stats && stats.total_signals > 0
+    ? (stats.executed / stats.total_signals) * 100
+    : 0
+
+  const allSignals = r?.signals || []
+  const visibleSignals = allSignals.filter(s => {
+    if (symFilter !== 'all' && s.symbol !== symFilter) return false
+    if (statusFilter !== 'all' && s.status !== statusFilter) return false
+    if (modeFilter !== 'all' && s.mode !== modeFilter) return false
+    return true
+  })
+
+  return (
+    <>
+      <ErrorBox msg={px.error} />
+
+      {/* 6-stat row */}
+      <div className="adm-exec-stats">
+        <ExecStat label="Total Trades"    value={fmtNum(stats?.total_trades)} />
+        <ExecStat label="Total Signals"   value={fmtNum(stats?.total_signals)} />
+        <ExecStat label="Executed"        value={fmtNum(stats?.executed)} tone="pos" />
+        <ExecStat label="Missed"          value={fmtNum(stats?.missed)} tone={(stats?.missed || 0) > 0 ? 'neg' : 'muted'} />
+        <ExecStat label="Live Execs"      value={fmtNum(stats?.live_executions)} tone="gold" />
+        <ExecStat label="Paper Execs"     value={fmtNum(stats?.paper_executions)} tone="muted" />
+      </div>
+
+      {/* Match-rate bar */}
+      <SectionCard
+        title="SIGNAL → EXECUTION MATCH RATE"
+        right={
+          <span className="num" style={{ color: matchRate >= 99 ? 'var(--pos)' : matchRate >= 90 ? 'var(--gold)' : 'var(--neg)', fontSize: 16, fontWeight: 700 }}>
+            {stats ? `${matchRate.toFixed(1)}%` : '—'}
+          </span>
+        }
+      >
+        <div className="adm-match-bar">
+          <div className="adm-match-fill" style={{ width: `${matchRate}%`, background: matchRate >= 99 ? 'var(--pos)' : matchRate >= 90 ? 'var(--gold)' : 'var(--neg)' }} />
+        </div>
+      </SectionCard>
+
+      {/* Filters */}
+      <div className="adm-filter-row">
+        <SubPills
+          value={srcFilter}
+          onChange={setSrcFilter}
+          items={[
+            { id: 'all', label: 'All', count: stats?.total_signals ?? null },
+            { id: 'strategy', label: 'Strategy', count: stats?.strategy_signals ?? null },
+            { id: 'system', label: 'System', count: stats?.system_signals ?? null },
+          ]}
+        />
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} className="settings-input adm-select">
+          <option value="all">All status</option>
+          <option value="executed">Executed</option>
+          <option value="missed">Missed</option>
+          <option value="ignored">Ignored</option>
+        </select>
+        <select value={modeFilter} onChange={e => setModeFilter(e.target.value as any)} className="settings-input adm-select">
+          <option value="all">All modes</option>
+          <option value="live">Live</option>
+          <option value="paper">Paper</option>
+        </select>
+        <select value={symFilter} onChange={e => setSymFilter(e.target.value)} className="settings-input adm-select" style={{ marginLeft: 'auto' }}>
+          <option value="all">All symbols</option>
+          <option value="BTCUSDT">BTC</option>
+          <option value="ETHUSDT">ETH</option>
+          <option value="SOLUSDT">SOL</option>
+          <option value="XRPUSDT">XRP</option>
+          <option value="SUIUSDT">SUI</option>
+        </select>
+      </div>
+
+      {/* Signal log table */}
+      {visibleSignals.length === 0 ? (
+        <SectionCard title="SIGNAL LOG">
+          <EmptyBox>{px.loading ? 'Loading…' : 'No signals match this filter.'}</EmptyBox>
+        </SectionCard>
+      ) : (
+        <SectionCard title={`SIGNAL LOG · ${visibleSignals.length} of ${stats?.total_signals ?? 0}`}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="adm-exec-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Symbol</th>
+                  <th>Type</th>
+                  <th>Side</th>
+                  <th>Mode</th>
+                  <th style={{ textAlign: 'right' }}>Entry / Exit</th>
+                  <th style={{ textAlign: 'right' }}>SL</th>
+                  <th style={{ textAlign: 'right' }}>PnL</th>
+                  <th>Exchange</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSignals.map((s, i) => <ExecRow key={s.signalId + i} s={s} />)}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      )}
+    </>
+  )
+}
+
+// Helper: number formatter that handles null/undefined
+function fmtNum(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return n.toLocaleString('en-US')
+}
+
+function ExecStat({ label, value, tone }: { label: string; value: string; tone?: 'pos' | 'neg' | 'gold' | 'muted' }) {
+  const toneCls = tone === 'pos' ? 'pos-text' : tone === 'neg' ? 'neg-text' : tone === 'gold' ? 'adm-tone-gold' : tone === 'muted' ? 'adm-tone-muted' : ''
+  return (
+    <div className="adm-exec-stat">
+      <div className="adm-exec-stat-label">{label}</div>
+      <div className={'adm-exec-stat-val num ' + toneCls}>{value}</div>
     </div>
   )
+}
+
+// Per-signal-type colour for the type pill
+const SIGNAL_TYPE_COLOR: Record<string, { bg: string; fg: string }> = {
+  ENTRY:          { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
+  PYRAMID:        { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
+  PYRAMID_EMA50:  { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' },
+  EXIT:           { bg: 'rgba(255,255,255,0.06)', fg: 'var(--text)' },
+  'TAKE PROFIT':  { bg: 'rgba(46,204,113,0.12)', fg: 'var(--pos)' },
+  'STOP LOSS':    { bg: 'rgba(255,77,79,0.12)',  fg: 'var(--neg)' },
+  TIMEOUT:        { bg: 'rgba(255,77,79,0.10)',  fg: 'var(--neg)' },
+}
+
+function ExecRow({ s }: { s: SignalRow }) {
+  // Map raw type + reason → display label (matches v1 client-dashboard naming)
+  let displayType = s.type
+  if (s.type === 'EXIT') {
+    if (s.reason === 'sl' || s.reason === 'pyramid_sl') displayType = 'STOP LOSS'
+    else if (s.reason === 'trail_tp' || s.reason === 'tp' || s.reason === 'partial_tp') displayType = 'TAKE PROFIT'
+    else if (s.reason === 'eod' || s.reason?.startsWith('eod_')) displayType = 'TIMEOUT'
+  }
+  const tCol = SIGNAL_TYPE_COLOR[displayType] || SIGNAL_TYPE_COLOR.EXIT
+  const sym = s.symbol?.replace('USDT', '') || '—'
+  const time = new Date(s.executedAt).toLocaleString('en-GB', {
+    day: '2-digit', month: '2-digit', year: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).replace(',', '')
+  const isLive = s.pipeline_status === 'confirmed' || s.exchange_status === 'Bitget'
+  const pnlColor = s.pnl == null ? 'var(--muted)' : s.pnl >= 0 ? 'var(--pos)' : 'var(--neg)'
+  const sideColor = s.side === 'LONG' ? 'var(--pos)' : 'var(--neg)'
+
+  return (
+    <tr className={isLive ? 'adm-exec-row-live' : ''}>
+      <td className="adm-exec-time num">{time}</td>
+      <td>
+        <span className="adm-exec-sym">
+          <CoinDotMaybe sym={sym} />
+          <span className="num">{sym}</span>
+        </span>
+      </td>
+      <td>
+        <span className="adm-exec-type" style={{ background: tCol.bg, color: tCol.fg }}>
+          {displayType}
+        </span>
+      </td>
+      <td>
+        {s.side ? <span className={'badge ' + (s.side === 'LONG' ? 'badge-long' : 'badge-short')}>{s.side}</span> : '—'}
+      </td>
+      <td>
+        <span className="adm-exec-mode">{s.mode || '—'}</span>
+      </td>
+      <td className="num" style={{ textAlign: 'right' }}>{fmtPxLog(s.limitPx)}</td>
+      <td className="num" style={{ textAlign: 'right', color: 'var(--neg)' }}>{fmtPxLog(s.slPx)}</td>
+      <td className="num" style={{ textAlign: 'right', color: pnlColor, fontWeight: s.pnl != null ? 600 : 400 }}>
+        {s.pnl != null ? (s.pnl >= 0 ? '+' : '') + s.pnl.toFixed(2) + (s.returnPct != null ? ` (${s.returnPct >= 0 ? '+' : ''}${s.returnPct.toFixed(2)}%)` : '') : '—'}
+      </td>
+      <td>
+        <span className={'adm-exec-exch ' + (isLive ? 'live' : 'paper')}>
+          {isLive ? 'Bitget' : 'Paper'}
+        </span>
+      </td>
+      <td>
+        <span className={'adm-exec-status adm-exec-status-' + s.status}>
+          {s.status === 'executed' && (isLive ? '✓ Executed' : '○ Paper')}
+          {s.status === 'missed' && '✗ Missed'}
+          {s.status === 'ignored' && '· Ignored'}
+        </span>
+      </td>
+    </tr>
+  )
+}
+
+function fmtPxLog(n: number | null | undefined): string {
+  if (n == null) return '—'
+  if (n >= 1000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (n >= 10)   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (n >= 1)    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+}
+
+function CoinDotMaybe({ sym }: { sym: string }) {
+  const url: Record<string, string> = {
+    BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
+    ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
+    XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
+    SOL: '/v2/coin-icons/sol.png',
+    SUI: '/v2/coin-icons/sui.png',
+  }
+  const src = url[sym]
+  if (!src) return null
+  return <img src={src} alt={sym} width={14} height={14} style={{ display: 'inline-block', borderRadius: '50%', verticalAlign: 'middle', marginRight: 4 }} />
 }
 
 function ParityCard({ r }: { r: ParityRecord }) {

@@ -3451,3 +3451,1167 @@ html.light .stax-app .ow-btn-skip:hover { background: rgba(0,0,0,0.04); }
 .stax-app .ow-success-list li {
   display: flex; gap: 8px; align-items: center;
 }
+
+/* ───────────────────────────────────────────────────────────────────
+   Admin cockpit — Settings-style sub-nav + panels
+   See AdminPage.tsx for component structure. Tokens only — no hex.
+   ─────────────────────────────────────────────────────────────────── */
+
+@keyframes adm-spin { to { transform: rotate(360deg); } }
+
+.stax-app .adm-wrap { padding: 4px 4px 24px; }
+.stax-app .adm-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+}
+@media (max-width: 768px) {
+  .stax-app .adm-grid { grid-template-columns: 1fr; gap: 12px; }
+}
+.stax-app .adm-nav { display: flex; flex-direction: column; gap: 2px; }
+.stax-app .adm-nav-group {
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--muted-2);
+  padding: 6px 14px 4px;
+}
+.stax-app .adm-panel { min-width: 0; }
+
+/* Page header refresh button (top-right of bt-header) */
+.stax-app .adm-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.stax-app .adm-icon-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); border-color: var(--line-2); }
+.stax-app.light .adm-icon-btn,
+html.light .stax-app .adm-icon-btn { background: rgba(0,0,0,0.02); }
+.stax-app.light .adm-icon-btn:hover,
+html.light .stax-app .adm-icon-btn:hover { background: rgba(0,0,0,0.05); }
+.stax-app .adm-icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Stat card variant (smaller label, bigger num) */
+.stax-app .adm-stat { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.stax-app .adm-stat-label {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stax-app .adm-stat-value {
+  font-size: 22px; font-weight: 700; color: var(--text);
+  line-height: 1.15;
+}
+.stax-app .adm-stat-sub {
+  font-size: 11px; color: var(--muted-2);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Error + empty boxes */
+.stax-app .adm-error {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,77,79,0.4);
+  background: rgba(var(--neg-rgb), 0.08);
+  color: var(--neg);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.stax-app .adm-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Eye / right-side meta on section heads */
+.stax-app .adm-eye {
+  font-size: 11px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Tables */
+.stax-app .adm-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.stax-app .adm-table thead th {
+  text-align: left;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.stax-app .adm-table tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.stax-app .adm-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.stax-app.light .adm-table tbody tr:hover td,
+html.light .stax-app .adm-table tbody tr:hover td { background: rgba(0,0,0,0.02); }
+.stax-app .adm-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stax-app .adm-mono-sm { font-size: 10.5px; font-family: 'JetBrains Mono', monospace; }
+
+/* KV list (last signal) */
+.stax-app .adm-kvlist { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.stax-app .adm-kv {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.stax-app .adm-kv:last-child { border-bottom: 0; padding-bottom: 0; }
+.stax-app .adm-kv > span:first-child { color: var(--muted); }
+
+/* Feed health grid */
+.stax-app .adm-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.stax-app .adm-feed-cell {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.02);
+}
+.stax-app.light .adm-feed-cell,
+html.light .stax-app .adm-feed-cell { background: rgba(0,0,0,0.015); }
+.stax-app .adm-feed-cell.adm-feed-stale {
+  border-color: rgba(255,77,79,0.4);
+  background: rgba(var(--neg-rgb), 0.06);
+}
+.stax-app .adm-feed-head { display: flex; align-items: center; gap: 6px; }
+.stax-app .adm-feed-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.stax-app .adm-feed-meta.sub { color: var(--muted-2); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+
+/* Recon-style alerts (overview compact) */
+.stax-app .adm-alert-list { display: flex; flex-direction: column; gap: 8px; }
+.stax-app .adm-alert {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  background: rgba(255,255,255,0.02);
+}
+.stax-app .adm-alert.adm-alert-crit {
+  border-color: rgba(255,77,79,0.35);
+  background: rgba(var(--neg-rgb), 0.06);
+  color: var(--neg);
+}
+.stax-app .adm-alert.adm-alert-warn {
+  border-color: rgba(212,160,23,0.35);
+  background: rgba(212,160,23,0.06);
+  color: var(--gold-hi);
+}
+.stax-app .adm-alert-sev {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+}
+
+/* Banner (radar strategy line) */
+.stax-app .adm-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(212,160,23,0.04);
+  font-size: 13px;
+  color: var(--text);
+}
+.stax-app .adm-banner-text { color: var(--muted); }
+
+/* ── Radar asset cards ── */
+
+.stax-app .adm-asset-grid {
+  display: grid;
+  /* 5-asset basket: force 5 across at desktop so SUI doesn't orphan onto
+     a second row. Steps down cleanly to 3, 2, 1 — never an awkward 4+1. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1449px) {
+  .stax-app .adm-asset-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 979px) {
+  .stax-app .adm-asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 639px) {
+  .stax-app .adm-asset-grid { grid-template-columns: 1fr; }
+}
+.stax-app .adm-asset {
+  display: flex; flex-direction: column; gap: 16px;
+  padding: 20px 20px 22px;
+  position: relative;
+  min-height: 360px;
+}
+.stax-app .adm-asset-skel { min-height: 360px; opacity: 0.4; }
+.stax-app .adm-asset.adm-asset-long { border-color: rgba(var(--pos-rgb), 0.25); }
+.stax-app .adm-asset.adm-asset-short { border-color: rgba(var(--neg-rgb), 0.25); }
+.stax-app .adm-asset.adm-asset-err {
+  border-color: rgba(var(--neg-rgb), 0.35);
+  background: rgba(var(--neg-rgb), 0.04);
+}
+.stax-app .adm-asset-err-msg {
+  font-size: 11px; color: var(--neg);
+  font-family: 'JetBrains Mono', monospace;
+  word-break: break-all;
+}
+.stax-app .adm-asset-head { display: flex; align-items: center; justify-content: space-between; }
+.stax-app .adm-asset-headleft { display: flex; align-items: center; gap: 8px; }
+.stax-app .adm-coin {
+  width: 22px; height: 22px; border-radius: 50%;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.05);
+}
+.stax-app .adm-asset-price { font-size: 16px; font-weight: 700; color: var(--text); margin-left: 4px; }
+.stax-app .adm-asset-grid3 {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 10px;
+}
+.stax-app .adm-asset-lab {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.stax-app .adm-asset-val { font-size: 14px; font-weight: 600; }
+.stax-app .adm-asset-sub {
+  font-size: 10.5px; color: var(--muted-2);
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 1px;
+}
+.stax-app .adm-asset-meter { display: flex; flex-direction: column; gap: 6px; }
+.stax-app .adm-asset-meter-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px;
+}
+.stax-app .adm-meter-bar {
+  position: relative; height: 6px; border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+  overflow: hidden;
+}
+.stax-app.light .adm-meter-bar,
+html.light .stax-app .adm-meter-bar { background: rgba(0,0,0,0.06); }
+.stax-app .adm-meter-fill {
+  position: absolute; inset: 0 auto 0 0;
+  height: 100%; border-radius: 6px;
+  transition: width 0.3s ease;
+}
+.stax-app .adm-meter-fill-pos { background: linear-gradient(90deg, rgba(var(--pos-rgb), 0.3), var(--pos)); }
+.stax-app .adm-meter-fill-gold { background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-hi)); }
+.stax-app .adm-meter-fill-red { background: linear-gradient(90deg, rgba(var(--neg-rgb), 0.25), var(--neg)); }
+/* Trade-state palette: yellow (winning) → green (profit locked).
+   Distinct from --gold so the brand-gold accent stays meaningful elsewhere. */
+.stax-app .adm-meter-fill-yellow { background: linear-gradient(90deg, rgba(245,200,66,0.3), #f5c842); }
+.stax-app .adm-meter-fill-muted { background: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.2)); }
+.stax-app.light .adm-meter-fill-muted,
+html.light .stax-app .adm-meter-fill-muted { background: linear-gradient(90deg, rgba(0,0,0,0.08), rgba(0,0,0,0.18)); }
+.stax-app .adm-meter-mark {
+  position: absolute; top: -2px; bottom: -2px;
+  width: 2px; background: var(--gold); opacity: 0.7;
+  pointer-events: none; border-radius: 1px;
+}
+.stax-app .adm-meter-mark-red { background: var(--neg); opacity: 0.55; }
+.stax-app .adm-asset-pyramid { margin-top: -6px; }
+
+/* "Now" — current unrealized PnL strip. Sits between the header and the
+   Entry/SL/Cushion grid so an admin can tell at a glance whether a trade
+   is in profit or loss right now (separate from the historical MFE peak,
+   which is the trail-arming metric and lives further down). */
+.stax-app .adm-asset-now {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line);
+}
+.stax-app.light .adm-asset-now,
+html.light .stax-app .adm-asset-now { background: rgba(0,0,0,0.02); }
+.stax-app .adm-asset-now-val { font-size: 18px; font-weight: 700; }
+
+.stax-app .adm-badge-flat {
+  background: rgba(255,255,255,0.05);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.stax-app.light .adm-badge-flat,
+html.light .stax-app .adm-badge-flat { background: rgba(0,0,0,0.04); }
+
+/* Basket + closest-to-entry */
+.stax-app .adm-basket-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.stax-app .adm-basket-stat { display: flex; flex-direction: column; align-items: flex-start; min-width: 56px; }
+.stax-app .adm-basket-num { font-size: 26px; font-weight: 700; line-height: 1; font-family: 'JetBrains Mono', monospace; }
+.stax-app .adm-basket-lab {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); margin-top: 2px;
+}
+.stax-app .adm-closest {
+  margin-left: auto; padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(212,160,23,0.04);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.stax-app .adm-closest-label { font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.stax-app .adm-closest-val { display: flex; align-items: baseline; gap: 8px; }
+.stax-app .adm-closest-meta { font-size: 11px; color: var(--muted); }
+
+/* Health chips (radar bottom) */
+.stax-app .adm-health-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.stax-app .adm-health-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  background: rgba(255,255,255,0.02);
+}
+.stax-app .adm-health-chip.adm-health-ok {
+  border-color: rgba(var(--pos-rgb), 0.3);
+  background: rgba(var(--pos-rgb), 0.05);
+}
+.stax-app .adm-health-chip.adm-health-bad {
+  border-color: rgba(var(--neg-rgb), 0.4);
+  background: rgba(var(--neg-rgb), 0.06);
+}
+.stax-app .adm-health-name {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stax-app .adm-health-state {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text);
+}
+.stax-app .adm-health-chip.adm-health-bad .adm-health-state { color: var(--neg); }
+.stax-app .adm-recon-details { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.stax-app .adm-recon-line {
+  font-size: 11.5px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px 10px;
+}
+
+.stax-app .adm-footer-meta {
+  font-size: 11px; color: var(--muted-2);
+  font-family: 'JetBrains Mono', monospace;
+  text-align: center;
+  margin-top: 4px;
+}
+.stax-app .adm-badge-cached {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+}
+
+/* Filters row (alerts) */
+.stax-app .adm-filter-row {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.stax-app .adm-filter {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.12em;
+}
+.stax-app .adm-select { width: auto; padding: 6px 10px; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.stax-app .adm-filter-summary {
+  margin-left: auto;
+  font-size: 11px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Alerts panel */
+.stax-app .adm-alerts-list { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .adm-alert-card { padding: 14px 16px; position: relative; }
+.stax-app .adm-alert-card.adm-alert-critical { border-color: rgba(var(--neg-rgb), 0.35); }
+.stax-app .adm-alert-card.adm-alert-warning { border-color: rgba(212,160,23,0.35); }
+.stax-app .adm-alert-card.adm-alert-info { border-color: rgba(80,160,220,0.3); }
+.stax-app .adm-alert-card.adm-alert-resolved { opacity: 0.45; }
+.stax-app .adm-alert-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.stax-app .adm-alert-type {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stax-app .adm-alert-source {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--gold);
+}
+.stax-app .adm-alert-age {
+  margin-left: auto;
+  font-size: 11px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+.stax-app .adm-alert-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.stax-app .adm-alert-desc { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: pre-line; }
+.stax-app .adm-alert-meta {
+  font-size: 11px; color: var(--muted-2);
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stax-app .adm-resolve-btn {
+  position: absolute; top: 12px; right: 12px;
+  padding: 6px 12px;
+  font-size: 11px; font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.stax-app .adm-resolve-btn:hover { color: var(--text); border-color: var(--gold); background: rgba(212,160,23,0.08); }
+.stax-app .adm-resolve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Severity badges */
+.stax-app .badge.adm-sev-critical, .stax-app .badge.adm-sev-CRITICAL {
+  background: rgba(var(--neg-rgb), 0.15); color: var(--neg); border: 1px solid rgba(var(--neg-rgb), 0.4);
+}
+.stax-app .badge.adm-sev-warning, .stax-app .badge.adm-sev-WARNING {
+  background: rgba(212,160,23,0.15); color: var(--gold); border: 1px solid rgba(212,160,23,0.4);
+}
+.stax-app .badge.adm-sev-info, .stax-app .badge.adm-sev-INFO {
+  background: rgba(80,160,220,0.15); color: #5db1ff; border: 1px solid rgba(80,160,220,0.4);
+}
+.stax-app .badge.adm-sev-ok, .stax-app .badge.adm-sev-OK {
+  background: rgba(var(--pos-rgb), 0.15); color: var(--pos); border: 1px solid rgba(var(--pos-rgb), 0.4);
+}
+
+/* Search bar */
+.stax-app .adm-search-row {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.stax-app .adm-search {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  flex: 1; max-width: 360px;
+}
+.stax-app .adm-search > svg { position: absolute; left: 12px; color: var(--muted-2); pointer-events: none; }
+.stax-app .adm-search-input { padding-left: 30px; }
+
+/* Pagination */
+.stax-app .adm-pagination {
+  display: flex; justify-content: center; align-items: center; gap: 12px;
+  margin-top: 16px;
+}
+.stax-app .adm-page-num { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+/* Risk panel */
+.stax-app .adm-risk-list { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .adm-risk-card { padding: 14px 16px; }
+.stax-app .adm-risk-card.adm-risk-critical { border-color: rgba(var(--neg-rgb), 0.4); }
+.stax-app .adm-risk-card.adm-risk-warning { border-color: rgba(212,160,23,0.35); }
+.stax-app .adm-risk-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.stax-app .adm-risk-user { font-size: 13px; font-weight: 500; }
+.stax-app .adm-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 14px;
+  font-size: 12px;
+}
+.stax-app .adm-risk-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.stax-app .adm-risk-lab {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stax-app .adm-risk-sub { color: var(--muted-2); font-size: 10.5px; font-family: 'JetBrains Mono', monospace; }
+.stax-app .adm-risk-alerts {
+  margin-top: 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.stax-app .adm-risk-alert {
+  display: flex; gap: 10px;
+  font-size: 12px; padding: 6px 8px;
+  border-left: 2px solid var(--line);
+}
+.stax-app .adm-risk-alert.adm-risk-alert-critical { border-left-color: var(--neg); color: var(--neg); }
+.stax-app .adm-risk-alert.adm-risk-alert-warning { border-left-color: var(--gold); color: var(--gold-hi); }
+
+/* Research / external-link cards */
+.stax-app .adm-research {
+  display: flex; flex-direction: column; gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+  transition: border-color 0.15s, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.stax-app .adm-research:hover { border-color: var(--gold); transform: translateY(-2px); }
+.stax-app .adm-research-desc { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.stax-app .adm-research-cta {
+  font-size: 11px; font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 0.06em;
+  margin-top: auto;
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Admin · Strategy + Social sub-panels
+   Used by AdminStrategyPanels.tsx + AdminSocialPanels.tsx
+   ─────────────────────────────────────────────────────────────────── */
+
+/* Doc shell for static/dynamic research panels (used inside the .stax-page
+   that the parent Strategy/Social panel already provides). Stack of cards
+   and section headings, no extra outer padding. */
+.stax-app .adm-doc { display: flex; flex-direction: column; gap: 14px; }
+
+.stax-app .adm-h2 {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  margin: 8px 0 0;
+}
+.stax-app .adm-h3 {
+  font-size: 14px; font-weight: 600; color: var(--gold);
+  margin: 6px 0 0;
+}
+
+.stax-app .adm-p {
+  font-size: 13.5px; line-height: 1.55; color: var(--text);
+}
+.stax-app .adm-p-sm { font-size: 12.5px; line-height: 1.5; }
+.stax-app .adm-p-muted { color: var(--muted); }
+.stax-app .adm-muted { color: var(--muted); }
+
+.stax-app .adm-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 13px; color: var(--text);
+}
+.stax-app .adm-list-sm { font-size: 12.5px; }
+.stax-app .adm-numlist {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 12px;
+  font-size: 13.5px; color: var(--text); line-height: 1.55;
+}
+.stax-app .adm-numlist > li { display: flex; gap: 10px; align-items: flex-start; }
+
+.stax-app .adm-code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--gold);
+}
+.stax-app.light .adm-code,
+html.light .stax-app .adm-code {
+  background: rgba(0,0,0,0.04);
+  color: #8a6608;
+}
+
+.stax-app .adm-pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: rgba(212,160,23,0.85);
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.5;
+}
+.stax-app.light .adm-pre,
+html.light .stax-app .adm-pre {
+  background: rgba(0,0,0,0.04);
+  color: #8a6608;
+}
+
+.stax-app .adm-edge-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px;
+}
+.stax-app .adm-edge-name {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  margin-bottom: 2px;
+}
+
+.stax-app .adm-h-val {
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+
+.stax-app .adm-footer {
+  font-size: 11px; color: var(--muted-2);
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  display: flex; flex-wrap: wrap; gap: 14px;
+}
+
+/* LogicBlock (spec page) */
+.stax-app .adm-logic { padding: 0; overflow: hidden; }
+.stax-app .adm-logic-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--line);
+}
+.stax-app.light .adm-logic-head,
+html.light .stax-app .adm-logic-head { background: rgba(0,0,0,0.02); }
+.stax-app .adm-logic-num {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: rgba(212,160,23,0.15);
+  border: 1px solid rgba(212,160,23,0.4);
+  color: var(--gold);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 12px;
+  flex-shrink: 0;
+}
+.stax-app .adm-logic-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.stax-app .adm-logic-code {
+  margin: 0;
+  padding: 12px 14px;
+  background: rgba(0,0,0,0.4);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: rgba(231,231,234,0.9);
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.55;
+}
+.stax-app.light .adm-logic-code,
+html.light .stax-app .adm-logic-code {
+  background: rgba(0,0,0,0.04);
+  color: rgba(26,26,31,0.85);
+}
+.stax-app .adm-logic-expl {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Phase list */
+.stax-app .adm-phase-list { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .adm-phase-row { display: flex; flex-direction: column; gap: 2px; }
+
+/* ── Signal Comparison ── */
+.stax-app .adm-cmp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1100px) { .stax-app .adm-cmp-grid { grid-template-columns: 1fr; } }
+.stax-app .adm-cmp-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px;
+  margin-bottom: 12px;
+}
+.stax-app .adm-cmp-history {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.stax-app .adm-cmp-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  background: rgba(255,255,255,0.02);
+}
+.stax-app.light .adm-cmp-row,
+html.light .stax-app .adm-cmp-row { background: rgba(0,0,0,0.015); }
+.stax-app .adm-cmp-row-head {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;
+}
+.stax-app .adm-cmp-row-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+  font-size: 11px;
+}
+
+/* ── Architecture flow ── */
+.stax-app .adm-arch-flow { display: flex; flex-direction: column; gap: 0; }
+.stax-app .adm-arch-step {}
+.stax-app .adm-arch-connector {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 6px 0;
+}
+.stax-app .adm-arch-line {
+  width: 2px; height: 18px;
+  background: linear-gradient(180deg, rgba(212,160,23,0.3), rgba(212,160,23,0.7));
+}
+.stax-app .adm-arch-arrow {
+  font-size: 10px; color: var(--gold); margin: 2px 0;
+}
+.stax-app .adm-arch-conn-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted-2);
+  background: var(--bg-2);
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 2px 0;
+}
+.stax-app .adm-arch-row {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 980px) { .stax-app .adm-arch-row { grid-template-columns: 1fr; } }
+.stax-app .adm-arch-card {
+  padding: 16px 18px;
+}
+.stax-app .adm-arch-side {}
+.stax-app .adm-arch-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.stax-app .adm-arch-num {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+  flex-shrink: 0;
+}
+.stax-app .adm-arch-name {
+  font-size: 15px; font-weight: 700; color: var(--text);
+}
+.stax-app .adm-arch-tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 10px;
+}
+.stax-app .adm-arch-tag {
+  font-size: 10px; font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.stax-app .adm-arch-example {
+  font-size: 10.5px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(255,255,255,0.03);
+  color: var(--muted);
+}
+.stax-app .adm-arch-example.adm-arch-example-pos { background: rgba(var(--pos-rgb), 0.06); color: var(--pos); }
+.stax-app .adm-arch-example.adm-arch-example-neg { background: rgba(var(--neg-rgb), 0.06); color: var(--neg); }
+
+/* ── Social Dispatch ── */
+.stax-app .adm-soc-card { padding: 16px 18px; }
+.stax-app .adm-soc-row {
+  display: grid; grid-template-columns: 240px 1fr; gap: 18px;
+}
+@media (max-width: 720px) {
+  .stax-app .adm-soc-row { grid-template-columns: 1fr; }
+}
+.stax-app .adm-soc-imgwrap { display: block; flex-shrink: 0; }
+.stax-app .adm-soc-img {
+  width: 240px; height: 240px;
+  object-fit: cover;
+  background: rgba(0,0,0,0.15);
+  border-radius: 10px;
+  display: block;
+  border: 1px solid var(--line);
+}
+.stax-app .adm-soc-img-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted-2); font-size: 11px;
+}
+@media (max-width: 720px) {
+  .stax-app .adm-soc-img { width: 100%; height: auto; aspect-ratio: 1/1; }
+}
+.stax-app .adm-soc-meta { min-width: 0; }
+.stax-app .adm-soc-meta-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.stax-app .adm-soc-cap { margin-bottom: 8px; }
+.stax-app .adm-soc-cap > summary {
+  cursor: pointer;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--gold);
+  list-style: none;
+}
+.stax-app .adm-soc-cap > summary::-webkit-details-marker { display: none; }
+.stax-app .adm-soc-cap > pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.stax-app.light .adm-soc-cap > pre,
+html.light .stax-app .adm-soc-cap > pre {
+  background: rgba(0,0,0,0.03);
+  color: var(--text);
+}
+.stax-app .adm-soc-rejnote {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--neg-rgb), 0.3);
+  background: rgba(var(--neg-rgb), 0.06);
+  color: var(--neg);
+  font-size: 12px;
+}
+.stax-app .adm-soc-actions {
+  display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;
+}
+
+.stax-app .adm-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: inherit;
+  transition: opacity 0.12s, background 0.12s, color 0.12s, border-color 0.12s;
+}
+.stax-app .adm-btn:disabled { opacity: 0.5; cursor: wait; }
+.stax-app .adm-btn-pos {
+  background: var(--pos); color: #05140a; border-color: var(--pos);
+}
+.stax-app .adm-btn-pos:hover:not(:disabled) { filter: brightness(1.1); }
+.stax-app .adm-btn-gold {
+  background: var(--gold); color: #08080D; border-color: var(--gold);
+}
+.stax-app .adm-btn-gold:hover:not(:disabled) { filter: brightness(1.1); }
+.stax-app .adm-btn-neg-outline {
+  background: transparent; color: var(--neg);
+  border-color: rgba(var(--neg-rgb), 0.4);
+}
+.stax-app .adm-btn-neg-outline:hover:not(:disabled) {
+  background: rgba(var(--neg-rgb), 0.08);
+  border-color: var(--neg);
+}
+
+/* ── Social Gallery ── */
+.stax-app .adm-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+.stax-app .adm-gallery-card {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+.stax-app .adm-gallery-img {
+  width: 100%; height: auto; display: block;
+}
+.stax-app .adm-gallery-label {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 10px 14px;
+  background: rgba(0,0,0,0.78);
+  color: #fff;
+  backdrop-filter: blur(6px);
+}
+.stax-app .adm-gallery-name { font-weight: 700; font-size: 13px; }
+.stax-app .adm-gallery-file { font-size: 10.5px; color: rgba(255,255,255,0.55); font-family: 'JetBrains Mono', monospace; }
+
+/* ───────────────────────────────────────────────────────────────────
+   Parity panel (Execution tab)
+   ─────────────────────────────────────────────────────────────────── */
+
+.stax-app .adm-parity-list { display: flex; flex-direction: column; gap: 10px; }
+
+.stax-app .adm-parity { padding: 14px 16px; }
+.stax-app .adm-parity.adm-parity-ok { border-color: rgba(var(--pos-rgb), 0.3); }
+.stax-app .adm-parity.adm-parity-drift { border-color: rgba(212,160,23,0.4); }
+.stax-app .adm-parity.adm-parity-fail {
+  border-color: rgba(var(--neg-rgb), 0.5);
+  background: rgba(var(--neg-rgb), 0.04);
+}
+
+.stax-app .adm-parity-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.stax-app .adm-parity-icon { font-size: 16px; line-height: 1; }
+.stax-app .adm-parity-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+}
+.stax-app .adm-parity-time {
+  margin-left: auto; color: var(--muted);
+}
+
+.stax-app .adm-parity-body { display: flex; flex-direction: column; gap: 10px; }
+.stax-app .adm-parity-asset {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.stax-app .adm-parity-cmp {
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.stax-app.light .adm-parity-cmp,
+html.light .stax-app .adm-parity-cmp { background: rgba(0,0,0,0.02); }
+.stax-app .adm-parity-row {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 12.5px;
+}
+.stax-app .adm-parity-rowlab {
+  display: inline-block; min-width: 36px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stax-app .adm-parity-footer {
+  margin-top: 8px;
+  display: flex; gap: 14px; flex-wrap: wrap;
+  font-size: 10.5px; color: var(--muted-2);
+}
+
+/* Pending checks card */
+.stax-app .adm-pending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.stax-app .adm-pending-cell {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(212,160,23,0.04);
+}
+.stax-app .adm-pending-head { display: flex; align-items: center; gap: 8px; }
+
+/* Log tail (collapsible-feeling block at bottom of Parity) */
+.stax-app .adm-log-tail {
+  margin: 0;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: rgba(231,231,234,0.8);
+  font-size: 10.5px;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 360px;
+}
+.stax-app.light .adm-log-tail,
+html.light .stax-app .adm-log-tail {
+  background: rgba(0,0,0,0.04);
+  color: rgba(26,26,31,0.85);
+}
+
+/* "Pulse" cell for OPEN POSITIONS. Single dynamic bar:
+     - in profit  → green (or gold once trail-armed at +1.5%), grows toward
+                    100% as profit climbs; shrinks as profit retraces
+     - in loss    → red, grows toward 100% as price approaches the 4% SL
+     - critical   → red flashes inside 0.5% of SL hit
+   Closed trades go to TRADE HISTORY which keeps the literal reason text. */
+.stax-app .lt-sl-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+}
+.stax-app .lt-sl-bar { width: 100%; height: 7px; position: relative; }
+.stax-app .lt-sl-bar .adm-meter-fill {
+  /* Width animation handles the green-shrinks-then-red-grows transition
+     gracefully when price crosses entry. The class swap (pos→red) is
+     instant but the width passing through 0 makes it look smooth. */
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.stax-app .lt-sl-text {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+/* Critical flash — last 0.5% before SL hit. Pulses the red fill brighter
+   to drive attention without making the row layout shift. */
+.stax-app .lt-sl-bar-critical .adm-meter-fill {
+  animation: lt-sl-flash 0.55s ease-in-out infinite alternate;
+}
+@keyframes lt-sl-flash {
+  from { filter: none;                            box-shadow: none; }
+  to   { filter: brightness(1.25) saturate(1.15); box-shadow: 0 0 6px rgba(var(--neg-rgb), 0.55); }
+}
+
+/* LOCKED state — once a position can no longer lose, the bar goes solid
+   green with a sustained soft glow (no flash — the drama is over, the
+   win is in). Caption swaps to bold green with a shield-check icon. */
+.stax-app .lt-sl-bar-locked .adm-meter-fill {
+  background: linear-gradient(90deg, rgba(var(--pos-rgb), 0.6), var(--pos));
+  box-shadow: 0 0 8px rgba(var(--pos-rgb), 0.6);
+}
+.stax-app .lt-pulse-text-locked {
+  color: var(--pos);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stax-app .lt-pulse-text-locked > svg { flex-shrink: 0; }
+
+/* Pulse legend — sits in the OPEN POSITIONS card head, far right.
+   Four small swatches with one-word labels so customers can decode the
+   bar colour at a glance without strategy jargon getting in the way. */
+.stax-app .lt-pulse-legend {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.stax-app .lt-pulse-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.stax-app .lt-pulse-swatch {
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.stax-app .lt-pulse-swatch-red    { background: linear-gradient(90deg, rgba(var(--neg-rgb), 0.25), var(--neg)); }
+.stax-app .lt-pulse-swatch-yellow { background: linear-gradient(90deg, rgba(245,200,66,0.3), #f5c842); }
+.stax-app .lt-pulse-swatch-green  { background: linear-gradient(90deg, rgba(var(--pos-rgb), 0.5), var(--pos)); }
+
+
+
+/* ── Admin Execution · Signal Log ────────────────────────────────────
+   Stat row, match-rate bar, type pills, status pills, table styling.
+   Pulls /api/admin/execution-logs. Mirrors v1 admin/execution layout. */
+
+.stax-app .adm-exec-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.stax-app .adm-exec-stat {
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  text-align: center;
+}
+.stax-app.light .adm-exec-stat,
+html.light .stax-app .adm-exec-stat { background: var(--card); }
+.stax-app .adm-exec-stat-label {
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin-bottom: 6px;
+}
+.stax-app .adm-exec-stat-val {
+  font-size: 24px; font-weight: 700; letter-spacing: -0.01em;
+  color: var(--text);
+}
+.stax-app .adm-tone-gold  { color: var(--gold) !important; }
+.stax-app .adm-tone-muted { color: var(--muted) !important; }
+
+/* Match-rate bar */
+.stax-app .adm-match-bar {
+  height: 8px; border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden; position: relative;
+}
+.stax-app.light .adm-match-bar,
+html.light .stax-app .adm-match-bar { background: rgba(0,0,0,0.06); }
+.stax-app .adm-match-fill {
+  height: 100%; border-radius: 4px;
+  transition: width 0.5s cubic-bezier(0.2,0.8,0.2,1);
+}
+
+/* Signal-log table */
+.stax-app .adm-exec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.stax-app .adm-exec-table thead th {
+  padding: 10px 12px; text-align: left;
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stax-app .adm-exec-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.stax-app.light .adm-exec-table tbody td,
+html.light .stax-app .adm-exec-table tbody td { border-bottom: 1px solid rgba(0,0,0,0.04); }
+.stax-app .adm-exec-table tbody tr:last-child td { border-bottom: 0; }
+.stax-app .adm-exec-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.stax-app.light .adm-exec-table tbody tr:hover,
+html.light .stax-app .adm-exec-table tbody tr:hover { background: rgba(0,0,0,0.02); }
+.stax-app .adm-exec-table tbody tr.adm-exec-row-live {
+  background: rgba(212,160,23,0.025);
+}
+.stax-app.light .adm-exec-table tbody tr.adm-exec-row-live,
+html.light .stax-app .adm-exec-table tbody tr.adm-exec-row-live { background: rgba(184,134,11,0.03); }
+
+.stax-app .adm-exec-time {
+  color: var(--muted);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; white-space: nowrap;
+}
+.stax-app .adm-exec-sym {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; color: var(--text);
+}
+.stax-app .adm-exec-type {
+  display: inline-block;
+  padding: 3px 9px; border-radius: 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.stax-app .adm-exec-mode {
+  font-size: 11px; color: var(--muted);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  text-transform: lowercase;
+}
+
+.stax-app .adm-exec-exch {
+  display: inline-block;
+  padding: 3px 9px; border-radius: 6px;
+  font-size: 10.5px; font-weight: 600;
+}
+.stax-app .adm-exec-exch.live {
+  background: rgba(212,160,23,0.10);
+  color: var(--gold);
+  border: 1px solid rgba(212,160,23,0.25);
+}
+.stax-app .adm-exec-exch.paper {
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.stax-app.light .adm-exec-exch.paper,
+html.light .stax-app .adm-exec-exch.paper { background: rgba(0,0,0,0.03); }
+
+.stax-app .adm-exec-status {
+  font-size: 11px; font-weight: 600;
+  white-space: nowrap;
+}
+.stax-app .adm-exec-status-executed { color: var(--pos); }
+.stax-app .adm-exec-status-missed   { color: var(--neg); }
+.stax-app .adm-exec-status-ignored  { color: var(--muted); }
+
+@media (max-width: 980px) {
+  .stax-app .adm-exec-stats { grid-template-columns: repeat(2, 1fr); }
+  .stax-app .adm-exec-stat-val { font-size: 20px; }
+}

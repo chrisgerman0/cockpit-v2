@@ -126,8 +126,8 @@ export function BacktestingContent() {
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Estratégia de breakout em VolumeProfile em BTC + ETH + SOL + XRP + SUI. Dispara quando o fechamento de 4H rompe o nó de maior volume do dia anterior. <strong>Os números abaixo refletem o tier selecionado em uma conta inicial de $10.000.</strong> Seu PnL ao vivo escala proporcionalmente ao seu saldo e tier.</>
-            : <>Volume-node breakout strategy across BTC + ETH + SOL + XRP + SUI. Fires whenever the 4H close breaks the prior day's high-volume node. <strong>Numbers shown below reflect the tier selected above on a $10,000 starting account.</strong> Your live PnL scales proportionally to your actual balance and chosen tier.</>}
+            ? <>Backtest verificado da estratégia sistemática multi-ativo em BTC + ETH + SOL + XRP + SUI. <strong>Os números abaixo refletem o tier selecionado em uma conta inicial de $10.000.</strong> Seu PnL ao vivo escala proporcionalmente ao seu saldo e tier.</>
+            : <>Verified backtest of our multi-asset systematic strategy across BTC + ETH + SOL + XRP + SUI. <strong>Numbers shown below reflect the tier selected above on a $10,000 starting account.</strong> Your live PnL scales proportionally to your actual balance and chosen tier.</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -581,7 +581,7 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                     <span className="num">{asset.replace('USDT', '/USDT')}</span>
                   </div>
                 </td>
-                <td><span className="bt-scope-tag">{row.scope || 'VolumeProfile + BB-width filter'}</span></td>
+                <td><span className="bt-scope-tag">{row.scope || 'Systematic'}</span></td>
                 <td className="num" style={{ textAlign: 'right' }}>{row.totalTrades.toLocaleString()}</td>
                 <td className={'num pos-text'} style={{ textAlign: 'right' }}>+{row.returnPct.toFixed(2)}%</td>
                 <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{row.winRate.toFixed(1)}%</td>

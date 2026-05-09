@@ -106,8 +106,12 @@ body {
   font-family: var(--font-geist-sans), Inter, system-ui, sans-serif;
   font-feature-settings: "rlig" 1, "calt" 1;
 }
-.dark body,
-:root:not(.light) body {
+/* Dark-mode body gradient. Only fires when html has the .dark class
+   explicitly — the no-class state is intentionally light so first-time
+   visitors (no cookie yet) don't get a dark flash before the inline
+   theme script runs. The previous `:root:not(.light) body` selector
+   inverted that and was the root cause of Chris's persistent FOUC. */
+.dark body {
   background:
     radial-gradient(ellipse 60rem 40rem at 18% 5%,  rgba(212, 160, 23, 0.18), transparent 70%),
     radial-gradient(ellipse 55rem 50rem at 88% 95%, rgba(212, 160, 23, 0.15), transparent 70%),

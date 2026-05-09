@@ -92,6 +92,12 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
         pnlPct,
         reason: t.pyramided ? 'Open · Pyramided' : 'Open',
         open: true,
+        markPx: tickerPx > 0 ? tickerPx : null,
+        mfePct: t.mfePct,
+        mfePxPeak: t.mfePxPeak ?? null,
+        tpArmed: t.tpArmed,
+        trailFloor: t.trailFloor ?? null,
+        mfePeakTs: t.mfePeakTs ?? null,
       }
     }),
     [data.open, tickerByPair],
@@ -125,6 +131,7 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
         title="OPEN POSITIONS"
         rows={openRows}
         emptyText="No open positions yet. Your next trade will appear here when a signal fires."
+        lastColLabel="Pulse"
       />
       <LiveTradesTable
         title="TRADE HISTORY"
@@ -203,6 +210,15 @@ type LiveTradeRow = {
   pnlPct: number
   reason: string
   open: boolean
+  // Live mark price for open rows — used by the Pulse meter in the trailing
+  // column. Closed rows leave this null and render the reason text.
+  markPx?: number | null
+  // Engine-state passthrough (open rows only) used by the Pulse meter.
+  mfePct?: number
+  mfePxPeak?: number | null
+  tpArmed?: boolean             // BB+RSI stretched-exit armed (separate feature)
+  trailFloor?: number | null    // engine-confirmed profit floor (= locked state)
+  mfePeakTs?: number | null
 }
 
 const ASSET_LOGOS: Record<string, string> = {
@@ -235,11 +251,204 @@ function fmtUnits(units: number, base: string): string {
   return `${units.toFixed(4)} ${base}`
 }
 
-function LiveTradesTable({ title, rows, emptyText, pageSize = 50 }: {
+/**
+ * Inline SVG used by the Pulse meter — shield with a tick, paired with
+ * the green "Profit locked" caption. Lives here (not in Icons.tsx) since
+ * it's the only meter icon left after we collapsed the armed-vs-locked
+ * distinction down to a simpler red → yellow → green sequence.
+ */
+function IconShieldCheck({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3 4 6v6c0 4.5 3.4 8.4 8 9 4.6-.6 8-4.5 8-9V6l-8-3Z" />
+      <path d="m9 12 2.2 2.2L15 10.4" />
+    </svg>
+  )
+}
+
+/**
+ * Single dynamic Pulse meter for OPEN POSITIONS' trailing column.
+ *
+ * Three colours, distance-based labels:
+ *
+ *   RED — losing
+ *     bar grows 0→100% as price moves toward the stop
+ *     label: "X.XX% to Stop Loss"  (or "Stop loss approaching" inside 0.5%)
+ *
+ *   YELLOW — winning, before the trailing threshold
+ *     bar grows 0→100% as profit climbs to the trailing-arm threshold
+ *     label: "X.XX% to start Take Profit Trailing"
+ *
+ *   GREEN — winning, past the trailing threshold (whether locked or not)
+ *     bar pinned at 100% with a sustained soft glow
+ *     label:
+ *       - if engine has confirmed the protection floor → "Trailing"
+ *       - otherwise (still in the warm-up window)      → "Xmin to start Trailing"
+ *
+ *  Reprieve countdown is computed client-side from `mfePeakTs` (server
+ *  derives it from engine.startedAt + mfeAt1m × 60s). Tier picked off
+ *  the strategy's published reprieve table so the countdown is honest.
+ *  If a position falls out of green back below the threshold, the bar
+ *  falls back to yellow automatically.
+ */
+function SLDangerCell({
+  entry, mark, side, mfePct, tpArmed, trailFloor, mfePeakTs,
+}: {
+  entry: number
+  mark: number
+  side: 'LONG' | 'SHORT'
+  mfePct?: number
+  // BB+RSI stretched-exit armed — separate exit mechanic from the trailing
+  // TP. When true, the strategy has identified a top-of-move and set up
+  // an exit on the next signal trigger. Drives the "Take Profit Armed"
+  // caption — distinct from "Trailing".
+  tpArmed?: boolean
+  // Engine-confirmed protection floor in profit territory. The only true
+  // "can't lose from here" signal — drives the "Trailing" caption.
+  trailFloor?: number | null
+  mfePeakTs?: number | null
+}) {
+  if (!Number.isFinite(entry) || !Number.isFinite(mark) || entry <= 0 || mark <= 0) {
+    return <span style={{ color: 'var(--muted)' }}>—</span>
+  }
+  const SL_BASE_PCT = 4
+  const ARM_PCT = 1.5  // private visual constant — never surfaced in any text
+
+  const slPx = side === 'LONG' ? entry * (1 - SL_BASE_PCT / 100) : entry * (1 + SL_BASE_PCT / 100)
+
+  const movePct = side === 'LONG'
+    ? ((mark - entry) / entry) * 100
+    : ((entry - mark) / entry) * 100
+
+  const cushion = side === 'LONG'
+    ? ((mark - slPx) / mark) * 100
+    : ((slPx - mark) / mark) * 100
+
+  const inProfit = movePct >= 0
+  const isCritical = cushion >= 0 && cushion < 0.5
+  const isPastSL = cushion < 0
+
+  // LOCKED — engine has confirmed the trailing-TP protection floor in
+  // profit territory. Genuine "can't lose" state. Highest priority.
+  const locked = trailFloor != null
+    && Number.isFinite(trailFloor)
+    && (side === 'LONG' ? trailFloor > entry : trailFloor < entry)
+
+  // ABOVE THRESHOLD — current move past the trailing arm threshold. Bar
+  // green; if a retrace pulls movePct back below, drops to yellow per
+  // Chris's spec ("if comes out of trail range, goes back to yellow").
+  const aboveThreshold = movePct >= ARM_PCT
+
+  // TAKE-PROFIT ARMED — engine `pos.armed` (BB+RSI stretched-exit). The
+  // strategy has flagged a top-of-move; exit will trigger on next signal.
+  // Bar stays green even if current movePct retraced below the trailing
+  // threshold, because the exit setup is still active.
+  const isTpArmed = !!tpArmed
+
+  const inGreenZone = locked || aboveThreshold || isTpArmed
+
+  // Width + colour
+  let fillPct = 0
+  let fillClass = 'adm-meter-fill-red'
+  if (inProfit && inGreenZone) {
+    fillPct = 100
+    fillClass = 'adm-meter-fill-pos'
+  } else if (inProfit) {
+    fillPct = Math.min(100, (movePct / ARM_PCT) * 100)
+    fillClass = 'adm-meter-fill-yellow'
+  } else {
+    const consumed = Math.max(0, SL_BASE_PCT - cushion)
+    fillPct = Math.min(100, (consumed / SL_BASE_PCT) * 100)
+  }
+
+  // Captions — distance-based, parallel structure.
+  let captionContent: React.ReactNode
+  let captionClass = ''
+  if (isPastSL) {
+    captionContent = 'Stop loss triggered'
+    captionClass = 'neg-text'
+  } else if (inProfit && inGreenZone) {
+    // Caption priority within the GREEN zone:
+    //   1) Locked          → "Trailing"
+    //   2) Trailing range  → "Xmin to start Trailing" (countdown) | "Trailing"
+    //   3) Take-profit armed (engine stretched-exit, no trail) → "Take Profit Armed"
+    // Distinct labels so admins / users see which protective state is on.
+    let labelText: string
+    if (locked) {
+      labelText = 'Trailing'
+    } else if (aboveThreshold) {
+      const reprieveMin = pickReprieveMinutes(mfePct ?? movePct)
+      if (mfePeakTs && reprieveMin > 0) {
+        const elapsedMin = (Date.now() - mfePeakTs) / 60_000
+        const remaining = reprieveMin - elapsedMin
+        labelText = remaining > 0
+          ? `${Math.max(1, Math.ceil(remaining))}min to start Trailing`
+          : 'Trailing'
+      } else {
+        labelText = 'Trailing'
+      }
+    } else {
+      // Only tpArmed is driving green here — show that explicitly.
+      labelText = 'Take Profit Armed'
+    }
+    captionContent = (
+      <>
+        <IconShieldCheck size={11} />
+        {' '}
+        {labelText}
+      </>
+    )
+    captionClass = 'lt-pulse-text-locked'
+  } else if (inProfit) {
+    const togo = Math.max(0, ARM_PCT - movePct)
+    captionContent = `${togo.toFixed(2)}% to start Take Profit Trailing`
+    captionClass = ''
+  } else if (isCritical) {
+    captionContent = `Stop loss approaching · ${cushion.toFixed(2)}% left`
+    captionClass = 'neg-text'
+  } else {
+    captionContent = `${cushion.toFixed(2)}% to Stop Loss`
+  }
+
+  // Customer-facing tooltip — entry + signed move only. No exits, no
+  // strategy state.
+  const entryLabel = entry < 10 ? entry.toFixed(4) : entry.toFixed(2)
+  const tooltip = `Entry $${entryLabel} · move ${movePct >= 0 ? '+' : ''}${movePct.toFixed(2)}%`
+
+  const barClasses = ['adm-meter-bar', 'lt-sl-bar']
+  if (isCritical) barClasses.push('lt-sl-bar-critical')
+  if (inProfit && inGreenZone) barClasses.push('lt-sl-bar-locked')   // soft green glow
+
+  return (
+    <div className="lt-sl-cell" title={tooltip}>
+      <div className={barClasses.join(' ')}>
+        <div className={'adm-meter-fill ' + fillClass} style={{ width: fillPct + '%' }} />
+      </div>
+      <div className={'lt-sl-text ' + captionClass}>{captionContent}</div>
+    </div>
+  )
+}
+
+// Reprieve table mirrors the strategy's own. Kept private to this file —
+// not exposed in any caption text, only used to pick the right countdown
+// window for the green-zone label.
+function pickReprieveMinutes(profitPct: number): number {
+  if (profitPct >= 8) return 240
+  if (profitPct >= 5) return 180
+  if (profitPct >= 3) return 120
+  if (profitPct >= 1.5) return 90
+  return 0
+}
+
+function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel = 'Reason' }: {
   title: string
   rows: LiveTradeRow[]
   emptyText: string
   pageSize?: number
+  // Open Positions table renames the trailing column to "SL Danger" (where
+  // the SLDangerCell meter lives). Trade History keeps the default "Reason"
+  // since closed rows just show the literal exit reason text.
+  lastColLabel?: string
 }) {
   const [page, setPage] = useState(0)
   const [coin, setCoin] = useState<CoinFilter>('ALL')
@@ -259,10 +468,22 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50 }: {
 
   const fmt$ = (n: number) => `${n >= 0 ? '+' : ''}$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
+  // Show the colour-key only on OPEN POSITIONS (where the Pulse meter
+  // lives). TRADE HISTORY rows render the literal exit reason text in
+  // the trailing column — no need for the legend there.
+  const showPulseLegend = title === 'OPEN POSITIONS'
+
   return (
     <div className="card card-pad">
       <div className="bt-card-head">
         <div className="bt-card-title"><span className="bt-card-bar" /> {title}</div>
+        {showPulseLegend && (
+          <div className="lt-pulse-legend" aria-label="Pulse colour key">
+            <span className="lt-pulse-key"><span className="lt-pulse-swatch lt-pulse-swatch-red" />Losing</span>
+            <span className="lt-pulse-key"><span className="lt-pulse-swatch lt-pulse-swatch-yellow" />Winning</span>
+            <span className="lt-pulse-key"><span className="lt-pulse-swatch lt-pulse-swatch-green" />Trailing</span>
+          </div>
+        )}
       </div>
 
       <div className="bt-trades-filters">
@@ -316,7 +537,7 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50 }: {
               <th>Exit</th>
               <th>P&amp;L</th>
               <th>%</th>
-              <th>Reason</th>
+              <th>{lastColLabel}</th>
             </tr>
           </thead>
           <tbody>
@@ -349,7 +570,7 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50 }: {
                     <span className="sub">{fmtUnits(units, baseSym)}</span>
                   </td>
                   <td className="num bt-price-cell">
-                    {r.entryPx > 0 ? `$${r.entryPx.toFixed(r.entryPx < 1 ? 4 : 2)}` : '—'}
+                    {r.entryPx > 0 ? `$${r.entryPx.toFixed(r.entryPx < 10 ? 4 : 2)}` : '—'}
                     {r.entryTs ? <span className="ts">{fmtTradeTs(r.entryTs)}</span> : null}
                   </td>
                   <td className="num bt-price-cell">
@@ -357,14 +578,26 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50 }: {
                       <span className="bt-open-label"><span className="dot" />OPEN</span>
                     ) : r.exitPx != null ? (
                       <>
-                        ${r.exitPx.toFixed(r.exitPx < 1 ? 4 : 2)}
+                        ${r.exitPx.toFixed(r.exitPx < 10 ? 4 : 2)}
                         {r.exitTs ? <span className="ts">{fmtTradeTs(r.exitTs)}</span> : null}
                       </>
                     ) : '—'}
                   </td>
                   <td className={'num ' + (r.pnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(r.pnl)}</td>
                   <td className={'num ' + (r.pnl > 0 ? 'pos-text' : 'neg-text')}>{r.pnlPct.toFixed(2)}%</td>
-                  <td className="num" style={{ color: 'var(--muted)' }}>{r.reason || '—'}</td>
+                  <td>
+                    {r.open
+                      ? <SLDangerCell
+                          entry={r.entryPx}
+                          mark={r.markPx ?? r.entryPx}
+                          side={r.side}
+                          mfePct={r.mfePct}
+                          tpArmed={r.tpArmed}
+                          trailFloor={r.trailFloor}
+                          mfePeakTs={r.mfePeakTs}
+                        />
+                      : <span className="num" style={{ color: 'var(--muted)' }}>{r.reason || '—'}</span>}
+                  </td>
                 </tr>
               )
             })}

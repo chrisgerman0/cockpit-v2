@@ -3,14 +3,16 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Strategy backtest trades (the Satoshi Stacker ledger), sourced from the
- * static JSON the multi-asset-backtest daemon publishes every 60s. This is
- * the SAME data source the Backtesting page reads — so Recent Trades on the
- * dashboard and the Trade History on Live Trading mirror what the strategy
- * is doing, not the user's personal Bitget executions.
+ * Strategy backtest trade ledger, sourced from the static JSON the
+ * multi-asset-backtest daemon publishes every 60s. Same data source the
+ * Backtesting page reads, so Recent Trades on the Dashboard and Trade
+ * History on Live Trading mirror what the strategy is doing — not the
+ * user's personal Bitget executions.
  *
- * Strategy: V1 Satoshi Stacker — VolumeProfile breakout + per-asset BB-width
- * filter (BTC=5 / ETH=7 / SOL=7 / XRP=4 / SUI=4) on 4H closes.
+ * Strategy mechanics, indicator names, thresholds, and entry/exit logic
+ * are deliberately NOT documented in this file. They live in the admin
+ * spec page only. Don't reintroduce them here — this comment ships in
+ * source maps + can be inspected by anyone with DevTools.
  *
  * Tier maps to the right file:
  *   Conservative → /data/strategies/satoshi-stacker/portfolio-trades.json

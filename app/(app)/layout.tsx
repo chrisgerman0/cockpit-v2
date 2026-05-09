@@ -1,4 +1,3 @@
-import { ThemeProvider } from '@/components/theme-provider'
 import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
 
 /**
@@ -12,13 +11,15 @@ import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
  * item defaults to Dashboard regardless of the actual route. Dynamic
  * rendering gives every request the real URL so the highlight is correct
  * before the client even hydrates.
+ *
+ * Theme: handled by the inline pre-paint script in app/layout.tsx (which
+ * reads `stax-theme` localStorage — same key StaxTopBar's toggle writes).
+ * The previous next-themes <ThemeProvider> wrapper was removed because it
+ * used a DIFFERENT storage key (`staxs-theme`) that was never written, so
+ * it forced dark on every navigation regardless of the user's choice.
  */
 export const dynamic = 'force-dynamic'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <ThemeProvider>
-      <StaxAppShell>{children}</StaxAppShell>
-    </ThemeProvider>
-  )
+  return <StaxAppShell>{children}</StaxAppShell>
 }
