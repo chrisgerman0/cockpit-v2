@@ -56,7 +56,11 @@ type BotConfigResp = {
 
 function symToCoin(sym: string): CoinSym {
   const s = sym.replace('USDT', '') as CoinSym
-  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK'] as const).includes(s) ? s : 'BTC'
+  const KNOWN: ReadonlyArray<CoinSym> = [
+    'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
+    'ADA', 'AVAX', 'BNB', 'HYPE', 'TON', 'TRX', 'ZEC',
+  ]
+  return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
 }
 
 function fmtUsdSign(v: number): string {
@@ -595,19 +599,12 @@ export function useStaxDashboardData(): StaxLoadState {
             }
           })
 
-        // Ticker bar only shows the original V1 symbols (BTC/ETH/SOL/XRP/SUI/
-        // DOGE/LINK). The wider Phase H ticker singleton also carries ADA/AVAX/
-        // BNB/HYPE/TON/TRX/ZEC for the backtesting page's live OPEN-trade PnL;
-        // filter to the V1 set here so TickerAsset.sym (CoinSym) stays valid.
-        const V1_SHORTS: ReadonlyArray<TickerAsset['sym']> = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK']
-        const tickerForUi: TickerAsset[] = tickers
-          .filter(t => (V1_SHORTS as readonly string[]).includes(t.short))
-          .map(t => ({
-            sym: t.short as TickerAsset['sym'],
-            price: fmtPx(t.price),
-            delta: `${t.change >= 0 ? '+' : ''}${t.change.toFixed(2)}%`,
-            pos: t.change >= 0,
-          }))
+        const tickerForUi: TickerAsset[] = tickers.map(t => ({
+          sym: t.short,
+          price: fmtPx(t.price),
+          delta: `${t.change >= 0 ? '+' : ''}${t.change.toFixed(2)}%`,
+          pos: t.change >= 0,
+        }))
 
         // Equity curve is now computed in the Hero component on each range
         // change — we just pass the raw trades + strategy base so it can

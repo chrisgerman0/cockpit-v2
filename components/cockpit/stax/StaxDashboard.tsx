@@ -28,14 +28,10 @@ function fmtPrice(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
-  // The bottom TickerBar only shows the original V1 set (BTC/ETH/SOL/XRP/SUI/
-  // DOGE/LINK) — the wider Phase H ticker singleton also carries ADA/AVAX/BNB/
-  // HYPE/TON/TRX/ZEC for the backtesting page's live OPEN-trade PnL, which
-  // would widen this map past CoinSym. Filter to the V1 set here.
-  const v1: ReadonlyArray<CoinSym> = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK']
-  const isV1 = (s: PublicTicker['short']): s is CoinSym => (v1 as readonly string[]).includes(s)
-  return rows.filter(r => isV1(r.short)).map(r => ({
-    sym: r.short as CoinSym,
+  // PublicTicker.short and CoinSym now both cover the full Phase H 14-asset
+  // basket, so the ticker singleton can map 1:1 — no filtering needed.
+  return rows.map(r => ({
+    sym: r.short,
     price: fmtPrice(r.price),
     delta: `${r.change >= 0 ? '+' : ''}${r.change.toFixed(2)}%`,
     pos: r.change >= 0,
@@ -45,7 +41,9 @@ function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type TradeSide = 'LONG' | 'SHORT'
-export type CoinSym = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+export type CoinSym =
+  | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
 
 export type Position = {
   pair: string
@@ -1154,6 +1152,13 @@ const COIN_ICON_SRC: Record<CoinSym, string> = {
   SUI:  '/coin-icons/sui.png',
   DOGE: '/coin-icons/doge.svg',
   LINK: '/coin-icons/link.svg',
+  ADA:  '/coin-icons/ada.png',
+  AVAX: '/coin-icons/avax.png',
+  BNB:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg',
+  HYPE: '/coin-icons/hype.png',
+  TON:  '/coin-icons/ton.png',
+  TRX:  '/coin-icons/trx.png',
+  ZEC:  '/coin-icons/zec.png',
 }
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {
