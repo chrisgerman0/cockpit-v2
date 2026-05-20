@@ -26,6 +26,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
 import { fetchPortfolioTrades, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { usePublicTickers } from '@/lib/use-public-tickers'
 import { type EquityPoint } from './Charts'
 
 type Stats = {
@@ -56,30 +57,49 @@ type AssetBreakdown = {
   scope: string
 }
 
-const TIER_LABELS = {
-  conservative: { en: 'Conservative', pt: 'Conservador',  notional: '$5,000',  mult: '0.5×' },
-  bold:         { en: 'Bold',         pt: 'Audacioso',   notional: '$10,000', mult: '1.0×' },
-  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$15,000', mult: '1.5×' },
+// Tier names follow the new schema (use-portfolio-trades.tsx): conservative
+// (0.5×) / moderate (0.75×) / aggressive (1.0×). Legacy 'bold' is normalised
+// to 'aggressive' on read by the portfolio-trades hook.
+const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult: string }> = {
+  conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '2 lanes / 2× lev' },
+  moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '3 lanes / 3× lev' },
+  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '5 lanes / 5× lev' },
 }
 
 function statsPath(tier: Tier): string {
+  // Daemon publishes a pre-scaled file per tier — no client-side scaling.
   if (tier === 'conservative') return '/data/strategies/satoshi-stacker/portfolio-stats.json'
   return `/data/strategies/satoshi-stacker/tiers/${tier}/portfolio-stats.json`
 }
 
 const ASSET_LOGOS: Record<string, string> = {
-  BTCUSDT: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETHUSDT: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRPUSDT: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOLUSDT: '/v2/coin-icons/sol.png',
-  SUIUSDT: '/v2/coin-icons/sui.png',
+  BTCUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
+  ETHUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
+  XRPUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
+  SOLUSDT:  '/coin-icons/sol.png',
+  SUIUSDT:  '/coin-icons/sui.png',
+  DOGEUSDT: '/coin-icons/doge.svg',
+  LINKUSDT: '/coin-icons/link.svg',
+  // Phase H additions — Chris-provided logos live at /coin-icons/<name>.png
+  BNBUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg', // Chris hasn't sent a custom — keep CDN
+  AVAXUSDT: '/coin-icons/avax.png',
+  ADAUSDT:  '/coin-icons/ada.png',
+  TRXUSDT:  '/coin-icons/trx.png',
+  ZECUSDT:  '/coin-icons/zec.png',
+  TONUSDT:  '/coin-icons/ton.png',
+  HYPEUSDT: '/coin-icons/hype.png',
 }
 
 export function BacktestingContent() {
   const t = useT()
   const [tier, setTier] = useState<Tier>('conservative')
   const [stats, setStats] = useState<Stats | null>(null)
+  // `trades` is CLOSED only — every metric on this page is computed against
+  // it. `allTrades` is the raw set (closed + the strategy's currently-open
+  // eod markers) — passed to the List of Trades so users can see what the
+  // strategy is holding right now and compare with their own Bitget positions.
   const [trades, setTrades] = useState<PortfolioTrade[]>([])
+  const [allTrades, setAllTrades] = useState<PortfolioTrade[]>([])
   const [view, setView] = useState<'metrics' | 'trades'>('metrics')
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
@@ -89,13 +109,15 @@ export function BacktestingContent() {
     async function load() {
       setLoading(true)
       try {
-        const [statsRes, tradesData] = await Promise.all([
+        const [statsRes, closedTrades, rawTrades] = await Promise.all([
           fetch(statsPath(tier), { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
           fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[]),
+          fetchPortfolioTrades(tier, { includeOpen: true }).catch(() => [] as PortfolioTrade[]),
         ])
         if (cancelled) return
         setStats(statsRes || null)
-        setTrades(tradesData)
+        setTrades(closedTrades)
+        setAllTrades(rawTrades)
 
         try {
           const headRes = await fetch(statsPath(tier), { method: 'HEAD' })
@@ -116,18 +138,59 @@ export function BacktestingContent() {
 
   const isPt = getCurrentLang() === 'PT'
 
+  // Top metric cards previously read directly from portfolio-stats.json.
+  // That file is published by the shadow daemon and inherits the daemon's
+  // compound-equity notional bug on freshly-closed trades — a single
+  // corrupted close (e.g. SUI 12 May trail_tp with $74M notional) can
+  // inflate the displayed P&L and profit factor by 60%+. Recompute from
+  // the trades array (which is already normalized at the fetch layer by
+  // `normalizeTrade` in use-portfolio-trades.tsx). startCapital still
+  // comes from stats — that's a config constant, not corrupted.
+  const derivedStats = useMemo(() => {
+    if (!trades || trades.length === 0) return null
+    const startCap = stats?.startCapital || 10000
+    // Walk trades chronologically to also compute trade-level max DD.
+    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+    let eq = startCap
+    let peak = startCap
+    let maxDDPct = 0
+    let wins = 0
+    let losses = 0
+    let grossProfit = 0
+    let grossLoss = 0
+    for (const t of chrono) {
+      eq += t.pnl
+      if (eq > peak) peak = eq
+      const dd = peak > 0 ? ((peak - eq) / peak) * 100 : 0
+      if (dd > maxDDPct) maxDDPct = dd
+      if (t.pnl > 0) { wins++; grossProfit += t.pnl }
+      else { losses++; grossLoss += -t.pnl }
+    }
+    const totalPnl = eq - startCap
+    const total = wins + losses
+    return {
+      totalPnl,
+      returnPct: (totalPnl / startCap) * 100,
+      maxDD: maxDDPct,
+      totalTrades: total,
+      winRate: total > 0 ? (wins / total) * 100 : 0,
+      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : 0,
+      startCapital: startCap,
+    }
+  }, [trades, stats?.startCapital])
+
   return (
     <div className="stax-page">
       {/* Header */}
       <div className="bt-header">
-        <div className="bt-eyebrow">SATOSHI STACKER · 5-ASSET BASKET</div>
+        <div className="bt-eyebrow">SWINGMATE v3 SUPER STACK · 14-ASSET BASKET</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da estratégia sistemática multi-ativo em BTC + ETH + SOL + XRP + SUI. <strong>Os números abaixo refletem o tier selecionado em uma conta inicial de $10.000.</strong> Seu PnL ao vivo escala proporcionalmente ao seu saldo e tier.</>
-            : <>Verified backtest of our multi-asset systematic strategy across BTC + ETH + SOL + XRP + SUI. <strong>Numbers shown below reflect the tier selected above on a $10,000 starting account.</strong> Your live PnL scales proportionally to your actual balance and chosen tier.</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (2×/3×/5×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE (14 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (2×/3×/5×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -147,21 +210,28 @@ export function BacktestingContent() {
         </div>
       </div>
 
-      {/* Top metrics */}
+      {/* Top metrics — derived from the normalized trades array (see
+          derivedStats above). Falls back to stats only for the start-capital
+          constant and when trades haven't loaded yet. */}
       <div className="bt-metrics-row">
         <MetricCard label={isPt ? 'P&L Líquido Total' : 'Total Net P&L'}
-          value={stats?.finalCapital ? `+$${(stats.finalCapital - (stats.startCapital || 10000)).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
-          sub={stats?.returnPct ? `${stats.returnPct.toFixed(2)}%` : ''} positive />
-        <MetricCard label={isPt ? 'Drawdown Máximo' : 'Max Drawdown'} value={stats?.maxDD ? `${stats.maxDD.toFixed(2)}%` : '—'} negative />
-        <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'} value={stats?.totalTrades?.toLocaleString() || '—'} />
-        <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'} value={stats?.winRate ? `${stats.winRate.toFixed(2)}%` : '—'} positive />
-        <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'} value={stats?.profitFactor ? stats.profitFactor.toFixed(2) : '—'} />
+          value={derivedStats ? `${derivedStats.totalPnl >= 0 ? '+' : '-'}$${Math.abs(derivedStats.totalPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+          sub={derivedStats ? `${derivedStats.returnPct.toFixed(2)}%` : ''}
+          positive={!derivedStats || derivedStats.totalPnl >= 0} />
+        <MetricCard label={isPt ? 'Drawdown Máximo' : 'Max Drawdown'}
+          value={derivedStats ? `${derivedStats.maxDD.toFixed(2)}%` : '—'} negative />
+        <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'}
+          value={derivedStats ? derivedStats.totalTrades.toLocaleString() : '—'} />
+        <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'}
+          value={derivedStats ? `${derivedStats.winRate.toFixed(2)}%` : '—'} positive />
+        <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'}
+          value={derivedStats ? derivedStats.profitFactor.toFixed(2) : '—'} />
       </div>
 
       {/* Tier picker */}
       <div className="bt-tier-row">
         <div className="bt-tier-pills">
-          {(['conservative', 'bold', 'aggressive'] as Tier[]).map(tk => (
+          {(['conservative', 'moderate', 'aggressive'] as Tier[]).map(tk => (
             <button
               key={tk}
               type="button"
@@ -174,8 +244,8 @@ export function BacktestingContent() {
         </div>
         <div className="bt-tier-meta">
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
-          {' '}{TIER_LABELS[tier].notional} {isPt ? 'nocional por trade' : 'notional / trade'} ·
-          {' '}{isPt ? 'Cesta de 5 ativos' : '5-asset basket'} ·
+          {' '}{TIER_LABELS[tier].mult} ·
+          {' '}{isPt ? 'Cesta de 14 ativos' : '14-asset basket'} ·
           {' '}{trades.length > 0 ? `${(((trades[trades.length - 1].exitTs - trades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
         </div>
       </div>
@@ -201,7 +271,7 @@ export function BacktestingContent() {
       {view === 'metrics' ? (
         <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} />
       ) : (
-        <TradesTable trades={trades} loading={loading} isPt={isPt} />
+        <TradesTable trades={allTrades} loading={loading} isPt={isPt} />
       )}
     </div>
   )
@@ -235,7 +305,7 @@ function MetricsView({ stats, trades, loading, tier, isPt }: {
         <RunUpsAndDrawdowns trades={trades} isPt={isPt} />
         <RiskAdjusted trades={trades} stats={stats} isPt={isPt} />
       </div>
-      <MonthlyReturns trades={trades} isPt={isPt} />
+      <PeriodReturns trades={trades} isPt={isPt} />
     </>
   )
 }
@@ -892,131 +962,216 @@ function RiskAdjusted({ trades, stats, isPt }: { trades: PortfolioTrade[]; stats
   )
 }
 
-// ─── Monthly Returns heatmap ────────────────────────────────────────────────
+// ─── ISO week helper ────────────────────────────────────────────────────────
+// Returns { isoYear, isoWeek } per ISO-8601 week-numbering rules. Week 1 is
+// the week containing the year's first Thursday; week dates can spill back
+// into the prior calendar year (or forward to the next).
+function isoWeek(date: Date): { isoYear: number; isoWeek: number } {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  return { isoYear: d.getUTCFullYear(), isoWeek: week }
+}
 
-function MonthlyReturns({ trades, isPt }: { trades: PortfolioTrade[]; isPt: boolean }) {
-  const { years, byMonth, totals } = useMemo(() => {
-    // Returns expressed as % of INITIAL capital ($10K — matches the daemon's
-    // PORTFOLIO_INITIAL_CAPITAL). Fixed denominator means each month's number
-    // is "$ gained that month / $10K starting" — comparable across months and
-    // years without the compounding distortion. Year total = sum of monthly =
-    // year_pnl / $10K (exact, no approximation needed).
-    const INITIAL_CAPITAL = 10000
-    let monthPnl = 0
-    let lastK = ''
-    const monthsByYear: Record<number, Record<number, number>> = {}
+// ─── Monthly + Weekly Returns heatmap ───────────────────────────────────────
+// Tabs: Monthly (12-row × N-year grid, all-time) | Weekly (52/53-row column
+// for one selected year). Same per-trade source data, same cell shading.
+
+function PeriodReturns({ trades, isPt }: { trades: PortfolioTrade[]; isPt: boolean }) {
+  const [mode, setMode] = useState<'monthly' | 'weekly'>('monthly')
+
+  // Aggregate once — used by both views. INITIAL_CAPITAL matches the daemon's
+  // PORTFOLIO_INITIAL_CAPITAL ($10K). Fixed denominator → each cell is
+  // "$ gained that period / $10K" so months/weeks/years are directly
+  // comparable without compounding distortion.
+  const { byMonth, byWeek, monthTotals, weekTotals, monthYears, weekYears } = useMemo(() => {
+    const INITIAL = 10000
+    const byMonth: Record<number, Record<number, number>> = {}
+    const byWeek: Record<number, Record<number, number>> = {}
+    const monthTotals: Record<number, number> = {}
+    const weekTotals: Record<number, number> = {}
+
     for (const t of trades) {
+      // Skip eod markers — those represent currently-open positions whose
+      // pnl is a transient mark-to-market against the strategy's compounded
+      // notional (can be hundreds of millions in the backtest's view). They
+      // distort monthly historical returns. Once the position closes the
+      // trade reappears with a real exit reason (sl/tp/trail_tp/...).
+      const r = (t as any).reason
+      if (r === 'eod' || r === 'eod_pyr' || r === 'eod_pyr50' || r === 'scalp_eod') continue
       const d = new Date(t.exitTs)
-      const y = d.getFullYear()
-      const mo = d.getMonth()
-      const k = `${y}-${mo}`
-      if (k !== lastK) {
-        if (lastK) {
-          const [prevY, prevM] = lastK.split('-').map(Number)
-          const ret = (monthPnl / INITIAL_CAPITAL) * 100
-          if (!monthsByYear[prevY]) monthsByYear[prevY] = {}
-          monthsByYear[prevY][prevM] = ret
-        }
-        monthPnl = 0
-        lastK = k
-      }
-      monthPnl += t.pnl
+      // Month bucket — uses calendar year + month
+      const cy = d.getUTCFullYear()
+      const cm = d.getUTCMonth()
+      const monthRet = (t.pnl / INITIAL) * 100
+      if (!byMonth[cy]) byMonth[cy] = {}
+      byMonth[cy][cm] = (byMonth[cy][cm] || 0) + monthRet
+      monthTotals[cy] = (monthTotals[cy] || 0) + monthRet
+      // Week bucket — uses ISO year + ISO week (year boundary may differ)
+      const { isoYear, isoWeek: wk } = isoWeek(d)
+      const weekRet = (t.pnl / INITIAL) * 100
+      if (!byWeek[isoYear]) byWeek[isoYear] = {}
+      byWeek[isoYear][wk] = (byWeek[isoYear][wk] || 0) + weekRet
+      weekTotals[isoYear] = (weekTotals[isoYear] || 0) + weekRet
     }
-    if (lastK) {
-      const [prevY, prevM] = lastK.split('-').map(Number)
-      const ret = (monthPnl / INITIAL_CAPITAL) * 100
-      if (!monthsByYear[prevY]) monthsByYear[prevY] = {}
-      monthsByYear[prevY][prevM] = ret
-    }
-    const years = Object.keys(monthsByYear).map(Number).sort()
-    const totals: Record<number, number> = {}
-    for (const y of years) {
-      totals[y] = Object.values(monthsByYear[y]).reduce((s, v) => s + v, 0)
-    }
-    return { years, byMonth: monthsByYear, totals }
+
+    const monthYears = Object.keys(byMonth).map(Number).sort()
+    const weekYears = Object.keys(byWeek).map(Number).sort()
+    return { byMonth, byWeek, monthTotals, weekTotals, monthYears, weekYears }
   }, [trades])
-
-  const months = isPt
-    ? ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
-    : ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-
-  // Returns the variant class + the --intensity CSS var. The blob colour
-  // and glass surface live in stax-design.css (.bt-monthly-cell + variants).
-  // Stepped buckets (not a smooth gradient) so similar months share a shade
-  // and the eye reads the table by tier, not by tiny tonal nudges:
-  //   0–10%  → base    50–70% → step 3
-  //   10–30% → step 1  70–90% → step 4
-  //   30–50% → step 2  90–110% → step 5
-  //                    110%+   → max
-  function cellProps(v: number | undefined): { className: string; style?: React.CSSProperties } {
-    if (v === undefined) return { className: 'bt-monthly-cell bt-monthly-cell-empty' }
-    const a = Math.abs(v)
-    const bucket =
-      a < 10 ? 0 :
-      a < 30 ? 1 :
-      a < 50 ? 2 :
-      a < 70 ? 3 :
-      a < 90 ? 4 :
-      a < 110 ? 5 : 6
-    const intensity = bucket / 6
-    const variant = v >= 0 ? 'bt-monthly-cell-win' : 'bt-monthly-cell-loss'
-    return {
-      className: `bt-monthly-cell ${variant}`,
-      style: { ['--intensity' as string]: intensity.toFixed(3) } as React.CSSProperties,
-    }
-  }
 
   return (
     <div className="card card-pad">
-      <div className="bt-card-head">
-        <div className="bt-card-title"><span className="bt-card-bar" /> {isPt ? 'RETORNOS MENSAIS' : 'MONTHLY RETURNS'}</div>
+      <div className="bt-card-head" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div className="bt-card-title"><span className="bt-card-bar" /> {isPt ? 'RETORNOS' : 'RETURNS'}</div>
+        <div style={{ display: 'inline-flex', gap: 6, marginLeft: 'auto' }}>
+          <button
+            type="button"
+            onClick={() => setMode('monthly')}
+            className={'bt-tier-pill' + (mode === 'monthly' ? ' active' : '')}
+          >
+            {isPt ? 'Mensal' : 'Monthly'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('weekly')}
+            className={'bt-tier-pill' + (mode === 'weekly' ? ' active' : '')}
+          >
+            {isPt ? 'Semanal' : 'Weekly'}
+          </button>
+        </div>
       </div>
-      <div className="table-scroll">
-        <table className="bt-monthly">
-          <thead>
-            <tr>
-              <th></th>
-              {years.map(y => <th key={y} style={{ textAlign: 'center' }}>{y}</th>)}
-              <th style={{ textAlign: 'center' }}>TOTAL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {months.map((mo, mIdx) => (
-              <tr key={mo}>
-                <td className="bt-monthly-label">{mo}</td>
-                {years.map(y => {
-                  const v = byMonth[y]?.[mIdx]
-                  const cp = cellProps(v)
-                  return (
-                    <td key={y} className={cp.className} style={cp.style}>
-                      {v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—'}
-                    </td>
-                  )
-                })}
-                <td>—</td>
-              </tr>
-            ))}
-            <tr style={{ borderTop: '2px solid var(--line)' }}>
-              <td className="bt-monthly-label" style={{ fontWeight: 700 }}>TOTAL</td>
-              {years.map(y => {
-                const v = totals[y]
-                const cp = cellProps(v)
-                return (
-                  <td key={y} className={cp.className} style={{ ...cp.style, fontWeight: 700 }}>
-                    {v >= 0 ? '+' : ''}{v.toFixed(1)}%
-                  </td>
-                )
-              })}
-              <td className="num pos-text" style={{ textAlign: 'center', fontWeight: 700 }}>
-                +{years.reduce((s, y) => s + totals[y], 0).toFixed(1)}%
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      {mode === 'monthly'
+        ? <MonthlyTable byMonth={byMonth} totals={monthTotals} years={monthYears} isPt={isPt} />
+        : <WeeklyTable byWeek={byWeek} totals={weekTotals} years={weekYears} isPt={isPt} />}
     </div>
   )
 }
+
+// Shared cell shading — stepped buckets so similar cells share a shade.
+function cellProps(v: number | undefined): { className: string; style?: React.CSSProperties } {
+  if (v === undefined) return { className: 'bt-monthly-cell bt-monthly-cell-empty' }
+  const a = Math.abs(v)
+  const bucket = a < 10 ? 0 : a < 30 ? 1 : a < 50 ? 2 : a < 70 ? 3 : a < 90 ? 4 : a < 110 ? 5 : 6
+  const intensity = bucket / 6
+  const variant = v >= 0 ? 'bt-monthly-cell-win' : 'bt-monthly-cell-loss'
+  return {
+    className: `bt-monthly-cell ${variant}`,
+    style: { ['--intensity' as string]: intensity.toFixed(3) } as React.CSSProperties,
+  }
+}
+
+function MonthlyTable({ byMonth, totals, years, isPt }: { byMonth: Record<number, Record<number, number>>; totals: Record<number, number>; years: number[]; isPt: boolean }) {
+  const months = isPt
+    ? ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+    : ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+  return (
+    <div className="table-scroll">
+      <table className="bt-monthly">
+        <thead>
+          <tr>
+            <th></th>
+            {years.map(y => <th key={y} style={{ textAlign: 'center' }}>{y}</th>)}
+            <th style={{ textAlign: 'center' }}>TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {months.map((mo, mIdx) => (
+            <tr key={mo}>
+              <td className="bt-monthly-label">{mo}</td>
+              {years.map(y => {
+                const v = byMonth[y]?.[mIdx]
+                const cp = cellProps(v)
+                return (
+                  <td key={y} className={cp.className} style={cp.style}>
+                    {v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—'}
+                  </td>
+                )
+              })}
+              <td>—</td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: '2px solid var(--line)' }}>
+            <td className="bt-monthly-label" style={{ fontWeight: 700 }}>TOTAL</td>
+            {years.map(y => {
+              const v = totals[y]
+              const cp = cellProps(v)
+              return (
+                <td key={y} className={cp.className} style={{ ...cp.style, fontWeight: 700 }}>
+                  {v >= 0 ? '+' : ''}{v.toFixed(1)}%
+                </td>
+              )
+            })}
+            <td className="num pos-text" style={{ textAlign: 'center', fontWeight: 700 }}>
+              +{years.reduce((s, y) => s + totals[y], 0).toFixed(1)}%
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function WeeklyTable({ byWeek, totals, years, isPt }: { byWeek: Record<number, Record<number, number>>; totals: Record<number, number>; years: number[]; isPt: boolean }) {
+  // Mirror the Monthly grid: rows = weeks (W01..W53), cols = years.
+  // Render only the weeks that actually have data across any of the years so
+  // partial-history years don't leave trailing empty bands.
+  const weekSet = new Set<number>()
+  for (const y of years) {
+    const yd = byWeek[y] || {}
+    for (const w of Object.keys(yd)) weekSet.add(Number(w))
+  }
+  const weeks = Array.from(weekSet).sort((a, b) => a - b)
+
+  return (
+    <div className="table-scroll">
+      <table className="bt-monthly">
+        <thead>
+          <tr>
+            <th></th>
+            {years.map(y => <th key={y} style={{ textAlign: 'center' }}>{y}</th>)}
+            <th style={{ textAlign: 'center' }}>TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {weeks.map(w => (
+            <tr key={w}>
+              <td className="bt-monthly-label">W{String(w).padStart(2, '0')}</td>
+              {years.map(y => {
+                const v = byWeek[y]?.[w]
+                const cp = cellProps(v)
+                return (
+                  <td key={y} className={cp.className} style={cp.style}>
+                    {v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—'}
+                  </td>
+                )
+              })}
+              <td>—</td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: '2px solid var(--line)' }}>
+            <td className="bt-monthly-label" style={{ fontWeight: 700 }}>{isPt ? 'TOTAL' : 'TOTAL'}</td>
+            {years.map(y => {
+              const v = totals[y]
+              const cp = cellProps(v)
+              return (
+                <td key={y} className={cp.className} style={{ ...cp.style, fontWeight: 700 }}>
+                  {v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—'}
+                </td>
+              )
+            })}
+            <td className="num pos-text" style={{ textAlign: 'center', fontWeight: 700 }}>
+              +{years.reduce((s, y) => s + (totals[y] || 0), 0).toFixed(1)}%
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 
 // ─── Top metric card ────────────────────────────────────────────────────────
 
@@ -1055,10 +1210,10 @@ function ListIcon() {
 
 // ─── Trades table (List of Trades view) ─────────────────────────────────────
 
-type CoinFilter = 'ALL' | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI'
+type CoinFilter = 'ALL' | 'BTC' | 'ETH' | 'SOL' | 'BNB' | 'XRP' | 'DOGE' | 'LINK' | 'SUI' | 'AVAX' | 'ADA' | 'TRX' | 'ZEC' | 'TON' | 'HYPE'
 type SideFilter = 'ALL' | 'LONG' | 'SHORT'
 
-const COIN_FILTERS: CoinFilter[] = ['ALL', 'BTC', 'ETH', 'SOL', 'XRP', 'SUI']
+const COIN_FILTERS: CoinFilter[] = ['ALL', 'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'LINK', 'SUI', 'AVAX', 'ADA', 'TRX', 'ZEC', 'TON', 'HYPE']
 const SIDE_FILTERS: SideFilter[] = ['ALL', 'LONG', 'SHORT']
 
 function fmtTradeTs(ms: number): string {
@@ -1086,6 +1241,18 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
   const [side, setSide] = useState<SideFilter>('ALL')
   const PAGE = 50
 
+  // Live prices for OPEN trades. Bitget WS singleton; tickers tick whenever
+  // the WS sends a frame, which re-renders the table and recomputes
+  // (currentPrice − entryPrice)/entryPrice for any open row.
+  const tickers = usePublicTickers()
+  const priceBySymbol = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const t of tickers) {
+      if (t.price > 0) m.set(t.symbol, t.price)
+    }
+    return m
+  }, [tickers])
+
   const filtered = useMemo(() => {
     return trades.filter(tr => {
       if (coin !== 'ALL' && !(tr.symbol || '').startsWith(coin)) return false
@@ -1098,7 +1265,18 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
   if (loading) return <div className="card card-pad">Loading…</div>
   if (!trades.length) return <div className="card card-pad">No trades.</div>
 
-  const reversed = [...filtered].reverse()
+  // Sort: OPEN trades first (most-recent entry on top), then CLOSED trades
+  // (newest exit on top). Lets users see live exposure at the top.
+  const sorted = [...filtered].sort((a, b) => {
+    const aOpen = isOpenTrade(a) ? 1 : 0
+    const bOpen = isOpenTrade(b) ? 1 : 0
+    if (aOpen !== bOpen) return bOpen - aOpen   // OPEN before CLOSED
+    // Within each group: newest first
+    const aKey = aOpen ? a.entryTs : a.exitTs
+    const bKey = bOpen ? b.entryTs : b.exitTs
+    return bKey - aKey
+  })
+  const reversed = sorted  // alias preserved for downstream slice naming
   const totalPages = Math.max(1, Math.ceil(reversed.length / PAGE))
   const cur = Math.min(page, totalPages - 1)
   const start = cur * PAGE
@@ -1181,7 +1359,29 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
               const open = isOpenTrade(tr)
               const rowClass = open ? 'bt-trade-open' : (tr.pnl > 0 ? 'bt-trade-win' : 'bt-trade-loss')
               const baseSym = (tr.symbol || '').replace('USDT', '')
-              const units = tr.entryPx > 0 ? tr.notional / tr.entryPx : 0
+              // Open (EOD) rows arrive with COMPOUND-equity notional baked in
+              // — e.g. SUI's eod notional after 6yr of compounding is $74M
+              // and PnL is then mark-to-that-equity, producing six-figure
+              // numbers that misrepresent the strategy's per-trade sizing.
+              // The strategy's actual per-trade sizing is fixed: $10k base
+              // × tier multiplier (0.5 / 0.75 / 1.0). Override the display
+              // for open rows so the list reads consistently with closed
+              // rows. PnL is recomputed using the same returnPct so the
+              // percentage stays accurate (it's a price-movement %).
+              const tierMult = tr.tierMult || 0.5
+              const dispNotional = open ? 10000 * tierMult : tr.notional
+              const dispUnits = tr.entryPx > 0 ? dispNotional / tr.entryPx : 0
+              // For OPEN trades, recompute return % and PnL against the live
+              // ticker price. The published returnPct in the JSON is frozen at
+              // whichever bar the producer wrote it from; the live rate ticks
+              // whenever the WS frame arrives.
+              const livePx = open ? priceBySymbol.get(tr.symbol) : undefined
+              const liveReturnPct = (open && livePx && tr.entryPx > 0)
+                ? ((livePx - tr.entryPx) / tr.entryPx) * 100 * (tr.dir || 1)
+                : null
+              const dispReturnPct = liveReturnPct ?? (tr.returnPct ?? 0)
+              const dispPnl = open ? dispNotional * dispReturnPct / 100 : tr.pnl
+              const isLive = open && liveReturnPct !== null
               return (
                 <tr key={start + i} className={rowClass}>
                   <td className="num" style={{ color: 'var(--muted)' }}>{idx}</td>
@@ -1197,8 +1397,8 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
                   </td>
                   <td><span className={'badge ' + (tr.dir > 0 ? 'badge-long' : 'badge-short')}>{tr.dir > 0 ? 'LONG' : 'SHORT'}</span></td>
                   <td className="num bt-price-cell">
-                    ${tr.notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    <span className="sub">{fmtUnits(units, baseSym)}</span>
+                    ${dispNotional.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    <span className="sub">{fmtUnits(dispUnits, baseSym)}</span>
                   </td>
                   <td className="num bt-price-cell">
                     ${tr.entryPx.toFixed(tr.entryPx < 1 ? 4 : 2)}
@@ -1206,7 +1406,12 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
                   </td>
                   <td className="num bt-price-cell">
                     {open ? (
-                      <span className="bt-open-label"><span className="dot" />OPEN</span>
+                      <>
+                        <span className="bt-open-label"><span className="dot" />OPEN</span>
+                        {isLive && livePx ? (
+                          <span className="ts">${livePx.toFixed(livePx < 1 ? 4 : 2)} live</span>
+                        ) : null}
+                      </>
                     ) : (
                       <>
                         ${tr.exitPx.toFixed(tr.exitPx < 1 ? 4 : 2)}
@@ -1214,8 +1419,8 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
                       </>
                     )}
                   </td>
-                  <td className={'num ' + (tr.pnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(tr.pnl)}</td>
-                  <td className={'num ' + (tr.pnl > 0 ? 'pos-text' : 'neg-text')}>{(tr.returnPct ?? 0).toFixed(2)}%</td>
+                  <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(dispPnl)}</td>
+                  <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{dispReturnPct.toFixed(2)}%</td>
                   <td className="num" style={{ color: 'var(--muted)' }}>{tr.displayReason || tr.reason}</td>
                 </tr>
               )

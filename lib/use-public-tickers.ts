@@ -2,18 +2,33 @@
 
 import { useEffect, useState } from 'react'
 
-const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT'] as const
+// Full Phase H 14-asset basket. BTC/ETH/SOL/XRP/SUI/DOGE/LINK are the original
+// V1 set used by TickerBar + dashboard cards; ADA/AVAX/BNB/HYPE/TON/TRX/ZEC
+// were added so the backtesting page can recompute live PnL on open trades.
+// Symbols that don't trade on Bitget USDT-FUTURES will silently stay at price=0
+// (rest poll returns null; ws subscribe is a no-op).
+const V1_SYMBOLS = [
+  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT',
+  'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'TONUSDT', 'TRXUSDT', 'ZECUSDT',
+] as const
 type V1Symbol = typeof V1_SYMBOLS[number]
+
+export type PublicTickerShort =
+  | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
 
 export type PublicTicker = {
   symbol: V1Symbol
-  short: 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI'
+  short: PublicTickerShort
   price: number
   change: number   // percent (e.g. 2.18 means +2.18%)
 }
 
 const SHORT: Record<V1Symbol, PublicTicker['short']> = {
-  BTCUSDT: 'BTC', ETHUSDT: 'ETH', SOLUSDT: 'SOL', XRPUSDT: 'XRP', SUIUSDT: 'SUI',
+  BTCUSDT:  'BTC',  ETHUSDT:  'ETH',  SOLUSDT: 'SOL',  XRPUSDT: 'XRP',  SUIUSDT: 'SUI',
+  DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
+  ADAUSDT:  'ADA',  AVAXUSDT: 'AVAX', BNBUSDT: 'BNB',  HYPEUSDT: 'HYPE',
+  TONUSDT:  'TON',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
 }
 
 // ─── Singleton WebSocket store ──────────────────────────────────────────────

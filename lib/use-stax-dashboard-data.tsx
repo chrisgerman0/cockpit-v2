@@ -8,28 +8,30 @@ import type { StaxDashboardData, Position, Trade, CoinSym, TickerAsset, StatCard
 type _CoinSymInternal = CoinSym
 import { authedFetch, browserClient } from './api'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
-import { fetchPortfolioTrades, type PortfolioTrade, type Tier } from './use-portfolio-trades'
+import { fetchPortfolioTrades, normalizeTier, type PortfolioTrade, type Tier } from './use-portfolio-trades'
 
-const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT'] as const
+const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT'] as const
 
-const TIER_LABEL: Record<string, string> = {
+// New schema (2026-05-10): 0.5× / 0.75× / 1.0×. Legacy 'bold' DB rows are
+// normalized to 'aggressive' (same 1.0× sizing).
+const TIER_LABEL: Record<Tier, string> = {
   conservative: 'Conservative tier · 0.5× of balance',
-  bold:         'Bold tier · 1.0× of balance',
-  aggressive:   'Aggressive tier · 1.5× of balance',
+  moderate:     'Moderate tier · 0.75× of balance',
+  aggressive:   'Aggressive tier · 1.0× of balance',
 }
 
-const TIER_LEV_CAP: Record<string, number> = {
-  conservative: 4, bold: 10, aggressive: 20,
+const TIER_LEV_CAP: Record<Tier, number> = {
+  conservative: 4, moderate: 7, aggressive: 10,
 }
 
 // Account-wide leverage gauge upper bound = theoretical peak leverage when
-// all 5 legs are open AND each is pyramided (1.5× notional). Picked per
+// all 7 legs are open AND each is pyramided (1.5× notional). Picked per
 // tier so the gauge needle has room to grow but doesn't look empty.
-//   Conservative 0.5× × 5 × 1.5 = 3.75 → cap 4
-//   Bold         1.0× × 5 × 1.5 = 7.5  → cap 8
-//   Aggressive   1.5× × 5 × 1.5 = 11.25 → cap 12
-const TIER_GAUGE_MAX: Record<string, number> = {
-  conservative: 4, bold: 8, aggressive: 12,
+//   Conservative 0.5×  × 7 × 1.5 = 5.25 → cap 6
+//   Moderate     0.75× × 7 × 1.5 = 7.9  → cap 8
+//   Aggressive   1.0×  × 7 × 1.5 = 10.5 → cap 12
+const TIER_GAUGE_MAX: Record<Tier, number> = {
+  conservative: 6, moderate: 8, aggressive: 12,
 }
 
 type RawTrade = {
@@ -54,7 +56,7 @@ type BotConfigResp = {
 
 function symToCoin(sym: string): CoinSym {
   const s = sym.replace('USDT', '') as CoinSym
-  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI'] as const).includes(s) ? s : 'BTC'
+  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK'] as const).includes(s) ? s : 'BTC'
 }
 
 function fmtUsdSign(v: number): string {
@@ -82,12 +84,14 @@ function fmtTime(iso: string | null): string {
   const d = new Date(iso)
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
-// Long-form timestamp shown stacked under entry/exit prices in the Open
-// Positions / Recent Trades tables. Format: "6 May 2026, 13:14".
+// Compact timestamp shown stacked under entry/exit prices in the Open
+// Positions / Recent Trades tables. Year is intentionally omitted so the
+// table fits its column without horizontal scroll on standard breakpoints.
+// Format: "6 May, 13:14".
 function fmtTradeTs(ms: number | null | undefined): string {
   if (!ms || !Number.isFinite(ms)) return ''
   const d = new Date(ms)
-  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
   const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
   return `${date}, ${time}`
 }
@@ -354,8 +358,8 @@ function buildStats(opts: {
 export type StaxLoadState =
   | { status: 'loading' }
   | { status: 'unauthenticated' }
-  | { status: 'no-keys' }
-  | { status: 'no-bot' }
+  | { status: 'no-keys'; data: StaxDashboardData }
+  | { status: 'no-bot'; data: StaxDashboardData }
   | { status: 'ready'; data: StaxDashboardData }
   | { status: 'error'; message: string }
 
@@ -388,13 +392,22 @@ export function useStaxDashboardData(): StaxLoadState {
         ])
         if (cancelled) return
 
-        if (balanceRes && 'error' in balanceRes && /no api keys/i.test(balanceRes.error || '')) {
-          setState({ status: 'no-keys' }); return
-        }
+        // Detect the user's setup state but DON'T short-circuit. The dashboard
+        // pre-activation should still render a "strategy preview" so the user
+        // can see the strategy's backtest curve, win rate, recent trades, etc.
+        // before they connect keys. The OnboardingBanner above the dashboard
+        // tells them what to do next. Without this, brand-new users saw a
+        // bare CenterMessage which made the site feel empty and untrustworthy.
+        const noKeys = !!(balanceRes && 'error' in balanceRes && /no api keys/i.test(balanceRes.error || ''))
+        const noBot = !botRes?.activated || !botRes?.config
         const cfg = botRes?.config
-        if (!botRes?.activated || !cfg) { setState({ status: 'no-bot' }); return }
 
-        const tier = ((cfg.tier || cfg.preset || 'conservative').toLowerCase()) as Tier
+        // Default tier for the preview when the user hasn't picked one yet.
+        // Aggressive shows the most attractive backtest, but we use conservative
+        // here so the preview matches what a default new-account experience
+        // would actually be (and the user can preview other tiers from the
+        // Backtesting page).
+        const tier = cfg ? normalizeTier(cfg.tier || cfg.preset) : 'conservative'
         const tierLabel = TIER_LABEL[tier] ?? TIER_LABEL.conservative
 
         const balance = balanceRes && !('error' in balanceRes && balanceRes.error) ? balanceRes : null
@@ -523,15 +536,18 @@ export function useStaxDashboardData(): StaxLoadState {
           })
         }
 
-        // Recent Trades widget — last 5 CLOSED USER trades (Bitget-sourced
-        // via /api/trades-live). Switched from backtest portfolio so the
-        // dashboard reflects actual money, not the strategy's track record.
+        // Recent Trades widget — prefer the user's own closed trades. When
+        // the user has none (brand-new account, preview state, or just
+        // activated and hasn't traded yet) fall back to the strategy's
+        // recent backtest trades so the dashboard never shows an empty
+        // table next to a populated equity curve. The widget badges
+        // strategy-sourced rows so the UI can flag the difference.
         const closedSorted = [...userClosedTrades].sort((a, b) => {
           const at = a.closed_at ? new Date(a.closed_at).getTime() : 0
           const bt = b.closed_at ? new Date(b.closed_at).getTime() : 0
           return bt - at  // newest first
         })
-        const trades: Trade[] = closedSorted.slice(0, 5).map(t => {
+        const trades: Trade[] = closedSorted.length > 0 ? closedSorted.slice(0, 5).map(t => {
           const entry = Number(t.entry_price) || 0
           const exit = Number(t.exit_price) || 0
           const sizeUsd = Number(t.size_usd) || 0
@@ -555,14 +571,43 @@ export function useStaxDashboardData(): StaxLoadState {
             entryTs: fmtTradeTs(entryTsMs),
             exitTs: fmtTradeTs(exitTsMs),
           }
-        })
+        }) : [...portfolio]
+          .filter(p => p.reason !== 'eod' && p.reason !== 'eod_pyr' && p.reason !== 'eod_pyr50' && p.reason !== 'scalp_eod')
+          .sort((a, b) => b.exitTs - a.exitTs)
+          .slice(0, 5)
+          .map(p => {
+            const sizeUnits = p.entryPx > 0 ? p.notional / p.entryPx : 0
+            return {
+              sym: symToCoin(p.symbol),
+              pair: p.symbol,
+              side: (p.dir === 1 ? 'LONG' : 'SHORT') as 'LONG' | 'SHORT',
+              size: fmtSize(sizeUnits),
+              entry: fmtPx(p.entryPx),
+              exit: fmtPx(p.exitPx),
+              pnl: fmtUsdSign(p.pnl),
+              pnlPct: fmtPctSign(p.returnPct),
+              pos: p.pnl >= 0,
+              time: fmtTime(new Date(p.exitTs).toISOString()),
+              open: false,
+              entryTs: fmtTradeTs(p.entryTs),
+              exitTs: fmtTradeTs(p.exitTs),
+              fromStrategy: true,
+            }
+          })
 
-        const tickerForUi: TickerAsset[] = tickers.map(t => ({
-          sym: t.short,
-          price: fmtPx(t.price),
-          delta: `${t.change >= 0 ? '+' : ''}${t.change.toFixed(2)}%`,
-          pos: t.change >= 0,
-        }))
+        // Ticker bar only shows the original V1 symbols (BTC/ETH/SOL/XRP/SUI/
+        // DOGE/LINK). The wider Phase H ticker singleton also carries ADA/AVAX/
+        // BNB/HYPE/TON/TRX/ZEC for the backtesting page's live OPEN-trade PnL;
+        // filter to the V1 set here so TickerAsset.sym (CoinSym) stays valid.
+        const V1_SHORTS: ReadonlyArray<TickerAsset['sym']> = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK']
+        const tickerForUi: TickerAsset[] = tickers
+          .filter(t => (V1_SHORTS as readonly string[]).includes(t.short))
+          .map(t => ({
+            sym: t.short as TickerAsset['sym'],
+            price: fmtPx(t.price),
+            delta: `${t.change >= 0 ? '+' : ''}${t.change.toFixed(2)}%`,
+            pos: t.change >= 0,
+          }))
 
         // Equity curve is now computed in the Hero component on each range
         // change — we just pass the raw trades + strategy base so it can
@@ -572,12 +617,21 @@ export function useStaxDashboardData(): StaxLoadState {
           ? `${portfolio.length.toLocaleString()} backtest trades · ${fmtTime(new Date(portfolio[0].entryTs).toISOString())} – ${fmtTime(new Date(portfolio[portfolio.length - 1].exitTs).toISOString())}`
           : 'No backtest data — daemon may be warming up'
 
-        // Win rate / streak — USER's actual trades. buildWinRate already takes
-        // RawTrade and counts only closed trades. streakFromUser builds dots
-        // from user closed + open positions with hover labels.
-        const wr20 = buildWinRate(userTrades, 20)
-        const wr50 = buildWinRate(userTrades, 50)
-        const streak = streakFromUser(userClosedTrades, openTrades)
+        // Win rate / streak — prefer USER trades; when the user has none
+        // (preview, brand-new active account, etc.) fall back to the strategy
+        // backtest so the dashboard reads as full. Strategy trades are
+        // pre-filtered for eod markers by fetchPortfolioTrades, so the
+        // counts here are real closed-trade counts.
+        const useStrategyForStats = userClosedTrades.length === 0
+        const wr20 = useStrategyForStats
+          ? winRateFromPortfolio(portfolio, 20)
+          : buildWinRate(userTrades, 20)
+        const wr50 = useStrategyForStats
+          ? winRateFromPortfolio(portfolio, 50)
+          : buildWinRate(userTrades, 50)
+        const streak = useStrategyForStats
+          ? streakFromPortfolio(portfolio)
+          : streakFromUser(userClosedTrades, openTrades)
 
         const stats = buildStats({
           unrealizedPnl,
@@ -595,6 +649,12 @@ export function useStaxDashboardData(): StaxLoadState {
           tierLabel,
           btcGoal,
           btcGoalTarget,
+          // "Preview" means the BALANCE shown is the strategy's notional base
+          // rather than a real exchange figure. Once API keys are connected,
+          // the balance is real even if the bot hasn't been activated yet —
+          // so we only flag preview on noKeys. The dashboard banner still
+          // tells the user to set up the bot via the 3-step strip.
+          isPreview: noKeys,
           // Raw portfolio + base — Hero simulates the curve per range.
           portfolioTrades: portfolio.map(t => ({ exitTs: t.exitTs, pnl: t.pnl })),
           strategyBase: startCapital,
@@ -614,7 +674,12 @@ export function useStaxDashboardData(): StaxLoadState {
           ticker: tickerForUi,
           systemsOnline: true,
         }
-        setState({ status: 'ready', data })
+        // status is still surfaced so the caller (DashboardLive) and the
+        // OnboardingBanner know whether this is a preview render. Data is
+        // always populated for these states now, so DashboardLive renders
+        // the full StaxDashboardContent in every case — banner sits on top.
+        const previewStatus: StaxLoadState['status'] = noKeys ? 'no-keys' : noBot ? 'no-bot' : 'ready'
+        setState({ status: previewStatus, data } as StaxLoadState)
       } catch (e: any) {
         if (cancelled) return
         setState({ status: 'error', message: e?.message || 'Failed to load dashboard' })

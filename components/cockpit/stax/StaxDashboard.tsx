@@ -17,6 +17,9 @@ import { usePublicTickers, useTickerStreamHealth, type PublicTicker } from '@/li
 import { browserClient } from '@/lib/supabase-browser'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { useT } from '@/lib/i18n'
+import { useWizardState } from '@/lib/use-wizard-state'
+import { OnboardingBanner } from './OnboardingBanner'
+import { OnboardingTourController } from './OnboardingTour'
 
 function fmtPrice(n: number): string {
   if (!Number.isFinite(n) || n === 0) return '$—'
@@ -25,8 +28,14 @@ function fmtPrice(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
 function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
-  return rows.map(r => ({
-    sym: r.short,
+  // The bottom TickerBar only shows the original V1 set (BTC/ETH/SOL/XRP/SUI/
+  // DOGE/LINK) — the wider Phase H ticker singleton also carries ADA/AVAX/BNB/
+  // HYPE/TON/TRX/ZEC for the backtesting page's live OPEN-trade PnL, which
+  // would widen this map past CoinSym. Filter to the V1 set here.
+  const v1: ReadonlyArray<CoinSym> = ['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK']
+  const isV1 = (s: PublicTicker['short']): s is CoinSym => (v1 as readonly string[]).includes(s)
+  return rows.filter(r => isV1(r.short)).map(r => ({
+    sym: r.short as CoinSym,
     price: fmtPrice(r.price),
     delta: `${r.change >= 0 ? '+' : ''}${r.change.toFixed(2)}%`,
     pos: r.change >= 0,
@@ -36,7 +45,7 @@ function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type TradeSide = 'LONG' | 'SHORT'
-export type CoinSym = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI'
+export type CoinSym = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
 
 export type Position = {
   pair: string
@@ -77,6 +86,10 @@ export type Trade = {
    *  under each price cell. Replaces the standalone Time column. */
   entryTs?: string
   exitTs?: string
+  /** Strategy backtest source (vs the user's real account). Used when the
+   *  user hasn't traded yet so we can show what the strategy is doing
+   *  rather than an empty Recent Trades table. */
+  fromStrategy?: boolean
 }
 
 export type StatCardSpec = {
@@ -99,9 +112,14 @@ export type StaxDashboardData = {
   btcPrice: number
   // Hero
   balanceUsd: number
-  tierLabel: string                  // "Bold tier · 1.0× of balance"
+  tierLabel: string                  // "Aggressive tier · 1.0× of balance"
   btcGoal: number                    // current BTC equivalent of equity
   btcGoalTarget?: number             // mission target in BTC (default 1)
+  /** True when the dashboard is rendering a strategy preview (user hasn't
+   *  connected keys or activated the bot yet). The Hero swaps in a
+   *  "BACKTEST PREVIEW" badge; once false it shows a faint Staxs watermark
+   *  instead. Other widgets can dim themselves off this flag too. */
+  isPreview?: boolean
   // Equity Curve — projected from user's balance through the strategy.
   // Simulator semantics: "if you'd put $balanceUsd in N months ago, where
   // would you be now?" Each strategy trade's pnl is scaled by
@@ -133,7 +151,7 @@ export type StaxDashboardData = {
 export const SAMPLE_STAX_DATA: StaxDashboardData = {
   btcPrice: 76318,
   balanceUsd: 10247.83,
-  tierLabel: 'Bold tier · 1.0× of balance',
+  tierLabel: 'Aggressive tier · 1.0× of balance',
   btcGoal: 0.0621,
   equityRangeLabel: "6M Performance (Nov 18, 2023 - May 18, 2024)",
   stats: [
@@ -232,7 +250,7 @@ function signOutAndRedirect() {
     void browserClient().auth.signOut()
   } catch {}
   // /login lives on staxs-landing (not v2). Use absolute path so we leave /v2.
-  window.location.href = '/login'
+  window.location.href = 'https://staxs.ai/login'
 }
 
 function StaxSidebar({ active, collapsed = false, onToggleCollapsed }: {
@@ -275,14 +293,14 @@ function StaxSidebar({ active, collapsed = false, onToggleCollapsed }: {
             Light mode logo: transparent gold-only S (no dark backing). */}
         <img
           className="brand-mark-dark"
-          src="/v2/brand/staxs-icon-full-color-2048px.png"
+          src="/brand/staxs-icon-full-color-2048px.png"
           alt="Staxs"
           width={30}
           height={30}
         />
         <img
           className="brand-mark-light"
-          src="/v2/brand/staxs-icon-gold-transparent-2048px.png"
+          src="/brand/staxs-icon-gold-transparent-2048px.png"
           alt="Staxs"
           width={30}
           height={30}
@@ -359,6 +377,125 @@ const SETTINGS_TABS = [
   { id: 'security',      labelEn: 'Security',         labelPt: 'Segurança' },
   { id: 'payout',        labelEn: 'Payout Settings',  labelPt: 'Pagamentos' },
 ] as const
+
+/**
+ * Auto-scrolling marquee for the topbar coin ticker. Items are rendered TWICE
+ * back-to-back so the rAF loop can wrap seamlessly when scrollLeft passes the
+ * halfway mark (visually identical content beyond it). User interaction —
+ * pointer-down for click-drag, native wheel/touch scroll, hover — pauses the
+ * auto-scroll until 2.5s of idle time. If everything fits without overflow
+ * the auto-scroll silently no-ops, so on wide screens it behaves like a
+ * static list.
+ */
+function ScrollingTicker({ items }: { items: TickerAsset[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const pausedUntilRef = useRef(0)
+  const dragRef = useRef<{ startX: number; startScroll: number; active: boolean }>({ startX: 0, startScroll: 0, active: false })
+  // Float accumulator. Browsers round Element.scrollLeft to an integer on
+  // read in many engines (Chrome included with some zoom levels / DPRs), so
+  // tiny per-frame deltas (≪1px) get truncated and the marquee freezes.
+  // We track sub-pixel position ourselves and write the rounded value to
+  // scrollLeft each frame.
+  const posRef = useRef(0)
+
+  // Render items twice for seamless wrap-around. Wrap point = scrollWidth / 2.
+  const doubled = useMemo(() => [...items, ...items], [items])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let raf = 0
+    let last = performance.now()
+    const SPEED_PX_PER_SEC = 9 // very slow, per spec
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000
+      last = now
+      const overflows = el.scrollWidth > el.clientWidth + 2
+      const paused = now < pausedUntilRef.current || dragRef.current.active
+      if (overflows && !paused) {
+        const half = el.scrollWidth / 2
+        // If the user dragged manually since our last write, sync our
+        // accumulator to where the DOM actually is so we don't snap them
+        // back to a stale position when auto-resumes.
+        if (Math.abs(el.scrollLeft - Math.round(posRef.current)) > 2) {
+          posRef.current = el.scrollLeft
+        }
+        posRef.current += SPEED_PX_PER_SEC * dt
+        if (posRef.current >= half) posRef.current -= half
+        el.scrollLeft = posRef.current
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [doubled.length])
+
+  const pauseFor = (ms: number) => {
+    pausedUntilRef.current = performance.now() + ms
+  }
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current
+    if (!el) return
+    dragRef.current = { startX: e.clientX, startScroll: el.scrollLeft, active: true }
+    el.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current
+    if (!el || !dragRef.current.active) return
+    const dx = e.clientX - dragRef.current.startX
+    let next = dragRef.current.startScroll - dx
+    const half = el.scrollWidth / 2
+    if (half > 0) {
+      // Wrap into [0, half) so dragging past either edge keeps scrolling.
+      next = ((next % half) + half) % half
+    }
+    el.scrollLeft = next
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current
+    dragRef.current.active = false
+    if (el) {
+      try { el.releasePointerCapture(e.pointerId) } catch {}
+    }
+    pauseFor(2500)
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="topbar-ticker"
+      onMouseEnter={() => pauseFor(60000)}
+      onMouseLeave={() => pauseFor(0)}
+      onWheel={() => pauseFor(2500)}
+      onTouchStart={() => pauseFor(60000)}
+      onTouchEnd={() => pauseFor(2500)}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      <div className="topbar-ticker-track">
+        {doubled.map((it, i) => {
+          const sparkData = genSpark((i % items.length) + 3, 18, it.pos ? 1 : -1)
+          return (
+            <div key={`${it.sym}-${i}`} className="tk-item" aria-hidden={i >= items.length}>
+              <span className="tk-sym">
+                <CoinDot sym={it.sym} size={16} />
+                {it.sym}
+              </span>
+              <span className="num" style={{ color: 'var(--text)' }}>{it.price}</span>
+              <span className={'num ' + (it.pos ? 'pos-text' : 'neg-text')} style={{ fontSize: 12 }}>{it.delta}</span>
+              <span className="tk-spark">
+                <Spark data={sparkData} color={it.pos ? 'var(--pos)' : 'var(--neg)'} w={42} h={16} />
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerItems?: TickerAsset[] }) {
   const { latencyMs, connected } = useTickerStreamHealth()
@@ -520,14 +657,14 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
       <div className="topbar-brand">
         <img
           className="brand-mark-dark"
-          src="/v2/brand/staxs-icon-full-color-2048px.png"
+          src="/brand/staxs-icon-full-color-2048px.png"
           alt="Staxs"
           width={26}
           height={26}
         />
         <img
           className="brand-mark-light"
-          src="/v2/brand/staxs-icon-gold-transparent-2048px.png"
+          src="/brand/staxs-icon-gold-transparent-2048px.png"
           alt="Staxs"
           width={26}
           height={26}
@@ -535,26 +672,15 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
         <span className="topbar-brand-name">staxs</span>
       </div>
       {/* Embedded ticker — fills the centre of the topbar on desktop. Drops
-          to display:none at ≤768px (the .topbar-btc-pill below takes over). */}
+          to display:none at ≤768px (the .topbar-btc-pill below takes over).
+          Auto-scrolls horizontally when content overflows; user can drag /
+          wheel-scroll manually, which pauses the auto-scroll until idle.
+          Live + latency badge sits OUTSIDE the scroll container so it stays
+          pinned to the right edge. */}
       {tickerItems.length > 0 && (
-        <div className="topbar-ticker">
-          {tickerItems.map((it, i) => {
-            const sparkData = genSpark(i + 3, 18, it.pos ? 1 : -1)
-            return (
-              <div key={it.sym} className="tk-item">
-                <span className="tk-sym">
-                  <CoinDot sym={it.sym} size={16} />
-                  {it.sym}
-                </span>
-                <span className="num" style={{ color: 'var(--text)' }}>{it.price}</span>
-                <span className={'num ' + (it.pos ? 'pos-text' : 'neg-text')} style={{ fontSize: 12 }}>{it.delta}</span>
-                <span className="tk-spark">
-                  <Spark data={sparkData} color={it.pos ? 'var(--pos)' : 'var(--neg)'} w={42} h={16} />
-                </span>
-              </div>
-            )
-          })}
-          <div className="tk-end">
+        <>
+          <ScrollingTicker items={tickerItems} />
+          <div className="tk-end topbar-tk-end">
             <span>
               {connected
                 ? <><span className="dot-live" /><span className="live">Live</span></>
@@ -569,7 +695,7 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
               <span className="num" style={{ fontSize: 12 }}>{connected ? `${latencyMs}ms` : '—'}</span>
             </span>
           </div>
-        </div>
+        </>
       )}
       <div className="topbar-spacer" />
       {/* BTC pill — mobile-only on desktop the top ticker carries all five
@@ -676,8 +802,12 @@ function StaxTopBar({ btcPrice, tickerItems = [] }: { btcPrice: number; tickerIt
         ) : null}
       </div>
       {/* Theme: single icon button showing the CURRENT mode. Sun = light,
-          Moon = dark. Click toggles. Matches v1 chrome. */}
+          Moon = dark. Click toggles. Matches v1 chrome. type="button"
+          prevents implicit form-submit behaviour some browsers default to
+          for a stray <button>; the .icon-btn class now includes
+          appearance:none so Safari can no longer strip the pill background. */}
       <button
+        type="button"
         className="icon-btn"
         aria-label={isPt ? (theme === 'light' ? 'Tema claro' : 'Tema escuro') : (theme === 'light' ? 'Light theme' : 'Dark theme')}
         onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -784,14 +914,14 @@ function StaxFooter() {
       <div className="stax-footer-brand">
         <img
           className="brand-mark-dark stax-footer-mark"
-          src="/v2/brand/staxs-icon-full-color-2048px.png"
+          src="/brand/staxs-icon-full-color-2048px.png"
           alt="Staxs"
           width={24}
           height={24}
         />
         <img
           className="brand-mark-light stax-footer-mark"
-          src="/v2/brand/staxs-icon-gold-transparent-2048px.png"
+          src="/brand/staxs-icon-gold-transparent-2048px.png"
           alt="Staxs"
           width={24}
           height={24}
@@ -891,7 +1021,28 @@ function Hero({ data }: { data: StaxDashboardData }) {
   return (
     <div className="row row-hero">
       {/* Balance + BTC Goal */}
-      <div className="card balance-card card-pad" style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className={'card balance-card card-pad' + (data.isPreview ? ' is-preview' : '')} data-tour="balance" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {/* Subtle Staxs icon watermark — only shown for connected users so it
+            doesn't muddy the "preview" badge. Sits in the empty space between
+            the tier pill and BTC goal. Pointer-events:none so clicks pass
+            through to the surrounding text. */}
+        {!data.isPreview && (
+          <img
+            src="/brand/staxs-icon-gold-transparent-2048px.png"
+            alt=""
+            aria-hidden="true"
+            className="balance-watermark"
+          />
+        )}
+        {/* Preview indicator — pill in the top-right corner of the card. The
+            watermark above and this pill are mutually exclusive: preview state
+            gets the pill, connected state gets the icon. */}
+        {data.isPreview && (
+          <div className="balance-preview-pill" title="The strategy's backtest is shown here. Connect your account to see your real balance.">
+            <span className="balance-preview-dot" />
+            BACKTEST PREVIEW
+          </div>
+        )}
         <div className="label">{t('card.accountBalance')}</div>
         <div className="hero-balance">${data.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         <span
@@ -901,7 +1052,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
           <Icons.Star size={13} className="star" /> {data.tierLabel}
         </span>
         <div style={{ flex: 1 }} />
-        <div className="btc-goal">
+        <div className="btc-goal" data-tour="mission">
           <div className="btc-row">
             <span className="label">{t('card.btcGoal')}</span>
             <span className="btc-amt num">{data.btcGoal.toFixed(4)} BTC</span>
@@ -924,7 +1075,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
       </div>
 
       {/* Equity Curve */}
-      <div className="card equity-card card-pad">
+      <div className="card equity-card card-pad" data-tour="equity-curve">
         <div className="equity-head">
           <div className="label">{t('card.equityCurve')}</div>
           <div className="seg">
@@ -948,6 +1099,16 @@ function Hero({ data }: { data: StaxDashboardData }) {
 
 // ─── StatsRow ───────────────────────────────────────────────────────────────
 
+// Map stat labels to data-tour ids so the OnboardingTour can spotlight
+// the right card. Labels come from use-stax-dashboard-data and stay in
+// English — translations don't affect the selector.
+const STAT_TOUR_ID: Record<string, string> = {
+  'Bot Status':     'bot-status',
+  'Unrealized PnL': 'unrealized-pnl',
+  'Realized PnL':   'realized-pnl',
+  'Total Return':   'total-return',
+}
+
 function StatsRow({ stats }: { stats: StatCardSpec[] }) {
   const t = useT()
   // Translate the sub which is sometimes templated (e.g. "9656 closed", "1 leg open")
@@ -963,8 +1124,9 @@ function StatsRow({ stats }: { stats: StatCardSpec[] }) {
     <div className="row row-stats">
       {stats.map((s, i) => {
         const Ico = s.icon
+        const tourId = STAT_TOUR_ID[s.label]
         return (
-          <div key={i} className="card stat-card">
+          <div key={i} className="card stat-card" {...(tourId ? { 'data-tour': tourId } : {})}>
             <div className="stat-head">
               <div className="stat-ico"><Ico size={16} /></div>
               <div className="label">{t(s.label)}</div>
@@ -985,11 +1147,13 @@ function StatsRow({ stats }: { stats: StatCardSpec[] }) {
 // ship SUI). basePath '/v2' is automatically prefixed by Next on relative
 // /coin-icons/ URLs because they're served as plain <img>.
 const COIN_ICON_SRC: Record<CoinSym, string> = {
-  BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOL: '/v2/coin-icons/sol.png',
-  SUI: '/v2/coin-icons/sui.png',
+  BTC:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
+  ETH:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
+  XRP:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
+  SOL:  '/coin-icons/sol.png',
+  SUI:  '/coin-icons/sui.png',
+  DOGE: '/coin-icons/doge.svg',
+  LINK: '/coin-icons/link.svg',
 }
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {
@@ -1027,7 +1191,7 @@ function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {
 function OpenPositions({ rows }: { rows: Position[] }) {
   const t = useT()
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="card" data-tour="open-positions" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="card-pad" style={{ paddingBottom: 6 }}>
         <div className="label">{t('card.openPositions')}</div>
       </div>
@@ -1084,7 +1248,7 @@ function OpenPositions({ rows }: { rows: Position[] }) {
 function RecentTrades({ rows }: { rows: Trade[] }) {
   const t = useT()
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="card" data-tour="recent-trades" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="card-pad" style={{ paddingBottom: 6 }}>
         <div className="label">{t('card.recentTrades')}</div>
       </div>
@@ -1222,7 +1386,7 @@ function StreakCard({ value, sub, recent, recentLabels, isWin }: { value: string
 function BottomRow({ data }: { data: StaxDashboardData }) {
   const t = useT()
   return (
-    <div className="row row-bottom">
+    <div className="row row-bottom" data-tour="win-rate">
       <LeverageCard value={data.leverage} max={data.leverageMax} />
       <WinRateCard label={t('card.winRate20')} {...data.winRate20} />
       <WinRateCard label={t('card.winRate50')} {...data.winRate50} />
@@ -1391,6 +1555,7 @@ export function StaxAppShell({
  */
 export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
   const tickers = usePublicTickers(30000)
+  const { state: wiz, loaded: wizLoaded } = useWizardState()
   const tickerByPair = useMemo(() => {
     const m: Record<string, number> = {}
     for (const t of tickers) m[t.symbol] = t.price
@@ -1429,10 +1594,21 @@ export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
 
   return (
     <div className="stax-page">
+      <OnboardingBanner />
       <Hero data={data} />
       <StatsRow stats={data.stats} />
       <TablesRow positions={livePositions} trades={data.trades} />
       <BottomRow data={data} />
+      {wizLoaded && (
+        <OnboardingTourController
+          step1Complete={wiz.step1_complete}
+          step3Complete={wiz.step3_complete}
+          tour1Complete={wiz.tour1_complete}
+          tour1Dismissed={wiz.tour1_dismissed}
+          tour2Complete={wiz.tour2_complete}
+          tour2Dismissed={wiz.tour2_dismissed}
+        />
+      )}
     </div>
   )
 }
