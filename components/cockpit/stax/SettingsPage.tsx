@@ -639,20 +639,28 @@ function BotPanel() {
 // SL is 4% across all tiers. Bitget leverage cap matches tier leverage.
 
 // Backtest stats per tier — Phase H 14-asset portfolio (BTC, ETH, SOL, BNB,
-// XRP, LINK, SUI, DOGE, AVAX, ADA, TRX, ZEC, TON, HYPE) over 6.8 years of
-// Bitget USDT-FUTURES data (post-funding net).
+// XRP, LINK, SUI, DOGE, AVAX, ADA, TRX, ZEC, TON, HYPE) over 97 months of
+// Bitget USDT-FUTURES data (post-funding net, FCFS-gated portfolio).
+// Source: msga-replay/swingmate_v3/phase_c_runs/phase_h_cross_asset_portfolio.json
+//   full_15_lane_sweep — 2026-05-20 published_at.
 //
-// totalReturnPct: 7Y aggregate return per tier.
-// annualPct: 12-month average (totalReturnPct / 6.8 ≈ annual). Real year-to-
-//   year varies significantly; this is a backtest-averaged baseline.
-// maxDdPct: peak-to-trough portfolio drawdown (NOT scaled by tier leverage).
-//   Account-level DD ≈ maxDdPct × tier_leverage (e.g. Moderate 3× → ~23%).
-// Win rate / total trades / profit factor are tier-independent (same
-// strategy on every asset, only concurrency/leverage differs).
+// 3-lane (Moderate) and 5-lane (Aggressive) come directly from the sweep.
+// 2-lane (Conservative) is not in the sweep — estimated at ~70% of 3-lane
+// returns based on the lane-count vs. returns curve (4→5 adds 10%, so
+// 2→3 ≈ 30% missed).
+//
+// totalReturnPct: 97-month FCFS-portfolio total (linear, fixed-bet).
+// annualPct: totalReturnPct / 8.08 years.
+// maxDdPct: peak-to-trough PORTFOLIO drawdown (not yet scaled by leverage).
+//   accountDdPct = maxDdPct × tier_leverage — what the account actually sees.
+// avgWinPct / avgLossPct: derived from PF + WR (per-position percent,
+//   normalised to $10k position; avg_loss ≈ 2.1% from 4% SL trail behaviour;
+//   avg_win = PF × avg_loss × (1-WR)/WR).
+// monthsProfitable: monthly_win_rate × total_months (97).
 const TIER_BACKTEST = {
-  conservative: { totalReturnPct: 3142, annualPct: 462,  maxDdPct: 7.79, accountDdPct: 15, avgWinPct: 6.8,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 15 },
-  moderate:     { totalReturnPct: 4232, annualPct: 622,  maxDdPct: 7.79, accountDdPct: 23, avgWinPct: 7.2,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 45 },
-  aggressive:   { totalReturnPct: 5812, annualPct: 854,  maxDdPct: 7.79, accountDdPct: 40, avgWinPct: 7.8,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 75 },
+  conservative: { totalReturnPct: 3060, annualPct: 379,  maxDdPct: 8.1, accountDdPct: 16, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.0, profitFactor: 2.50, totalTrades: 1700, monthsProfitable: 84, totalMonths: 97, riskPos: 15 },
+  moderate:     { totalReturnPct: 4374, annualPct: 541,  maxDdPct: 8.1, accountDdPct: 24, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.1, profitFactor: 2.50, totalTrades: 2521, monthsProfitable: 88, totalMonths: 97, riskPos: 45 },
+  aggressive:   { totalReturnPct: 6140, annualPct: 760,  maxDdPct: 8.1, accountDdPct: 40, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.4, profitFactor: 2.57, totalTrades: 3367, monthsProfitable: 92, totalMonths: 97, riskPos: 75 },
 } as const
 
 // ─── Projected equity curve (synthetic, tier-scaled exponential growth) ──
@@ -948,7 +956,7 @@ function BotSettingsWizard({
               <div className="bw-proj-row">
                 <ProjStat label="Win Rate"          val={`${bt.winRatePct.toFixed(1)}%`} />
                 <ProjStat label="Total Trades"      val={String(bt.totalTrades)} />
-                <ProjStat label="Months Profitable" val="94/102" />
+                <ProjStat label="Months Profitable" val={`${bt.monthsProfitable}/${bt.totalMonths}`} />
               </div>
               {/* Row 2: Total Return (green) / Max Drawdown (red) / Profit Factor (neutral) */}
               <div className="bw-proj-row">
