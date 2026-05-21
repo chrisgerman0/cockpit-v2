@@ -9,6 +9,30 @@ const jetBrainsMono = JetBrains_Mono({ variable: '--font-jetbrains-mono', subset
 export const metadata: Metadata = {
   title: 'Staxs · Cockpit',
   description: 'Staxs trading cockpit — next-gen dashboard',
+  // Self-installable PWA on app.staxs.ai. Before this, the only manifest
+  // lived on staxs.ai (landing) with start_url=/dashboard, which 307s
+  // cross-origin to app.staxs.ai/. On iOS the PWA scope is locked to
+  // the manifest origin (staxs.ai), so any nav to app.staxs.ai bounces
+  // out into Safari but the PWA shell stays on the previous page — that's
+  // why login showed a forever-spinning button after deleting + re-adding
+  // the home-screen icon. With this manifest, "Add to Home Screen" on
+  // app.staxs.ai produces a PWA that opens directly here, no scope jump.
+  manifest: '/manifest.json',
+  themeColor: '#D4A017',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Staxs',
+  },
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+    shortcut: '/favicon.ico',
+  },
 }
 
 /**

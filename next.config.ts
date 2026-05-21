@@ -1,18 +1,18 @@
 import type { NextConfig } from 'next'
 
-// In production, nginx fronts both apps under staxs.ai (v1 at /, v2 at /v2/).
-// In dev, v2 runs on :3007 and v1 on :3005 — these rewrites let v2's relative
-// fetch('/api/...') and fetch('/data/...') reach v1 without CORS plumbing.
-// Skip /api/admin/system-health since v2 ships its own copy of that route.
+// In production, dashboard is served at https://app.staxs.ai/* via nginx.
+// The marketing/auth landing app stays at https://staxs.ai/*. Nginx routes
+// `/api/*` and `/data/*` requests received on app.staxs.ai back to the landing
+// app on port 3005. The rewrites below are for DEV — they let `fetch('/api/...')`
+// reach localhost:3005 when running `next dev` outside the nginx fabric.
 const STAXS_LANDING = process.env.STAXS_LANDING_ORIGIN || 'http://localhost:3005'
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
-  // Served at staxs.ai/v2/* via nginx — nginx forwards requests with the /v2
-  // prefix intact, so Next.js needs basePath to recognise its own routes.
-  basePath: '/v2',
-  // Allow HMR + dev assets when v2 is reached via the staxs.ai nginx proxy.
-  allowedDevOrigins: ['staxs.ai', 'www.staxs.ai'],
+  // Subdomain deploy (2026-05-11): dashboard owns app.staxs.ai root — no
+  // basePath needed. Old `staxs.ai/v2/*` URLs are 301-redirected by nginx.
+  // basePath: '/v2',  // REMOVED — see app.staxs.ai server block in nginx
+  allowedDevOrigins: ['staxs.ai', 'www.staxs.ai', 'app.staxs.ai'],
   async rewrites() {
     return [
       // Static portfolio JSONs published by multi-asset-backtest daemon

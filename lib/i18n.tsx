@@ -34,6 +34,7 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'settings.bot':           { en: 'Bot Settings',      pt: 'Configurações do Bot' },
   'settings.notifications': { en: 'Notifications',     pt: 'Notificações' },
   'settings.security':      { en: 'Security',          pt: 'Segurança' },
+  'settings.tour':          { en: 'Tour',              pt: 'Tour' },
   'settings.payout':        { en: 'Payout Settings',   pt: 'Pagamentos' },
 
   // Profile form
@@ -57,8 +58,10 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'bot.title':              { en: 'Bot Settings',  pt: 'Configurações do Bot' },
   'bot.tier':               { en: 'Trading Mode',  pt: 'Modo de Trading' },
   'bot.tierConservative':   { en: 'Conservative',  pt: 'Conservador' },
-  'bot.tierBold':           { en: 'Bold',          pt: 'Audacioso' },
+  'bot.tierModerate':       { en: 'Moderate',      pt: 'Moderado' },
   'bot.tierAggressive':     { en: 'Aggressive',    pt: 'Agressivo' },
+  // Legacy alias — still emitted for any pre-schema DB rows that didn't migrate.
+  'bot.tierBold':           { en: 'Aggressive',    pt: 'Agressivo' },
   'bot.leverage':           { en: 'Leverage',      pt: 'Alavancagem' },
   'bot.notional':           { en: 'Position Size', pt: 'Tamanho da Posição' },
   'bot.status':             { en: 'Bot Status',    pt: 'Status do Bot' },
@@ -109,10 +112,11 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'backtest.tradeList':     { en: 'List of Trades',      pt: 'Lista de Trades' },
   'backtest.dataFresh':     { en: 'Data updated',        pt: 'Dados atualizados' },
   'backtest.tier.conservative': { en: 'Conservative tier', pt: 'Modo Conservador' },
-  'backtest.tier.bold':         { en: 'Bold tier',         pt: 'Modo Audacioso' },
+  'backtest.tier.moderate':     { en: 'Moderate tier',     pt: 'Modo Moderado' },
   'backtest.tier.aggressive':   { en: 'Aggressive tier',   pt: 'Modo Agressivo' },
+  'backtest.tier.bold':         { en: 'Aggressive tier',   pt: 'Modo Agressivo' }, // legacy alias
   'backtest.notional':      { en: 'notional / trade',    pt: 'nocional por trade' },
-  'backtest.basket':        { en: '5-asset basket',      pt: 'Cesta de 5 ativos' },
+  'backtest.basket':        { en: '7-asset basket',      pt: 'Cesta de 7 ativos' },
 
   // Broker
   'broker.title':           { en: 'Broker Program',                 pt: 'Programa de Parceiros' },
@@ -171,13 +175,16 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'status.wins':            { en: 'wins',              pt: 'vitórias' },
   'status.losses':          { en: 'losses',            pt: 'derrotas' },
 
-  // Tier labels (used in subtitle)
-  'tier.conservative.label':{ en: 'Conservative tier · 0.5× of balance', pt: 'Modo Conservador · 0,5× do saldo' },
-  'tier.bold.label':        { en: 'Bold tier · 1.0× of balance',         pt: 'Modo Audacioso · 1,0× do saldo' },
-  'tier.aggressive.label':  { en: 'Aggressive tier · 1.5× of balance',   pt: 'Modo Agressivo · 1,5× do saldo' },
+  // Tier labels (used in subtitle). Schema as of 2026-05-10: 0.5 / 0.75 / 1.0.
+  'tier.conservative.label':{ en: 'Conservative tier · 0.5× of balance',  pt: 'Modo Conservador · 0,5× do saldo' },
+  'tier.moderate.label':    { en: 'Moderate tier · 0.75× of balance',     pt: 'Modo Moderado · 0,75× do saldo' },
+  'tier.aggressive.label':  { en: 'Aggressive tier · 1.0× of balance',    pt: 'Modo Agressivo · 1,0× do saldo' },
+  // Legacy DB tier='bold' → display as Aggressive (1.0×, identical sizing).
+  'tier.bold.label':        { en: 'Aggressive tier · 1.0× of balance',    pt: 'Modo Agressivo · 1,0× do saldo' },
   'tier.conservative':      { en: 'Conservative tier', pt: 'Modo Conservador' },
-  'tier.bold':              { en: 'Bold tier',         pt: 'Modo Audacioso' },
+  'tier.moderate':          { en: 'Moderate tier',     pt: 'Modo Moderado' },
   'tier.aggressive':        { en: 'Aggressive tier',   pt: 'Modo Agressivo' },
+  'tier.bold':              { en: 'Aggressive tier',   pt: 'Modo Agressivo' }, // legacy alias
 
   // Footer
   'footer.tagline':         { en: 'Precision trading, automated.', pt: 'Trading de precisão, automatizado.' },

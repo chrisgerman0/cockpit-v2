@@ -1,9 +1,10 @@
 import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
+import { AuthHandoff } from '@/components/AuthHandoff'
 
 /**
  * App shell — Stax design (sidebar + topbar + bottom ticker). Wraps every
  * route under (app). Pages render only their inner content; the shell
- * self-fetches BTC + 5-asset tickers from Bitget public REST so it works
+ * self-fetches BTC + 7-asset tickers from Bitget public REST so it works
  * regardless of which page is open.
  *
  * Forced dynamic — without this, Next prerenders static HTML at build time
@@ -21,5 +22,12 @@ import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
 export const dynamic = 'force-dynamic'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <StaxAppShell>{children}</StaxAppShell>
+  // AuthHandoff drains any #access_token=… hash from the staxs.ai/login
+  // redirect into this origin's localStorage BEFORE downstream hooks call
+  // getSession(). See components/AuthHandoff.tsx for full rationale.
+  return (
+    <AuthHandoff>
+      <StaxAppShell>{children}</StaxAppShell>
+    </AuthHandoff>
+  )
 }
