@@ -3,13 +3,15 @@
 import { useEffect, useState } from 'react'
 import { authedFetch, browserClient } from './api'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
+import { fetchPortfolioTrades, normalizeTier, type Tier } from './use-portfolio-trades'
 
-const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT'] as const
+const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT'] as const
 type V1Symbol = typeof V1_SYMBOLS[number]
-type CoinShort = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI'
+type CoinShort = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
 
 const SHORT: Record<V1Symbol, CoinShort> = {
-  BTCUSDT: 'BTC', ETHUSDT: 'ETH', SOLUSDT: 'SOL', XRPUSDT: 'XRP', SUIUSDT: 'SUI',
+  BTCUSDT:  'BTC',  ETHUSDT:  'ETH',  SOLUSDT: 'SOL',  XRPUSDT: 'XRP',  SUIUSDT: 'SUI',
+  DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
 }
 
 export type LiveTrade = {
@@ -34,7 +36,8 @@ export type LiveTrade = {
   mfePct?: number
   mfePxPeak?: number
   tpArmed?: boolean             // BB+RSI stretched-exit armed (separate from trail-TP)
-  trailFloor?: number | null    // engine has set a protective floor in profit territory
+  trailFloor?: number | null    // engine-committed protection floor OR a projection of where it would arm
+  trailFloorCommitted?: boolean // true = engine actually committed; false = synthetic projection
   mfePeakTs?: number | null     // ms epoch of last MFE peak; drives the reprieve countdown
 }
 
@@ -117,6 +120,7 @@ type RawTrade = {
     mfePxPeak?: number
     tpArmed?: boolean
     trailFloor?: number | null
+    trailFloorCommitted?: boolean
     mfePeakTs?: number | null
   }
 }
@@ -135,7 +139,7 @@ type StrategyStateResp = {
 
 function symToShort(symbol: string): CoinShort {
   const s = symbol.replace('USDT', '') as CoinShort
-  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI'] as const).includes(s) ? s : 'BTC'
+  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK'] as const).includes(s) ? s : 'BTC'
 }
 
 function normalize(t: RawTrade): LiveTrade {
@@ -166,6 +170,7 @@ function normalize(t: RawTrade): LiveTrade {
     mfePxPeak: typeof t.metadata?.mfePxPeak === 'number' ? t.metadata.mfePxPeak : undefined,
     tpArmed: t.metadata?.tpArmed,
     trailFloor: t.metadata?.trailFloor ?? null,
+    trailFloorCommitted: !!t.metadata?.trailFloorCommitted,
     mfePeakTs: t.metadata?.mfePeakTs ?? null,
   }
 }
@@ -209,7 +214,44 @@ export function useLiveTradingData(): LiveLoadState {
         const unrealizedPnl = Number(balance?.unrealizedPnl || 0)
 
         const all = (tradesRes?.trades || []).map(normalize)
-        const closed = all.filter(t => t.status === 'closed')
+        const closedRaw = all.filter(t => t.status === 'closed')
+
+        // Reason enrichment — Bitget's position-history doesn't carry our
+        // strategy's exit reason (it just sees market orders). Match each
+        // user-closed trade to the corresponding backtest trade by
+        // symbol + closedAt (within ±2h to absorb execution slippage and
+        // 4H-bar boundary jitter), then surface the backtest's
+        // displayReason ("Take Profit", "Trailing TP", "Stop Loss", …).
+        // Single-tier fetch is enough — exit timestamps are identical
+        // across tiers (same engine, only sizing/PnL differ).
+        const tierForBacktest = normalizeTier(cfg.tier || cfg.preset)
+        const backtestTrades = await fetchPortfolioTrades(tierForBacktest).catch(() => [] as Awaited<ReturnType<typeof fetchPortfolioTrades>>)
+        const cutoffTs = Date.now() - 60 * 24 * 3600_000
+        // Filter to backtest trades that ACTUALLY closed (not still-open EOD trades).
+        // Without this guard, the matcher can land on a currently-open backtest
+        // position whose exitTs ticks with "now", giving every late Bitget close
+        // a misleading "Open (EOD)" reason. Require a real exitPx + a non-Open
+        // reason so we only match against finished trades.
+        const recentBT = backtestTrades.filter(b =>
+          b.exitTs > cutoffTs &&
+          typeof b.exitPx === 'number' && b.exitPx > 0 &&
+          !/open/i.test(b.displayReason || b.reason || '')
+        )
+        const REASON_TOLERANCE_MS = 2 * 3600_000
+        const closed = closedRaw.map(t => {
+          if (t.reason || !t.closedAt) return t
+          let bestDelta = Infinity
+          let bestReason: string | null = null
+          for (const b of recentBT) {
+            if (b.symbol !== t.pair) continue
+            const delta = Math.abs(b.exitTs - t.closedAt)
+            if (delta < bestDelta && delta <= REASON_TOLERANCE_MS) {
+              bestDelta = delta
+              bestReason = b.displayReason || b.reason || null
+            }
+          }
+          return bestReason ? { ...t, reason: bestReason } : t
+        })
 
         const tickerByPair: Record<string, PublicTicker | undefined> = {}
         tickers.forEach(t => { tickerByPair[t.symbol] = t })
@@ -266,11 +308,11 @@ export function useLiveTradingData(): LiveLoadState {
         for (const p of (stateRes?.positions || [])) stateBySym[p.symbol] = p
 
         // Per-leg notional = activation balance × tier multiplier. Conservative
-        // 0.5×, Bold 1.0×, Aggressive 1.5× — matches the daemon's tier-sizing
-        // canonical. Pyramided positions are roughly 2× exposure.
-        const TIER_MULT: Record<string, number> = { conservative: 0.5, bold: 1.0, aggressive: 1.5 }
-        const tierKey = ((cfg.tier || cfg.preset || 'conservative') as string).toLowerCase()
-        const tierMult = TIER_MULT[tierKey] ?? 0.5
+        // 0.5×, Moderate 0.75×, Aggressive 1.0× — matches the daemon's tier-
+        // sizing canonical (2026-05-10 schema). Pyramided positions are
+        // roughly 2× exposure.
+        const TIER_MULT: Record<Tier, number> = { conservative: 0.5, moderate: 0.75, aggressive: 1.0 }
+        const tierMult = TIER_MULT[tierForBacktest] ?? 0.5
         const baseNotional = (Number(cfg.activation_balance) || 10000) * tierMult
 
         const assetStates: AssetState[] = V1_SYMBOLS.map(sym => {

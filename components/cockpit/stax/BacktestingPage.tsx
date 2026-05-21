@@ -25,8 +25,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
+import { useIsAdmin } from '@/lib/use-is-admin'
+import { getAccessToken } from '@/lib/supabase-browser'
 import { type EquityPoint } from './Charts'
 
 type Stats = {
@@ -103,16 +105,29 @@ export function BacktestingContent() {
   const [view, setView] = useState<'metrics' | 'trades'>('metrics')
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
+  const { isAdmin } = useIsAdmin()
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       setLoading(true)
+      // Admins fetch the gated /api/admin/portfolio-trades endpoint which
+      // returns trades enriched with cfg_sid + raw displayReason. Customers
+      // fetch the public path which has those stripped server-side.
+      //
+      // If the admin probe is still loading we wait — falling through to the
+      // public path here would mean an admin briefly sees the scrubbed view
+      // on tier switch.
+      const wantAdmin = isAdmin === true
+      const adminToken = wantAdmin ? await getAccessToken().catch(() => null) : null
+      const tradesFetcher = wantAdmin && adminToken
+        ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
+        : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
       try {
         const [statsRes, closedTrades, rawTrades] = await Promise.all([
           fetch(statsPath(tier), { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
-          fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[]),
-          fetchPortfolioTrades(tier, { includeOpen: true }).catch(() => [] as PortfolioTrade[]),
+          tradesFetcher(false).catch(() => [] as PortfolioTrade[]),
+          tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
         ])
         if (cancelled) return
         setStats(statsRes || null)
@@ -134,7 +149,7 @@ export function BacktestingContent() {
     }
     load()
     return () => { cancelled = true }
-  }, [tier])
+  }, [tier, isAdmin])
 
   const isPt = getCurrentLang() === 'PT'
 
@@ -271,7 +286,7 @@ export function BacktestingContent() {
       {view === 'metrics' ? (
         <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} />
       ) : (
-        <TradesTable trades={allTrades} loading={loading} isPt={isPt} />
+        <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} />
       )}
     </div>
   )
@@ -1235,7 +1250,7 @@ function isOpenTrade(tr: PortfolioTrade): boolean {
   return tr.reason === 'eod' || /^open/i.test(tr.displayReason || '')
 }
 
-function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean }) {
+function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; showCfgColumn?: boolean }) {
   const [page, setPage] = useState(0)
   const [coin, setCoin] = useState<CoinFilter>('ALL')
   const [side, setSide] = useState<SideFilter>('ALL')
@@ -1346,11 +1361,12 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
               <th>P&amp;L</th>
               <th>%</th>
               <th>{isPt ? 'Razão' : 'Reason'}</th>
+              {showCfgColumn ? <th>Cfg (admin)</th> : null}
             </tr>
           </thead>
           <tbody>
             {slice.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--muted)' }}>
+              <tr><td colSpan={showCfgColumn ? 10 : 9} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--muted)' }}>
                 {isPt ? 'Nenhum trade com esses filtros.' : 'No trades match these filters.'}
               </td></tr>
             ) : slice.map((tr, i) => {
@@ -1422,6 +1438,11 @@ function TradesTable({ trades, loading, isPt }: { trades: PortfolioTrade[]; load
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(dispPnl)}</td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{dispReturnPct.toFixed(2)}%</td>
                   <td className="num" style={{ color: 'var(--muted)' }}>{tr.displayReason || tr.reason}</td>
+                  {showCfgColumn ? (
+                    <td className="num" style={{ color: 'var(--muted)', fontSize: 10, fontFamily: 'monospace' }}>
+                      {tr.cfg_sid || '—'}
+                    </td>
+                  ) : null}
                 </tr>
               )
             })}
