@@ -1229,6 +1229,17 @@ function BotSettingsWizard({
               sub={`from $${capNum.toLocaleString()}`}
               big
             />
+            {/* Profitable Months — a more compelling signal than Win Rate.
+                "We were green in X out of Y months" speaks to consistency in
+                a way per-trade win rate can't. Pulled straight from the same
+                Phase H backtest as the other numbers on this page. */}
+            <ProjStat
+              label="Profitable Months"
+              val={`${Math.round((bt.monthsProfitable / bt.totalMonths) * 100)}%`}
+              sub={`${bt.monthsProfitable} of ${bt.totalMonths} months green`}
+              positive
+              big
+            />
           </div>
 
           {/* Account-level DD = peak portfolio DD × leverage (3× on Moderate ≈ ~23%) */}
