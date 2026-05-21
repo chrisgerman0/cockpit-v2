@@ -16,13 +16,14 @@
  *     and inline SVG (Icons.tsx + locals).
  *   - "skip for now" → routes to /v2 (the dashboard).
  *   - Final CTA → /v2/settings?tab=bot so the user lands on Bot Settings
- *     where they can pick their tier (Conservative / Bold / Aggressive).
+ *     where they can pick their tier (Conservative / Moderate / Aggressive).
  */
 
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useState } from 'react'
 import { authedFetch } from '@/lib/api'
+import { patchWizardState } from '@/lib/use-wizard-state'
 import { getCurrentLang } from '@/lib/i18n'
 import { Icons } from './Icons'
 
@@ -104,6 +105,10 @@ export function OnboardingWizard() {
         return
       }
       try { localStorage.setItem('staxs-api-connected', 'true') } catch {}
+      // Persist step1 server-side so the onboarding banner + auto-firing
+      // tour on the dashboard can pick it up on next mount. Fire-and-
+      // forget — the wizard's own UI doesn't depend on this resolving.
+      patchWizardState({ step1_complete: true, api_key_connected: true, exchange })
       setStep(3)
     } catch (e: any) {
       const raw = String(e?.message || '')
