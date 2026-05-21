@@ -10,6 +10,11 @@ import { StaxDashboardContent, LOADING_STAX_DATA } from './stax/StaxDashboard'
  *
  * States: loading (blank shell — no fake numbers) / unauthenticated /
  * no-keys / no-bot / ready / error.
+ *
+ * The 3-step OnboardingBanner is rendered above every authed state until
+ * step3_complete (banner self-hides). Mounts in no-keys / no-bot / ready
+ * so the user always has a visible "what comes next" affordance — matches
+ * the legacy client-dashboard.html behaviour.
  */
 export function DashboardLive() {
   const state = useStaxDashboardData()
@@ -23,18 +28,18 @@ export function DashboardLive() {
   }
 
   if (state.status === 'unauthenticated') {
-    return <CenterMessage title="Sign in to see your dashboard" body="Your trading data is private — log in at staxs.ai to load it here." action={{ label: 'Go to login', href: '/login' }} />
-  }
-  if (state.status === 'no-keys') {
-    return <CenterMessage title="Connect your Bitget account" body="Add your API keys on staxs.ai/settings to see live balance and positions." action={{ label: 'Connect API keys', href: '/settings' }} />
-  }
-  if (state.status === 'no-bot') {
-    return <CenterMessage title="Bot not activated yet" body="Run the activation wizard on staxs.ai to pick a tier and arm the bot." action={{ label: 'Open wizard', href: '/?setup=bot' }} />
+    return <CenterMessage title="Sign in to see your dashboard" body="Your trading data is private — log in at staxs.ai to load it here." action={{ label: 'Go to login', href: 'https://staxs.ai/login' }} />
   }
   if (state.status === 'error') {
     return <CenterMessage title="Couldn’t load your dashboard" body={state.message} />
   }
 
+  // no-keys / no-bot / ready all render the same dashboard now. The hook
+  // populates user-specific fields with safe defaults (no real balance, no
+  // user trades) and fills strategy-derived fields (equity curve, recent
+  // trades fallback, win rate) from the backtest portfolio so the user can
+  // see the strategy at work BEFORE they connect anything. The
+  // OnboardingBanner above the dashboard tells them the next step.
   return <StaxDashboardContent data={state.data} />
 }
 

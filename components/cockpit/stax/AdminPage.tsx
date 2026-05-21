@@ -2,10 +2,11 @@
 
 /**
  * Admin cockpit — v2 design. Settings-style left sub-nav (220px) plus
- * 10 right-side panels:
+ * right-side panels:
  *
- *   Operations  →  Overview · Radar · Execution · Alerts · Risk · Users
- *   Business    →  Revenue · Wallets
+ *   Operations  →  Overview · Radar · Execution · Alerts · Users
+ *   Broker      →  Brokers · Invoices · Payouts · Wallets
+ *   Business    →  Revenue
  *   Research    →  Strategy · Social
  *
  * URL deep-link: /v2/admin?tab=<id> — mirrors the Settings pattern.
@@ -27,9 +28,10 @@ import { useIsAdmin } from '@/lib/use-is-admin'
 import { Icons } from './Icons'
 import {
   StrategyResearchPanel,
-  SatoshiStackerSpecPanel,
-  SignalComparisonPanel,
-  ExecutionArchitecturePanel,
+  BestStaxsPanel,
+  // SatoshiStackerSpecPanel / StrategyOptimizationsPanel / ExecutionArchitecturePanel
+  // are still exported but no longer wired into the StrategyPanel tabs. Dead-end
+  // strategies removed 2026-05-17; only SwingMate remains.
 } from './AdminStrategyPanels'
 import { SocialDispatchPanel, SocialGalleryPanel } from './AdminSocialPanels'
 
@@ -54,20 +56,24 @@ const ExternalLink = (p: IconProps) => <I {...p}><path d="M14 4h6v6M20 4l-9 9M19
 
 type TabId =
   | 'overview' | 'radar' | 'execution' | 'alerts' | 'users'
-  | 'revenue' | 'wallets' | 'strategy' | 'social'
+  | 'brokers' | 'broker-invoices' | 'broker-payouts' | 'wallets'
+  | 'revenue' | 'strategy' | 'social'
 
 type TabDef = { id: TabId; label: string; group: string; icon: React.ComponentType<IconProps> }
 
 const TABS: TabDef[] = [
-  { id: 'overview',  label: 'Overview',   group: 'Operations', icon: Icons.Grid },
-  { id: 'radar',     label: 'Radar',      group: 'Operations', icon: Icons.Bolt },
-  { id: 'execution', label: 'Execution',  group: 'Operations', icon: Icons.Signal },
-  { id: 'alerts',    label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
-  { id: 'users',     label: 'Users',      group: 'Operations', icon: People },
-  { id: 'revenue',   label: 'Revenue',    group: 'Business',   icon: Dollar },
-  { id: 'wallets',   label: 'Wallets',    group: 'Business',   icon: Wallet },
-  { id: 'strategy',  label: 'Strategy',   group: 'Research',   icon: Icons.Bars },
-  { id: 'social',    label: 'Social',     group: 'Research',   icon: Megaphone },
+  { id: 'overview',         label: 'Overview',   group: 'Operations', icon: Icons.Grid },
+  { id: 'radar',            label: 'Radar',      group: 'Operations', icon: Icons.Bolt },
+  { id: 'execution',        label: 'Execution',  group: 'Operations', icon: Icons.Signal },
+  { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
+  { id: 'users',            label: 'Users',      group: 'Operations', icon: People },
+  { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
+  { id: 'broker-invoices',  label: 'Invoices',   group: 'Broker',     icon: Receipt },
+  { id: 'broker-payouts',   label: 'Payouts',    group: 'Broker',     icon: Dollar },
+  { id: 'wallets',          label: 'Wallets',    group: 'Broker',     icon: Wallet },
+  { id: 'revenue',          label: 'Revenue',    group: 'Business',   icon: Dollar },
+  { id: 'strategy',         label: 'Strategy',   group: 'Research',   icon: Icons.Bars },
+  { id: 'social',           label: 'Social',     group: 'Research',   icon: Megaphone },
 ]
 
 const TAB_IDS: TabId[] = TABS.map(t => t.id) as TabId[]
@@ -291,7 +297,7 @@ export function AdminContent() {
   const { isAdmin, loading: adminLoading } = useIsAdmin()
   useEffect(() => {
     if (!adminLoading && isAdmin === false) {
-      window.location.href = '/v2/'
+      window.location.href = '/'
     }
   }, [adminLoading, isAdmin])
 
@@ -368,11 +374,20 @@ export function AdminContent() {
           <div style={{ display: tab === 'users' ? 'block' : 'none' }}>
             <UsersPanel active={tab === 'users'} />
           </div>
-          <div style={{ display: tab === 'revenue' ? 'block' : 'none' }}>
-            <RevenuePanel active={tab === 'revenue'} />
+          <div style={{ display: tab === 'brokers' ? 'block' : 'none' }}>
+            <BrokersPanel active={tab === 'brokers'} />
+          </div>
+          <div style={{ display: tab === 'broker-invoices' ? 'block' : 'none' }}>
+            <BrokerInvoicesPanel active={tab === 'broker-invoices'} />
+          </div>
+          <div style={{ display: tab === 'broker-payouts' ? 'block' : 'none' }}>
+            <BrokerPayoutsPanel active={tab === 'broker-payouts'} />
           </div>
           <div style={{ display: tab === 'wallets' ? 'block' : 'none' }}>
             <WalletsPanel active={tab === 'wallets'} />
+          </div>
+          <div style={{ display: tab === 'revenue' ? 'block' : 'none' }}>
+            <RevenuePanel active={tab === 'revenue'} />
           </div>
           <div style={{ display: tab === 'strategy' ? 'block' : 'none' }}>
             <StrategyPanel active={tab === 'strategy'} />
@@ -632,8 +647,8 @@ const ASSET_LOGOS: Record<string, string> = {
   BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
   ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
   XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOL: '/v2/coin-icons/sol.png',
-  SUI: '/v2/coin-icons/sui.png',
+  SOL: '/coin-icons/sol.png',
+  SUI: '/coin-icons/sui.png',
 }
 
 function nextBarLabel(nextBarTs: number) {
@@ -688,13 +703,13 @@ function RadarPanel({ active }: { active: boolean }) {
       {/* Strategy banner */}
       <div className="adm-banner">
         <span className="bt-eyebrow" style={{ marginBottom: 0 }}>V1 STRATEGY</span>
-        <span className="adm-banner-text">VolumeProfile breakout + per-asset BB-width gate · 5-asset basket (BTC/ETH/SOL/XRP/SUI) · next 4H bar {r ? nextBarLabel(r.nextBarTs) : '—'}</span>
+        <span className="adm-banner-text">VolumeProfile breakout + per-asset BB-width gate · 7-asset basket (BTC/ETH/SOL/XRP/SUI/DOGE/LINK) · next 4H bar {r ? nextBarLabel(r.nextBarTs) : '—'}</span>
       </div>
 
       {/* Per-asset cards */}
       <div className="adm-asset-grid">
         {r?.assets.map(a => <RadarAssetCard key={a.symbol} a={a} />)}
-        {!r && [0, 1, 2, 3, 4].map(i => <div key={i} className="card card-pad adm-asset-skel" />)}
+        {!r && [0, 1, 2, 3, 4, 5, 6].map(i => <div key={i} className="card card-pad adm-asset-skel" />)}
       </div>
 
       {/* Basket summary + closest-to-entry */}
@@ -1299,8 +1314,8 @@ function CoinDotMini({ sym }: { sym: string }) {
     BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
     ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
     XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-    SOL: '/v2/coin-icons/sol.png',
-    SUI: '/v2/coin-icons/sui.png',
+    SOL: '/coin-icons/sol.png',
+    SUI: '/coin-icons/sui.png',
   }
   const src = url[sym]
   if (!src) return null
@@ -1449,28 +1464,16 @@ function AlertsPanel({ active }: { active: boolean }) {
 //  re-enable is needed but no longer rendered.)
 // ────────────────────────────────────────────────────────────────────────────
 
-type UserSub = 'users' | 'brokers'
-
 function UsersPanel({ active }: { active: boolean }) {
-  const [sub, setSub] = useState<UserSub>('users')
   return (
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · COMMUNITY"
-        lead="Users and"
-        accent="brokers."
-        blurb="Roster of paying users and broker-program partners. Search, paginate, drill down."
+        lead="Paying"
+        accent="users."
+        blurb="Roster of paying users. Search, paginate, drill down. Broker-program partners live under the Broker section."
       />
-      <SubPills
-        value={sub}
-        onChange={setSub}
-        items={[
-          { id: 'users', label: 'Users' },
-          { id: 'brokers', label: 'Brokers' },
-        ]}
-      />
-      <div style={{ display: sub === 'users' ? 'block' : 'none' }}><UsersList active={active && sub === 'users'} /></div>
-      <div style={{ display: sub === 'brokers' ? 'block' : 'none' }}><BrokersList active={active && sub === 'brokers'} /></div>
+      <UsersList active={active} />
     </div>
   )
 }
@@ -1568,8 +1571,22 @@ function UsersList({ active }: { active: boolean }) {
 
 
 type BrokersResp = {
-  applications: Array<{ broker_email?: string; referral_code?: string; split_pct?: number; referred_count?: number; total_earned_usd?: number; approved_at?: string }>
-  total?: number; active?: number; referred_users?: number; total_earnings?: number
+  applications: Array<{ broker_email?: string; referral_code?: string; split_pct?: number; referred_count?: number; total_earned_usd?: number; total_owed_usd?: number; total_paid_usd?: number; approved_at?: string }>
+  total?: number; active?: number; referred_users?: number; total_earnings?: number; total_owed?: number; total_paid?: number
+}
+
+function BrokersPanel({ active }: { active: boolean }) {
+  return (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · BROKER"
+        lead="Broker"
+        accent="partners."
+        blurb="Broker-program partners — referral code, split tier, referred users, lifetime earned, currently owed, paid out."
+      />
+      <BrokersList active={active} />
+    </div>
+  )
 }
 
 function BrokersList({ active }: { active: boolean }) {
@@ -1581,13 +1598,23 @@ function BrokersList({ active }: { active: boolean }) {
         <StatCard label="Total brokers" value={b.data?.total ?? '—'} />
         <StatCard label="Active" value={b.data?.active ?? '—'} tone="pos" />
         <StatCard label="Referred users" value={b.data?.referred_users ?? '—'} />
-        <StatCard label="Earnings" value={fmtUsd(b.data?.total_earnings ?? null)} tone="gold" />
+        <StatCard label="Earned (lifetime)" value={fmtUsd(b.data?.total_earnings ?? null)} tone="gold" />
+        <StatCard label="Owed (open)" value={fmtUsd(b.data?.total_owed ?? null)} tone="gold" />
+        <StatCard label="Paid (lifetime)" value={fmtUsd(b.data?.total_paid ?? null)} tone="pos" />
       </div>
-      <SectionCard title="BROKER APPLICATIONS">
+      <SectionCard title="BROKER PARTNERS">
         {(b.data?.applications || []).length === 0 ? <EmptyBox>No brokers.</EmptyBox> : (
           <div style={{ overflowX: 'auto' }}>
             <table className="adm-table">
-              <thead><tr><th>Broker</th><th>Code</th><th style={{ textAlign: 'right' }}>Split</th><th style={{ textAlign: 'right' }}>Referred</th><th style={{ textAlign: 'right' }}>Earned</th><th>Approved</th></tr></thead>
+              <thead><tr>
+                <th>Broker</th><th>Code</th>
+                <th style={{ textAlign: 'right' }}>Tier</th>
+                <th style={{ textAlign: 'right' }}>Referred</th>
+                <th style={{ textAlign: 'right' }}>Earned</th>
+                <th style={{ textAlign: 'right' }}>Owed</th>
+                <th style={{ textAlign: 'right' }}>Paid</th>
+                <th>Approved</th>
+              </tr></thead>
               <tbody>
                 {b.data!.applications.map((row, i) => (
                   <tr key={i}>
@@ -1596,6 +1623,8 @@ function BrokersList({ active }: { active: boolean }) {
                     <td className="num" style={{ textAlign: 'right' }}>{(row.split_pct ?? 25) + '%'}</td>
                     <td className="num" style={{ textAlign: 'right' }}>{row.referred_count ?? 0}</td>
                     <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(row.total_earned_usd, false, 2)}</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(row.total_owed_usd, false, 2)}</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(row.total_paid_usd, false, 2)}</td>
                     <td style={{ color: 'var(--muted)' }}>{row.approved_at ? new Date(row.approved_at).toISOString().slice(0, 10) : '—'}</td>
                   </tr>
                 ))}
@@ -1609,33 +1638,56 @@ function BrokersList({ active }: { active: boolean }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 7. Revenue panel — sub-tabs for revenue / invoices / payouts
+// 7. Revenue panel — top-level revenue ledger only. Invoices + payouts moved
+// to the Broker section.
 // ────────────────────────────────────────────────────────────────────────────
 
-type RevSub = 'revenue' | 'invoices' | 'payouts'
-
 function RevenuePanel({ active }: { active: boolean }) {
-  const [sub, setSub] = useState<RevSub>('revenue')
   return (
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · REVENUE"
-        lead="MRR, invoices, and"
+        lead="MRR and"
+        accent="performance fees."
+        blurb="Subscription revenue + performance fees. 30-day rolling unless noted. Broker payouts and invoice ledger live under the Broker section."
+      />
+      <RevenueList active={active} />
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 7b. Broker invoices panel — promoted from a Revenue sub-tab.
+// ────────────────────────────────────────────────────────────────────────────
+
+function BrokerInvoicesPanel({ active }: { active: boolean }) {
+  return (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · BROKER"
+        lead="Client"
+        accent="invoices."
+        blurb="Subscription + performance-fee invoices billed to broker-referred clients. Each invoice with a referral_code drives a broker split."
+      />
+      <InvoicesList active={active} />
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 7c. Broker payouts panel — promoted from a Revenue sub-tab.
+// ────────────────────────────────────────────────────────────────────────────
+
+function BrokerPayoutsPanel({ active }: { active: boolean }) {
+  return (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · BROKER"
+        lead="Broker"
         accent="payouts."
-        blurb="Subscription revenue, performance fees, broker payouts. 30-day rolling unless noted."
+        blurb="Payout ledger per broker. Pending = owed, paid = settled to broker wallet."
       />
-      <SubPills
-        value={sub}
-        onChange={setSub}
-        items={[
-          { id: 'revenue', label: 'Revenue' },
-          { id: 'invoices', label: 'Invoices' },
-          { id: 'payouts', label: 'Payouts' },
-        ]}
-      />
-      <div style={{ display: sub === 'revenue' ? 'block' : 'none' }}><RevenueList active={active && sub === 'revenue'} /></div>
-      <div style={{ display: sub === 'invoices' ? 'block' : 'none' }}><InvoicesList active={active && sub === 'invoices'} /></div>
-      <div style={{ display: sub === 'payouts' ? 'block' : 'none' }}><PayoutsList active={active && sub === 'payouts'} /></div>
+      <PayoutsList active={active} />
     </div>
   )
 }
@@ -1756,10 +1808,10 @@ function WalletsPanel({ active }: { active: boolean }) {
   return (
     <div className="stax-page">
       <PageHeader
-        eyebrow="ADMIN · WALLETS"
+        eyebrow="ADMIN · BROKER"
         lead="Company crypto"
         accent="wallets."
-        blurb="Payout addresses for invoices and broker settlement. Per-network."
+        blurb="Receiving addresses for invoice settlement, and outbound addresses for broker payouts. Per-network."
         refreshing={w.loading}
         onRefresh={w.refresh}
       />
@@ -1794,42 +1846,40 @@ function WalletsPanel({ active }: { active: boolean }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 9. Strategy panel — sub-tabs for Research / Spec / Comparison / Architecture
+// 9. Strategy panel — sub-tabs for Research / Spec / Optimizations / Architecture
 // ────────────────────────────────────────────────────────────────────────────
 
-type StratSub = 'research' | 'spec' | 'comparison' | 'architecture'
+type StratSub = 'swingmate' | 'bob' | 'staxs'
 
 function StrategyPanel({ active }: { active: boolean }) {
-  const [sub, setSub] = useState<StratSub>('research')
+  // SwingMate ⚡ = single-cfg leaderboard (cross-asset post Phase G, 200k+ swept).
+  // BoB = qualifying-edge single cfgs. Best Staxs 🥞 = stack leaderboard (Phase F/2/4).
+  const [sub, setSub] = useState<StratSub>('swingmate')
   return (
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · STRATEGY"
-        lead="Research, specs, and"
-        accent="comparisons."
-        blurb="HoneyBadger phase research, Satoshi Stacker live spec, 3-way signal comparison, and the execution-pipeline diagram. All native to v2 — single source of truth for backtest archives and pipeline docs."
+        lead="Strategy mining —"
+        accent="SwingMate ⚡ + Best of The Best + Best Staxs."
+        blurb="SwingMate ⚡: top-10k cross-asset single-cfg sweep (BTC + 7 alts, ~200k swept). BoB: top-500 qualifying-edge cfgs (WR≥60 AND PF≥1.5) OR (Total≥50% AND beats HODL). Best Staxs 🥞: top-100 stacks across Phase F + Phase 2 (partial-TP) + Phase 4 (super-stack)."
       />
       <SubPills
         value={sub}
         onChange={setSub}
         items={[
-          { id: 'research', label: 'Research' },
-          { id: 'spec', label: 'Spec' },
-          { id: 'comparison', label: 'Comparison' },
-          { id: 'architecture', label: 'Architecture' },
+          { id: 'swingmate', label: 'SwingMate ⚡' },
+          { id: 'bob', label: 'Best of The Best 🏆' },
+          { id: 'staxs', label: 'Best Staxs 🥞' },
         ]}
       />
-      <div style={{ display: sub === 'research' ? 'block' : 'none' }}>
-        <StrategyResearchPanel active={active && sub === 'research'} />
+      <div style={{ display: sub === 'swingmate' ? 'block' : 'none' }}>
+        <StrategyResearchPanel active={active && sub === 'swingmate'} source="swingmate" displayName="SwingMate ⚡" />
       </div>
-      <div style={{ display: sub === 'spec' ? 'block' : 'none' }}>
-        <SatoshiStackerSpecPanel active={active && sub === 'spec'} />
+      <div style={{ display: sub === 'bob' ? 'block' : 'none' }}>
+        <StrategyResearchPanel active={active && sub === 'bob'} source="bob" displayName="Best of The Best 🏆 — Stacks" />
       </div>
-      <div style={{ display: sub === 'comparison' ? 'block' : 'none' }}>
-        <SignalComparisonPanel active={active && sub === 'comparison'} />
-      </div>
-      <div style={{ display: sub === 'architecture' ? 'block' : 'none' }}>
-        <ExecutionArchitecturePanel active={active && sub === 'architecture'} />
+      <div style={{ display: sub === 'staxs' ? 'block' : 'none' }}>
+        <BestStaxsPanel active={active && sub === 'staxs'} />
       </div>
     </div>
   )

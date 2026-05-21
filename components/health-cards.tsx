@@ -8,7 +8,7 @@ import { Antenna, HeartPulse, RefreshCw, ShieldCheck, AlertTriangle } from 'luci
  * on mount and every 30 seconds (live, not just on page load).
  *
  * Renders three cards side-by-side:
- *   1. Feed Health   — 5-asset basket CSV freshness
+ *   1. Feed Health   — 7-asset basket CSV freshness
  *   2. Deadman       — backtest output freshness + position state
  *   3. Reconciliation — DB ↔ exchange parity
  *
@@ -161,7 +161,7 @@ function FeedCard({ section }: { section: SystemHealth['feed'] }) {
           )
         })}
       </div>
-      <Footer>5-asset basket · stale threshold = 12 min</Footer>
+      <Footer>7-asset basket · stale threshold = 12 min</Footer>
     </Card>
   )
 }
