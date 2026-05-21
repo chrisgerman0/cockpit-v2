@@ -18,8 +18,10 @@ import { NotifIcon } from './NotifIcon'
 import { useT } from '@/lib/i18n'
 import { browserClient } from '@/lib/supabase-browser'
 import { authedFetch } from '@/lib/api'
+import { patchWizardState, useWizardState } from '@/lib/use-wizard-state'
+import { OnboardingTourController, TOUR1_STEPS, TOUR2_STEPS } from './OnboardingTour'
 
-type TabId = 'profile' | 'billing' | 'bot' | 'notifications' | 'security' | 'payout'
+type TabId = 'profile' | 'billing' | 'bot' | 'notifications' | 'security' | 'tour' | 'payout'
 
 const TABS: Array<{ id: TabId; tKey: string; icon: React.ComponentType<{ size?: number }> }> = [
   { id: 'profile',       tKey: 'settings.profile',       icon: Icons.Robot   /* placeholder; user icon */ },
@@ -27,6 +29,7 @@ const TABS: Array<{ id: TabId; tKey: string; icon: React.ComponentType<{ size?: 
   { id: 'bot',           tKey: 'settings.bot',           icon: Icons.Robot },
   { id: 'notifications', tKey: 'settings.notifications', icon: Icons.Bell },
   { id: 'security',      tKey: 'settings.security',      icon: Icons.Shield },
+  { id: 'tour',          tKey: 'settings.tour',          icon: Icons.Play },
   { id: 'payout',        tKey: 'settings.payout',        icon: Icons.Briefcase },
 ]
 
@@ -79,6 +82,7 @@ export function SettingsContent() {
         <div style={{ display: tab === 'bot'           ? 'block' : 'none' }}><BotPanel /></div>
         <div style={{ display: tab === 'notifications' ? 'block' : 'none' }}><NotificationsPanel /></div>
         <div style={{ display: tab === 'security'      ? 'block' : 'none' }}><SecurityPanel /></div>
+        <div style={{ display: tab === 'tour'          ? 'block' : 'none' }}><TourPanel active={tab === 'tour'} /></div>
         <div style={{ display: tab === 'payout'        ? 'block' : 'none' }}><PayoutPanel /></div></div>
       </div>
     </div>
@@ -490,9 +494,11 @@ function VipCell({ label, value, tone }: { label: string; value: string; tone: '
 // Tier change posts to /api/bot-activate (POST) — server runs Bitget
 // pre-flight (leverage cap check) + margin headroom guard before persisting.
 
+type LegacyTierId = 'conservative' | 'moderate' | 'aggressive' | 'bold'
+
 type BotConfig = {
-  preset?: 'conservative' | 'bold' | 'aggressive'
-  tier?: 'conservative' | 'bold' | 'aggressive'
+  preset?: LegacyTierId
+  tier?: LegacyTierId
   leverage?: number
   capital?: number
   activation_balance?: number
@@ -503,20 +509,48 @@ type BotConfig = {
   updatedAt?: string
 }
 
-const TIER_LEVERAGE: Record<'conservative' | 'bold' | 'aggressive', number> = {
-  conservative: 4,
-  bold: 10,
-  aggressive: 20,
+const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive', number> = {
+  conservative: 2,
+  moderate: 3,
+  aggressive: 5,
 }
 
-// Tier ratios — V1 canonical (matches lib/tier-sizing.ts on staxs-landing).
-// position size = capital × tierMult; SL = 4% of entry across the basket.
+// Tier ratios — Phase H schema (2026-05-21).
+// Tier = (lanes, leverage). Each lane is sized at PER_LANE_NOTIONAL ($10,000)
+// regardless of tier. Tier choice controls how many concurrent lanes (FCFS
+// allocator caps at this number) and what leverage each lane runs at.
+// SL is 4% of entry across the basket.
+//
+// Phase H invariants (locked 2026-05-20):
+//   conservative: 2 lanes × 2× leverage = $20k max notional / $10k margin
+//   moderate:     3 lanes × 3× leverage = $30k max notional / $10k margin
+//   aggressive:   5 lanes × 5× leverage = $50k max notional / $10k margin
+//
+// Each lane's max single-trade loss = $10k × 4% = $400. With all 3 lanes
+// max-occupied on Moderate, simultaneous SL = $1,200 = 12% of starting capital.
+const PER_LANE_NOTIONAL = 10_000 as const
+const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× initial
+
 const TIER_RATIOS = {
-  conservative: { mult: 0.5, leverage: 4,  sl: 4, label: 'Conservative', blurb: 'Smaller positions. Smoother ride.', recommended: true },
-  bold:         { mult: 1.0, leverage: 10, sl: 4, label: 'Bold',         blurb: 'Benchmark sizing. Same logic, full exposure.', recommended: false },
-  aggressive:   { mult: 1.5, leverage: 20, sl: 4, label: 'Aggressive',   blurb: 'Bigger swings. Same logic, more risk.', recommended: false },
+  conservative: { lanes: 2, leverage: 2, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
+  moderate:     { lanes: 3, leverage: 3, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
+  aggressive:   { lanes: 5, leverage: 5, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
 } as const
 type TierKey = keyof typeof TIER_RATIOS
+
+// Phase H 14-asset basket (locked 2026-05-20). All tiers trade the same basket.
+const ALPHA_BASKET = ['ADA','AVAX','BNB','BTC','DOGE','ETH','HYPE','LINK','SOL','SUI','TON','TRX','XRP','ZEC'] as const
+
+// Mode = profit handling. Mutually exclusive: at most one of compound / staxs.
+type ModeKey = 'fixed' | 'compound' | 'staxs'
+
+// Legacy DB compat: pre-schema users have tier='bold' (1.0× under old mult model). Map to 'aggressive'.
+function normalizeTierId(raw: string | undefined | null): TierKey {
+  const v = (raw || '').toLowerCase()
+  if (v === 'bold') return 'aggressive'
+  if (v === 'conservative' || v === 'moderate' || v === 'aggressive') return v
+  return 'conservative'
+}
 
 function BotPanel() {
   const t = useT()
@@ -536,16 +570,16 @@ function BotPanel() {
 
   useEffect(() => { loadConfig() }, [loadConfig])
 
-  const tier = (cfg?.tier || cfg?.preset || 'conservative') as TierKey
+  const tier = normalizeTierId(cfg?.tier || cfg?.preset)
   const lev = cfg?.leverage || TIER_RATIOS[tier].leverage
   const capital = cfg?.activation_balance || cfg?.capital
   const notional = cfg?.hb_base_notional_usd || cfg?.notional
 
   const tierLabel = ({
     conservative: t('bot.tierConservative'),
-    bold: t('bot.tierBold'),
-    aggressive: t('bot.tierAggressive'),
-  } as any)[tier] || t('bot.tierConservative')
+    moderate:     t('bot.tierModerate'),
+    aggressive:   t('bot.tierAggressive'),
+  } as Record<TierKey, string>)[tier] || t('bot.tierConservative')
 
   if (view === 'wizard') {
     return (
@@ -594,23 +628,31 @@ function BotPanel() {
 
 // ─── Bot Settings Wizard ────────────────────────────────────────────────────
 // 5-step inline wizard ported from v1 client-dashboard.html (#bwStep1..#bwStep5).
-//   1. Choose Trading Mode (Conservative / Bold / Aggressive)
+//   1. Choose Trading Mode (Conservative / Moderate / Aggressive)
 //   2. Set Capital (with Refresh Balance from /api/balance)
 //   3. How Sizing Works + Compound mode toggle
 //   4. 12-Month Projection (concise — backtest stats per tier)
 //   5. Review & Activate (POSTs to /api/bot-activate)
 //
-// Tier multipliers (TIER_RATIOS): 0.5× / 1.0× / 1.5× of balance.
-// SL is 4% across all tiers. Bitget leverage cap is set per tier (4/10/20×).
+// Tier ratios (TIER_RATIOS): Conservative 2 lanes × 2× lev / Moderate 3 lanes ×
+// 3× lev / Aggressive 5 lanes × 5× lev. Per-lane notional fixed at $10,000.
+// SL is 4% across all tiers. Bitget leverage cap matches tier leverage.
 
-// Backtest stats per tier — all from the 8-year Satoshi Stacker portfolio.
-// Win rate / total trades / profit factor / months profitable are tier-
-// independent (same strategy on every asset). Returns + drawdown + avg
-// win/loss scale with the tier multiplier.
+// Backtest stats per tier — Phase H 14-asset portfolio (BTC, ETH, SOL, BNB,
+// XRP, LINK, SUI, DOGE, AVAX, ADA, TRX, ZEC, TON, HYPE) over 6.8 years of
+// Bitget USDT-FUTURES data (post-funding net).
+//
+// totalReturnPct: 7Y aggregate return per tier.
+// annualPct: 12-month average (totalReturnPct / 6.8 ≈ annual). Real year-to-
+//   year varies significantly; this is a backtest-averaged baseline.
+// maxDdPct: peak-to-trough portfolio drawdown (NOT scaled by tier leverage).
+//   Account-level DD ≈ maxDdPct × tier_leverage (e.g. Moderate 3× → ~23%).
+// Win rate / total trades / profit factor are tier-independent (same
+// strategy on every asset, only concurrency/leverage differs).
 const TIER_BACKTEST = {
-  conservative: { totalReturnPct: 4009 * 0.5, annualPct: 452 * 0.5, maxDdPct: 8.7,  avgWinPct: 7.2 * 0.5, avgLossPct: 2.1 * 0.5, winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 10 },
-  bold:         { totalReturnPct: 4009,       annualPct: 452,       maxDdPct: 17.4, avgWinPct: 7.2,       avgLossPct: 2.1,       winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 40 },
-  aggressive:   { totalReturnPct: 4009 * 1.5, annualPct: 452 * 1.5, maxDdPct: 26.1, avgWinPct: 7.2 * 1.5, avgLossPct: 2.1 * 1.5, winRatePct: 80.9, profitFactor: 4.74, totalTrades: 860, riskPos: 75 },
+  conservative: { totalReturnPct: 3142, annualPct: 462,  maxDdPct: 7.79, accountDdPct: 15, avgWinPct: 6.8,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 15 },
+  moderate:     { totalReturnPct: 4232, annualPct: 622,  maxDdPct: 7.79, accountDdPct: 23, avgWinPct: 7.2,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 45 },
+  aggressive:   { totalReturnPct: 5812, annualPct: 854,  maxDdPct: 7.79, accountDdPct: 40, avgWinPct: 7.8,  avgLossPct: 2.1, winRatePct: 76.4, profitFactor: 4.28, totalTrades: 1420, riskPos: 75 },
 } as const
 
 // ─── Projected equity curve (synthetic, tier-scaled exponential growth) ──
@@ -707,16 +749,41 @@ function BotSettingsWizard({
   const [fetchingBalance, setFetchingBalance] = useState(false)
   const [exchangeConnected, setExchangeConnected] = useState(true)
   const [showProjected, setShowProjected] = useState(false)
-  const [compound, setCompound] = useState(initialCompound)
+  const [showBasket, setShowBasket] = useState(false)  // collapsible 14-asset list
+  // Mode is mutually exclusive: fixed (default) / compound / staxs.
+  // Initial compound flag maps to legacy compound-mode state.
+  const [mode, setMode] = useState<ModeKey>(initialCompound ? 'compound' : 'fixed')
+  // Disclosure checkboxes (Step 5 — all 4 required for activate)
+  const [d1, setD1] = useState(false)  // backtest disclaimer
+  const [d2, setD2] = useState(false)  // leverage risk
+  const [d3, setD3] = useState(false)  // trade authorisation
+  const [d4, setD4] = useState(false)  // performance fee structure
   const [activating, setActivating] = useState(false)
   const [activateMsg, setActivateMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const ratios = TIER_RATIOS[preset]
   const bt = TIER_BACKTEST[preset]
   const capNum = Math.max(0, Number(capital) || 0)
-  const posSize = capNum * ratios.mult
+  // Position size per lane is fixed at PER_LANE_NOTIONAL ($10k) regardless
+  // of capital, except in compound mode where it scales with balance up to
+  // COMPOUND_CAP_MULTIPLIER × the initial. Capital sets the margin pool,
+  // not the per-trade notional.
+  const posSize = (() => {
+    if (mode === 'compound') {
+      // Compound: each lane = (current balance × lanes) / lanes = balance/lane
+      // Wait — actually per Chris's spec, compound scales position with balance:
+      // position size = current_balance / starting_capital × PER_LANE_NOTIONAL
+      // capped at COMPOUND_CAP_MULTIPLIER × PER_LANE_NOTIONAL.
+      // Without a live "current balance", we display the initial = PER_LANE_NOTIONAL.
+      return PER_LANE_NOTIONAL
+    }
+    return PER_LANE_NOTIONAL
+  })()
+  const maxNotional = ratios.lanes * PER_LANE_NOTIONAL
   const maxLoss = posSize * (ratios.sl / 100)
+  const compoundCap = PER_LANE_NOTIONAL * COMPOUND_CAP_MULTIPLIER
   const overBalance = maxBalance > 0 && capNum > maxBalance
+  const allDisclosuresAck = d1 && d2 && d3 && d4
 
   async function fetchBalance() {
     setFetchingBalance(true)
@@ -749,18 +816,38 @@ function BotSettingsWizard({
   async function activateBot() {
     if (activating) return
     if (capNum < 100) { setActivateMsg({ ok: false, text: 'Capital must be at least $100.' }); return }
+    if (!allDisclosuresAck) { setActivateMsg({ ok: false, text: 'Please acknowledge all disclosures above.' }); return }
     setActivating(true); setActivateMsg(null)
     try {
       await authedFetch('/api/bot-activate', {
         method: 'POST',
         body: JSON.stringify({
+          // New Phase H schema (v4)
+          tier: preset,
+          mode,                            // 'fixed' | 'compound' | 'staxs'
+          capital_initial: capNum,
+          lanes_active: ratios.lanes,
+          leverage_multiplier: ratios.leverage,
+          per_lane_notional_usd: PER_LANE_NOTIONAL,
+          compound_enabled: mode === 'compound',
+          staxs_enabled: mode === 'staxs',
+          compound_cap_usd: mode === 'compound' ? capNum * COMPOUND_CAP_MULTIPLIER : null,
+          config_schema_version: 4,
+          // Legacy aliases preserved so the older backend code (lib/tier-sizing.ts,
+          // /api/execute-signal) continues to read its expected fields until
+          // Phase B lands the schema v4 server-side migration.
           preset,
           capital: capNum,
           leverage: ratios.leverage,
-          notional: capNum * ratios.mult,
-          compound,
+          notional: posSize,
+          compound: mode === 'compound',
           smart_sizing_enabled: false,
         }),
+      })
+      patchWizardState({
+        step2_settings_saved: true,
+        step3_complete: true,
+        trading_mode: preset,
       })
       setActivateMsg({ ok: true, text: 'Bot activated! Returning to settings…' })
       setTimeout(onSaved, 1200)
@@ -788,17 +875,31 @@ function BotSettingsWizard({
         <div className={'bw-pip ' + (step === 5 ? 'bw-active' : 'bw-idle')}>✓</div>
       </div>
 
-      {/* Step 1 — Trading Mode */}
+      {/* Step 1 — Trading Tier */}
       {step === 1 && (
         <div className="bw-step-body">
-          <div className="bw-step-title">Choose Your Trading Mode</div>
-          <div className="bw-step-sub">This controls your risk exposure. The strategy logic (entries, exits, stop loss) stays the same — only position sizing changes.</div>
+          <div className="bw-step-title">Choose Your Trading Tier</div>
+          <div className="bw-step-sub">Your tier sets how many positions can run concurrently and the leverage applied. Same systematic strategy across all tiers — only concurrency and risk exposure change.</div>
           <div className="bw-step-meta">
-            All tiers trade the same 5-asset basket: <strong>BTC, ETH, SOL, XRP, SUI</strong> /USDT — same systematic strategy on every asset. Tier choice scales position size, not which assets trade.
+            Staxs trades a 14-cryptocurrency basket using proprietary systematic strategies. Tier choice scales position concurrency, not which assets trade.
           </div>
 
+          <button
+            type="button"
+            className="bw-toggle-projected"
+            onClick={() => setShowBasket(s => !s)}
+            style={{ marginBottom: 12 }}
+          >
+            {showBasket ? '▲ Hide' : '▼ View'} asset basket (14 cryptocurrencies)
+          </button>
+          {showBasket ? (
+            <div className="bw-basket-list" style={{ background: 'var(--bg-soft, rgba(0,0,0,0.04))', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 16, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.6, textAlign: 'center' }}>
+              {ALPHA_BASKET.join(' · ')}
+            </div>
+          ) : null}
+
           <div className="bw-tier-grid">
-            {(['conservative', 'bold', 'aggressive'] as const).map(p => {
+            {(['conservative', 'moderate', 'aggressive'] as const).map(p => {
               const r = TIER_RATIOS[p]
               const sel = preset === p
               return (
@@ -811,11 +912,14 @@ function BotSettingsWizard({
                   {r.recommended ? <span className="bw-recommend">RECOMMENDED</span> : null}
                   <div className="bw-tier-ico">
                     {p === 'conservative' ? <SVG><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></SVG>
-                      : p === 'bold' ? <SVG><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></SVG>
+                      : p === 'moderate' ? <SVG><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></SVG>
                       : <SVG><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></SVG>}
                   </div>
                   <div className="bw-tier-name">{r.label}</div>
-                  <div className="bw-tier-mult">{r.mult}× of balance</div>
+                  <div className="bw-tier-mult">{r.lanes} lanes · {r.leverage}× leverage</div>
+                  <div className="bw-tier-sub" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                    Max {r.lanes} concurrent position{r.lanes > 1 ? 's' : ''}
+                  </div>
                   <div className="bw-tier-blurb">{r.blurb}</div>
                 </button>
               )
@@ -866,7 +970,7 @@ function BotSettingsWizard({
                   <ProjectedEquityCurve startCapital={1000} totalReturnPct={bt.totalReturnPct} />
                 </div>
                 <div className="bw-equity-foot">
-                  Projected for <strong>{TIER_RATIOS[preset].label} tier ({TIER_RATIOS[preset].mult}× of balance)</strong>
+                  Projected for <strong>{TIER_RATIOS[preset].label} tier ({TIER_RATIOS[preset].lanes} lanes · {TIER_RATIOS[preset].leverage}× lev)</strong>
                 </div>
               </div>
             </div>
@@ -911,17 +1015,17 @@ function BotSettingsWizard({
             ) : null}
 
             <div className="bw-position-card">
-              <div className="bw-position-head">Position Parameters</div>
+              <div className="bw-position-head">Position Parameters · {ratios.label} ({ratios.lanes} lanes / {ratios.leverage}× lev)</div>
               <div className="bw-position-grid">
-                <ProjStat label="Tier Multiplier"  val={`${ratios.mult}× of balance`} />
-                <ProjStat label="Position Size"    val={`$${Math.round(posSize).toLocaleString()}`} />
-                <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} />
-                <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} negative />
+                <ProjStat label="Position Size"    val={`$${posSize.toLocaleString()}`} sub="per lane (notional)" />
+                <ProjStat label="Max Concurrent"   val={`$${maxNotional.toLocaleString()}`} sub={`${ratios.lanes} lane${ratios.lanes > 1 ? 's' : ''} total`} />
+                <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} sub="per trade" />
+                <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} sub="per lane" negative />
               </div>
             </div>
 
             <div className="bw-explain">
-              <strong>How it works:</strong> Your capital × tier multiplier = position size per trade. A {ratios.sl}% stop loss on a ${Math.round(posSize).toLocaleString()} position means you risk ${Math.round(maxLoss).toLocaleString()} per trade. Bitget leverage is set to {ratios.leverage}× by the bot — used only to free up margin, not to scale position size.
+              <strong>How it works:</strong> Each lane uses ${PER_LANE_NOTIONAL.toLocaleString()} notional. {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.
             </div>
           </div>
 
@@ -932,97 +1036,148 @@ function BotSettingsWizard({
         </div>
       )}
 
-      {/* Step 3 — Sizing + Compound */}
+      {/* Step 3 — Profit Handling Mode (Fixed / Compound / Staxs) */}
       {step === 3 && (
         <div className="bw-step-body">
-          <div className="bw-step-title">How Position Sizing Works</div>
-          <div className="bw-step-sub">Position size is set when you activate the bot — based on your balance at that moment. From there, you choose: keep it <strong>fixed</strong> (default; risk shrinks as you win) or let it <strong>compound</strong> with your balance (constant risk %, faster compounding).</div>
+          <div className="bw-step-title">Choose Your Profit Handling Mode</div>
+          <div className="bw-step-sub">When your account earns profits above your initial deposit, what happens next? Pick one mode below, or leave both off for fixed-position trading.</div>
 
-          <div className="bw-compound-card">
+          {/* Default-state card — visible when both toggles OFF */}
+          {mode === 'fixed' ? (
+            <div className="bw-control-card" style={{ marginBottom: 14 }}>
+              <strong>Default — Fixed Notional.</strong> Position size frozen at setup ({`$${PER_LANE_NOTIONAL.toLocaleString()} per lane`}). Profits accumulate in your account. 20% performance fee extracted monthly from net profit. Lowest risk scaling.
+            </div>
+          ) : null}
+
+          {/* Toggle A — Compound */}
+          <div className="bw-compound-card" style={{ opacity: mode === 'staxs' ? 0.5 : 1, pointerEvents: mode === 'staxs' ? 'none' : 'auto' }}>
             <div className="bw-compound-head">
               <div>
                 <div className="bw-compound-ttl">Compound mode</div>
-                <div className="bw-compound-help">When ON, every trade is sized as <em>current balance × your tier ratio</em>. Wins and losses both affect the next trade's size. <strong>Default OFF</strong>: trade size stays fixed at your activation balance.</div>
+                <div className="bw-compound-help">
+                  Position size scales with your account balance. Wins → bigger positions. Losses → smaller. Hard cap: <strong>{COMPOUND_CAP_MULTIPLIER}× your initial deposit</strong>. Re-setup required to lift cap.
+                </div>
               </div>
               <button
                 type="button"
                 role="switch"
-                aria-checked={compound}
-                className={'toggle-switch' + (compound ? ' on' : '')}
-                onClick={() => setCompound(c => !c)}
+                aria-checked={mode === 'compound'}
+                className={'toggle-switch' + (mode === 'compound' ? ' on' : '')}
+                onClick={() => setMode(m => m === 'compound' ? 'fixed' : 'compound')}
+                disabled={mode === 'staxs'}
+                title={mode === 'staxs' ? 'Cannot combine Compound with Staxs' : undefined}
               >
                 <span className="toggle-knob" />
               </button>
             </div>
             <div className="bw-compound-conseq">
-              {compound
-                ? <><strong>On:</strong> on a ${capNum.toLocaleString()} starting balance, every trade scales with your current equity. As your account grows, position sizes grow too — drawdowns also hit larger positions.</>
-                : <><strong>Off (recommended):</strong> on a ${capNum.toLocaleString()} starting balance, every trade is sized from ${capNum.toLocaleString()} forever. As your account grows, % drawdowns shrink — you de-leverage as you win.</>
+              {mode === 'compound'
+                ? <><strong>On:</strong> Highest growth potential, highest risk. Capped at ${compoundCap.toLocaleString()} per lane.</>
+                : <><strong>Off (default):</strong> Fixed position size at setup.</>
               }
             </div>
           </div>
 
-          {/* Pyramid stacking eyebrow + intro (matches v1) */}
-          <div className="bw-pyramid-eyebrow">Pyramid stacking</div>
-          <p className="bw-pyramid-intro">
-            Your chosen tier is the <em>floor</em> of your sizing. The strategy can stack on top via <strong>pyramids</strong> — additional legs added on a small subset of qualifying winners. Worst case below shows what peak exposure looks like.
-          </p>
+          {/* Toggle B — Staxs (Satoshi Stacking) */}
+          <div className="bw-compound-card" style={{ marginTop: 14, opacity: mode === 'compound' ? 0.5 : 1, pointerEvents: mode === 'compound' ? 'none' : 'auto' }}>
+            <div className="bw-compound-head">
+              <div>
+                <div className="bw-compound-ttl">Staxs — stack BTC automatically</div>
+                <div className="bw-compound-help">
+                  Trading account stays at deposit size. Monthly profits convert to BTC automatically. USDT safety reserve built from profits. <em>&ldquo;Never sell BTC&rdquo;</em> one-way accumulation.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={mode === 'staxs'}
+                className={'toggle-switch' + (mode === 'staxs' ? ' on' : '')}
+                onClick={() => setMode(m => m === 'staxs' ? 'fixed' : 'staxs')}
+                disabled={mode === 'compound'}
+                title={mode === 'compound' ? 'Cannot combine Compound with Staxs' : undefined}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+            <div className="bw-compound-conseq">
+              {mode === 'staxs'
+                ? <><strong>On:</strong> Best for long-term BTC accumulation.</>
+                : <><strong>Off (default):</strong> Profits stay in trading account.</>
+              }
+            </div>
+            {mode === 'staxs' ? (
+              <div className="bw-compound-conseq" style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
+                Backtest: $10k Moderate Staxs accumulated ~$1.5M of BTC over 6.8 years (post-funding).
+              </div>
+            ) : null}
+          </div>
 
-          {/* Worked example block — same numbers v1 hard-codes for $10k Conservative */}
-          <div className="bw-worked-card">
+          {/* Worked example — dynamic per (tier, mode) */}
+          <div className="bw-worked-card" style={{ marginTop: 14 }}>
             <div className="bw-worked-head">
-              Worked example · {TIER_RATIOS[preset].label} tier on ${(capNum || 10000).toLocaleString()} balance
+              Worked example · {ratios.label} tier on ${(capNum || 10000).toLocaleString()} balance
             </div>
             <div className="bw-worked-intro">
-              {TIER_RATIOS[preset].label} = {ratios.mult}× of your balance per position. Same systematic strategy across all 5 basket assets, longs &amp; shorts, with pyramiding on a subset of qualifying winners.
+              {mode === 'fixed' && (
+                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> position notional (per lane). Max concurrent: {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} = ${maxNotional.toLocaleString()} notional.</>
+              )}
+              {mode === 'compound' && (
+                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> initial position notional (per lane). As account grows, positions scale proportionally. Capped at ${compoundCap.toLocaleString()} per lane.</>
+              )}
+              {mode === 'staxs' && (
+                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> position notional (per lane), frozen for life. Profits accumulate as BTC in your reserve.</>
+              )}
             </div>
-            <div className="bw-worked-row">
-              <span>Base entry — any of 5 assets</span>
-              <span className="num">${Math.round((capNum || 10000) * ratios.mult).toLocaleString()} ({ratios.mult}×)</span>
-            </div>
-            <div className="bw-worked-row">
-              <span>Stop loss — {ratios.sl}% from entry</span>
-              <span className="num neg-text">-${Math.round((capNum || 10000) * ratios.mult * (ratios.sl / 100)).toLocaleString()} max / leg</span>
-            </div>
-            <div className="bw-worked-row">
-              <span>After profits — balance ${Math.round((capNum || 10000) * 1.4).toLocaleString()} (Off mode)</span>
-              <span className="num pos-text">unchanged (${Math.round((capNum || 10000) * ratios.mult).toLocaleString()})</span>
-            </div>
-            <div className="bw-worked-row">
-              <span>After profits — balance ${Math.round((capNum || 10000) * 1.4).toLocaleString()} (Compound ON)</span>
-              <span className="num pos-text">${Math.round((capNum || 10000) * 1.4 * ratios.mult).toLocaleString()} ({ratios.mult}×)</span>
-            </div>
+
+            {mode === 'fixed' && (
+              <>
+                <div className="bw-worked-row">
+                  <span>After profits — balance grows to ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()}</span>
+                  <span className="num pos-text">positions STAY ${PER_LANE_NOTIONAL.toLocaleString()} each</span>
+                </div>
+                <div className="bw-worked-row">
+                  <span>20% performance fee extracted monthly from net profit</span>
+                  <span className="num">automatic</span>
+                </div>
+              </>
+            )}
+            {mode === 'compound' && (
+              <>
+                <div className="bw-worked-row">
+                  <span>After profits — balance ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()}</span>
+                  <span className="num pos-text">positions scale to ~${Math.round(PER_LANE_NOTIONAL * 1.4).toLocaleString()} each</span>
+                </div>
+                <div className="bw-worked-row">
+                  <span>Cap reached at ${compoundCap.toLocaleString()} per lane</span>
+                  <span className="num">re-setup wizard required</span>
+                </div>
+              </>
+            )}
+            {mode === 'staxs' && (
+              <>
+                <div className="bw-worked-row">
+                  <span>Month-end · balance ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()} (40% profit)</span>
+                  <span className="num">step 1: top-up reserve</span>
+                </div>
+                <div className="bw-worked-row">
+                  <span>USDT reserve target: $2,000</span>
+                  <span className="num">step 2: remaining → BTC</span>
+                </div>
+                <div className="bw-worked-row">
+                  <span>Trading account resets to ${(capNum || 10000).toLocaleString()} for next month</span>
+                  <span className="num pos-text">BTC stack grows, never sold</span>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Pyramid exposure card — gold-tinted with peak exposure breakdown */}
-          <div className="bw-pyramid-card">
-            <div className="bw-pyramid-head">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
-              Peak exposure (with pyramid)
-            </div>
-            <p className="bw-pyramid-blurb">
-              When a winning trade meets the strategy&apos;s re-entry criteria, the bot adds a single pyramid leg sized at 50% of the base. Peak exposure on <em>{TIER_RATIOS[preset].label}</em> on a ${(capNum || 10000).toLocaleString()} account therefore tops out at <strong>${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} per position</strong> ({(ratios.mult * 1.5).toFixed(2)}× of balance).
-            </p>
-            <div className="bw-pyramid-row">
-              <span>Base entry (no pyramid)</span>
-              <span className="num">${Math.round((capNum || 10000) * ratios.mult).toLocaleString()} · {ratios.mult}×</span>
-            </div>
-            <div className="bw-pyramid-row">
-              <span>+ Pyramid leg (qualifying winner)</span>
-              <span className="num">${Math.round((capNum || 10000) * ratios.mult * 1.5).toLocaleString()} · {(ratios.mult * 1.5).toFixed(2)}×</span>
-            </div>
-            <p className="bw-pyramid-foot">
-              Roughly 1 in 5 winners pyramid. Pyramid losses can exceed the {ratios.sl}% base stop loss because the pyramid enters at a higher price.
-            </p>
-          </div>
-
-          {/* "You stay in control" callout (gold) */}
-          <div className="bw-control-card">
-            <strong>You stay in control.</strong> You can switch tiers (Conservative / Bold / Aggressive) at any time, and withdrawing from your exchange reduces exposure proportionally. Your next trade always sizes from your balance and tier <em>at that moment</em> — nothing is locked in.
+          {/* "You stay in control" callout */}
+          <div className="bw-control-card" style={{ marginTop: 14 }}>
+            <strong>You stay in control.</strong> You can switch tiers and modes anytime, and withdrawing from your exchange reduces exposure proportionally. Compound and Staxs are mutually exclusive — pick one or neither.
           </div>
 
           {/* Compound drawdown warning — only when compound mode is ON */}
-          {compound ? (
+          {mode === 'compound' ? (
             <div className="bw-compound-warn">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span>Compound mode is ON: position scales with your balance, so drawdowns hit larger positions harder. A higher tier means bigger swings in both directions. Pick a tier you can live with through a losing streak <em>at peak exposure</em>.</span>
@@ -1040,13 +1195,13 @@ function BotSettingsWizard({
       {step === 4 && (
         <div className="bw-step-body">
           <div className="bw-step-title">12-Month Projection</div>
-          <div className="bw-step-sub">Based on the 5-asset Satoshi Stacker portfolio backtest (BTC + ETH + SOL + XRP + SUI, 6.8 yr Bitget data). Past performance ≠ future results.</div>
+          <div className="bw-step-sub">Based on the 14-asset Phase H portfolio backtest (6.8 years post-funding Bitget USDT-FUTURES data). Past performance does not predict future results.</div>
 
           <div className="bw-proj-row">
             <ProjStat
               label="Projected Return"
               val={`+$${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}`}
-              sub={`+${bt.annualPct.toFixed(0)}%`}
+              sub={`+${bt.annualPct.toFixed(0)}% (12-month avg from 7Y backtest)`}
               positive
               big
             />
@@ -1058,25 +1213,44 @@ function BotSettingsWizard({
             />
           </div>
 
-          {/* Bottom row — Liquidation Risk in the middle (matches v1 #simLiqRisk).
-              Risk is per-tier: Conservative=Very Low, Bold=Low, Aggressive=Medium. */}
+          {/* Account-level DD = peak portfolio DD × leverage (3× on Moderate ≈ ~23%) */}
           <div className="bw-proj-row">
-            <ProjStat label="Max Drawdown" val={`-${bt.maxDdPct.toFixed(1)}%`} sub={`-$${Math.round(capNum * bt.maxDdPct / 100).toLocaleString()}`} negative />
+            <ProjStat
+              label="Max Drawdown"
+              val={`-${bt.accountDdPct}%`}
+              sub={`peak portfolio DD ${bt.maxDdPct.toFixed(1)}% × ${ratios.leverage}× lev`}
+              negative
+            />
             <ProjStat
               label="Liquidation Risk"
-              val={preset === 'conservative' ? 'Very Low' : preset === 'bold' ? 'Low' : 'Medium'}
-              sub={preset === 'conservative' ? 'No liquidation risk' : preset === 'bold' ? '~50% adverse to liquidate' : '~33% adverse to liquidate'}
+              val={preset === 'conservative' ? 'Very Low' : preset === 'moderate' ? 'Low' : 'Moderate'}
+              sub={preset === 'conservative' ? '~50% adverse to liquidate' : preset === 'moderate' ? '~30% adverse to liquidate' : '~20% adverse to liquidate'}
               positive={preset !== 'aggressive'}
             />
-            <ProjStat label="Risk per Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} sub={`${(maxLoss / capNum * 100).toFixed(1)}% of capital`} />
+            <ProjStat
+              label="Risk per Trade"
+              val={`$${Math.round(maxLoss).toLocaleString()}`}
+              sub={`${ratios.sl}% × $${posSize.toLocaleString()} per lane`}
+            />
           </div>
+
+          {mode === 'staxs' ? (
+            <div className="bw-control-card" style={{ marginTop: 14 }}>
+              <strong>Staxs mode note:</strong> projected return shown above is the trading-account growth equivalent. Under Staxs, that profit converts to BTC monthly — your actual customer value = trading account ({`$${capNum.toLocaleString()}`} steady) + USDT reserve + accumulated BTC stack.
+            </div>
+          ) : null}
+          {mode === 'compound' ? (
+            <div className="bw-control-card" style={{ marginTop: 14 }}>
+              <strong>Compound mode note:</strong> 12-month projection compounds monthly. Cap at {COMPOUND_CAP_MULTIPLIER}× initial deposit (${(capNum * COMPOUND_CAP_MULTIPLIER).toLocaleString()} per lane) constrains the curve once reached.
+            </div>
+          ) : null}
 
           <div className="bw-risk-band">
             <div className="bw-risk-track" />
             <div className="bw-risk-dot" style={{ left: `${bt.riskPos}%` }} />
             <div className="bw-risk-ends">
               <span>Conservative</span>
-              <span>Bold</span>
+              <span>Moderate</span>
               <span>Aggressive</span>
             </div>
           </div>
@@ -1109,13 +1283,43 @@ function BotSettingsWizard({
           ) : null}
 
           <div className="bw-review-card">
-            <div className="bw-review-row"><span>Trading Mode</span><span>{TIER_RATIOS[preset].label}</span></div>
+            <div className="bw-review-row"><span>Tier</span><span>{ratios.label} ({ratios.lanes} lanes / {ratios.leverage}× leverage)</span></div>
             <div className="bw-review-row"><span>Starting Capital</span><span className="num">${capNum.toLocaleString()}</span></div>
-            <div className="bw-review-row"><span>Position Size (per trade)</span><span className="num">${Math.round(posSize).toLocaleString()}</span></div>
-            <div className="bw-review-row"><span>Bitget Leverage</span><span className="num">{ratios.leverage}×</span></div>
-            <div className="bw-review-row"><span>Max Loss / Trade</span><span className="num neg-text">-${Math.round(maxLoss).toLocaleString()}</span></div>
-            <div className="bw-review-row"><span>Compound mode</span><span>{compound ? 'On (proportional)' : 'Off (fixed)'}</span></div>
-            <div className="bw-review-row"><span>Projected Annual Return</span><span className="num pos-text">+${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}</span></div>
+            <div className="bw-review-row"><span>Position Size</span><span className="num">${posSize.toLocaleString()} per lane</span></div>
+            <div className="bw-review-row"><span>Max Concurrent</span><span className="num">{ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} = ${maxNotional.toLocaleString()} notional</span></div>
+            <div className="bw-review-row"><span>Stop Loss</span><span className="num">{ratios.sl}% per position</span></div>
+            <div className="bw-review-row"><span>Max Loss / Trade</span><span className="num neg-text">-${Math.round(maxLoss).toLocaleString()} per lane</span></div>
+            <div className="bw-review-row"><span>Bitget Leverage</span><span className="num">{ratios.leverage}× (tier-matched)</span></div>
+            <div className="bw-review-row"><span>Mode</span><span>{mode === 'fixed' ? 'Fixed Notional (default)' : mode === 'compound' ? `Compound (cap $${(capNum * COMPOUND_CAP_MULTIPLIER).toLocaleString()})` : 'Staxs — Satoshi Stacking'}</span></div>
+            <div className="bw-review-row"><span>Fee Structure</span><span>20% of monthly net profit</span></div>
+            <div className="bw-review-row" style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 8 }}>
+              <span>Projected Return (12-month avg)</span>
+              <span className="num pos-text">+${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}</span>
+            </div>
+            <div className="bw-review-row"><span>Expected Max DD</span><span className="num neg-text">~-{bt.accountDdPct}% on account</span></div>
+            <div className="bw-review-row"><span>Exchange</span><span>Bitget USDT-M Futures</span></div>
+            <div className="bw-review-row"><span>API Status</span><span className="pos-text">✓ Trading enabled · ✓ Withdrawal disabled</span></div>
+          </div>
+
+          {/* Mandatory disclosure checkboxes */}
+          <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-soft, rgba(0,0,0,0.04))', border: '1px solid var(--line)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--muted)', marginBottom: 8 }}>Required Disclosures</div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 0', fontSize: 13 }}>
+              <input type="checkbox" checked={d1} onChange={e => setD1(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>I understand backtest results do not guarantee future performance.</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 0', fontSize: 13 }}>
+              <input type="checkbox" checked={d2} onChange={e => setD2(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>I understand leveraged trading can result in losses, including amounts exceeding initial deposit in extreme scenarios.</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 0', fontSize: 13 }}>
+              <input type="checkbox" checked={d3} onChange={e => setD3(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>I authorize Staxs to execute trades on my Bitget account using the connected API key.</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 0', fontSize: 13 }}>
+              <input type="checkbox" checked={d4} onChange={e => setD4(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>I understand the 20% performance fee is applied to net profit only — no fees on losses.</span>
+            </label>
           </div>
 
           {activateMsg ? (
@@ -1124,11 +1328,11 @@ function BotSettingsWizard({
             </div>
           ) : null}
 
-          <button type="button" className="bw-btn-activate" onClick={activateBot} disabled={activating}>
-            {activating ? 'Activating…' : 'Activate Bot →'}
+          <button type="button" className="bw-btn-activate" onClick={activateBot} disabled={activating || !allDisclosuresAck}>
+            {activating ? 'Activating…' : 'Activate Staxs Bot →'}
           </button>
 
-          {/* Single full-width Back button — matches v1's "← Back to Review Projection" */}
+          {/* Single full-width Back button */}
           <button type="button" className="bw-btn-back-wide" onClick={back}>← Back to Review Projection</button>
         </div>
       )}
@@ -1546,7 +1750,7 @@ function SecurityPanel() {
     try {
       const sb = browserClient()
       await sb.auth.signOut({ scope: 'global' })
-      window.location.href = '/login'
+      window.location.href = 'https://staxs.ai/login'
     } catch {}
   }
 
@@ -1655,6 +1859,80 @@ function PayoutPanel() {
         <button onClick={save} disabled={busy} className="settings-btn-primary">
           {justSaved ? t('profile.saved') : t('payout.save')}
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tour ───────────────────────────────────────────────────────────────────
+
+/**
+ * Tour panel — lets a user replay either onboarding tour on demand. Mirrors
+ * legacy obsidian-dashboard.html "Replay Full Tour" but split into the two
+ * canonical tours from OnboardingTour.tsx.
+ *
+ * Replays use forceTour to bypass the dismissed/completed wizard flags so
+ * the tour fires regardless of state. They don't write any wizard state
+ * back when closed — that's reserved for the first auto-fired run.
+ *
+ * If the user lands here while a tour is auto-firing on the dashboard, we
+ * still let them replay from here — a manual replay always wins.
+ */
+function TourPanel({ active }: { active: boolean }) {
+  const { state } = useWizardState()
+  const [replay, setReplay] = useState<'tour1' | 'tour2' | null>(null)
+  // If the user opens the Tour panel before they've done anything, give
+  // them a hint of where each tour fits. The dashboard tour only highlights
+  // real widgets, so previewing it from Settings would mostly miss its
+  // targets — we navigate to the dashboard with a `?replay=tourN` flag
+  // instead so it spotlights real elements.
+  function openOnDashboard(which: 'tour1' | 'tour2') {
+    try { sessionStorage.setItem('staxs-replay-tour', which) } catch {}
+    window.location.href = '/?replayTour=' + which
+  }
+  if (!active) return null
+  return (
+    <div className="card card-pad settings-card">
+      <h2 className="settings-card-title">Onboarding Tour</h2>
+      <p className="settings-card-sub">
+        Replay either guided walkthrough at any time. Tour 1 covers the dashboard before bot activation;
+        tour 2 covers it after, when live trading data is flowing.
+      </p>
+
+      <div className="settings-field" style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          className="settings-btn-primary"
+          onClick={() => openOnDashboard('tour1')}
+          disabled={!state.step1_complete}
+          title={!state.step1_complete ? 'Connect your exchange first — this tour spotlights live dashboard widgets.' : undefined}
+        >
+          Replay Tour 1 — Dashboard Walkthrough
+        </button>
+        <div className="settings-field-help">
+          The 6-step intro tour: balance, PnL, bot status, and mission tracker.
+        </div>
+      </div>
+
+      <div className="settings-field" style={{ marginTop: 14 }}>
+        <button
+          type="button"
+          className="settings-btn-primary"
+          onClick={() => openOnDashboard('tour2')}
+          disabled={!state.step3_complete}
+          title={!state.step3_complete ? 'Activate your bot first — this tour spotlights live trading widgets.' : undefined}
+        >
+          Replay Tour 2 — Live Trading Walkthrough
+        </button>
+        <div className="settings-field-help">
+          The post-activation tour: open positions, equity curve, recent trades, win rate, mission progress.
+        </div>
+      </div>
+
+      <div className="settings-card-meta" style={{ marginTop: 18 }}>
+        <span>Tour 1: {state.tour1_complete ? 'Completed' : state.tour1_dismissed ? 'Dismissed' : 'Not yet seen'}</span>
+        <span style={{ margin: '0 8px', color: 'var(--muted-2)' }}>·</span>
+        <span>Tour 2: {state.tour2_complete ? 'Completed' : state.tour2_dismissed ? 'Dismissed' : 'Not yet seen'}</span>
       </div>
     </div>
   )
