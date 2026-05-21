@@ -1043,12 +1043,18 @@ function Hero({ data }: { data: StaxDashboardData }) {
         )}
         <div className="label">{t('card.accountBalance')}</div>
         <div className="hero-balance">${data.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-        <span
-          className="tier-pill"
-          style={{ alignSelf: 'flex-start', height: 35, padding: '7px 12px', fontWeight: 500, borderRadius: 999, lineHeight: 1.4, fontSize: 12.5, gap: 8 }}
-        >
-          <Icons.Star size={13} className="star" /> {data.tierLabel}
-        </span>
+        {/* Tier pill only shows once the user has actually activated a bot and
+            chosen a tier. In preview mode (no keys / no activation) the hook
+            falls back to a default 'conservative' label which would mislead
+            a brand-new user into thinking they've already picked a tier. */}
+        {!data.isPreview && (
+          <span
+            className="tier-pill"
+            style={{ alignSelf: 'flex-start', height: 35, padding: '7px 12px', fontWeight: 500, borderRadius: 999, lineHeight: 1.4, fontSize: 12.5, gap: 8 }}
+          >
+            <Icons.Star size={13} className="star" /> {data.tierLabel}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <div className="btc-goal" data-tour="mission">
           <div className="btc-row">
@@ -1087,7 +1093,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
         </div>
         <div className="equity-foot" style={{ color: 'var(--muted)' }}>
           Your ${data.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} balance
-          {' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}
+          {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
           {' · '}last {range.toLowerCase()}
         </div>
       </div>

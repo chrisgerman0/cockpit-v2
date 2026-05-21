@@ -481,6 +481,23 @@ html.light .stax-app .lang-option.is-active {
   display: grid; place-items: center;
   cursor: pointer;
   color: var(--muted);
+  /* Strip user-agent button defaults — Safari (desktop + iOS) otherwise
+     replaces the custom background with its system pill style, which is
+     what was making the bare <button class="icon-btn"> theme toggle render
+     as an icon-only with no visible circular pill. */
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+  /* Lock the 36×36 box. Bare .icon-btn instances (e.g. the theme toggle)
+     sit directly in the .topbar flex row without an inline-flex wrapper —
+     without these the parent's flex-shrink: 1 default squashes them
+     horizontally into a vertical oval (the wrapped siblings stay round
+     because their .*-wrap parents preserve intrinsic sizing). */
+  flex: 0 0 36px;
+  box-sizing: border-box;
 }
 /* Hover shade removed — icons stay static on hover (per user request).
    Cursor still changes to pointer (set on base .icon-btn). */
@@ -893,10 +910,28 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
    theme/hamburger off-screen. Hidden on mobile (the .topbar-btc-pill
    provides a compact BTC-only fallback there). */
 .stax-app .topbar-ticker {
+  /* Scrollable container. The ScrollingTicker JS drives a slow rAF auto-scroll
+     that pauses on hover/drag/wheel/touch; the user can also drag manually
+     (pointer-down on the strip) or wheel-scroll. Native scrollbar hidden so
+     the strip looks like a clean marquee. */
   display: flex; align-items: center;
   flex: 1 1 auto; min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: auto;          /* rAF + drag handle motion themselves */
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* old Edge / IE */
+  cursor: grab;
+  touch-action: pan-x;            /* allow horizontal pan, suppress vertical scroll hijack */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.stax-app .topbar-ticker::-webkit-scrollbar { display: none; }
+.stax-app .topbar-ticker:active { cursor: grabbing; }
+.stax-app .topbar-ticker-track {
+  display: flex; align-items: center;
   gap: 14px;
-  overflow: hidden;
+  flex: 0 0 auto;                 /* never shrink — overflow drives the scroll */
 }
 .stax-app .topbar-ticker .tk-item {
   /* Tighter padding than the standalone ticker — topbar is height-constrained */
@@ -905,10 +940,14 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
   flex: 0 0 auto;
 }
 .stax-app .topbar-ticker .tk-spark { width: 38px; flex: 0 0 38px; }
-.stax-app .topbar-ticker .tk-end {
-  padding: 0;
-  margin-left: auto;
+/* Live + latency badge — pinned to the right of the topbar, never scrolls
+   with the marquee. Sibling of .topbar-ticker, not inside it. */
+.stax-app .topbar-tk-end {
+  flex: 0 0 auto;
+  padding: 0 4px 0 12px;
+  margin-left: 8px;
   gap: 12px;
+  border-left: 1px solid var(--line);
 }
 @media (max-width: 1280px) {
   /* Drop sparklines first when space gets tight */
@@ -920,8 +959,11 @@ html.light .stax-app .slider-thumb { border-color: #fff8e0; }
   .stax-app .topbar-ticker .tk-item .neg-text { display: none; }
 }
 @media (max-width: 768px) {
-  /* Mobile: hide the embedded ticker entirely; the topbar-btc-pill takes over */
-  .stax-app .topbar-ticker { display: none; }
+  /* Mobile: hide the embedded ticker entirely; the topbar-btc-pill takes over.
+     The pinned Live/latency badge piggybacks on the same breakpoint — pointless
+     without the marquee next to it. */
+  .stax-app .topbar-ticker,
+  .stax-app .topbar-tk-end { display: none; }
 }
 /* Latency indicator inside the ticker. Color tracks WS RTT health: good
    (gold), mid (amber), high (red), stale (muted) when disconnected. */
@@ -2078,14 +2120,40 @@ html.light .stax-app .mobile-bottom-nav {
      Left padding kept tight (8px) so the logo sits flush with where the
      content card edges land below it — feels properly anchored to the
      leftmost content rail. */
-  .stax-app .topbar { padding: 10px 8px 10px 8px; gap: 8px; }
+  .stax-app .topbar { padding: 10px 8px 10px 8px; gap: 6px; }
   .stax-app .topbar-brand { display: flex; padding-left: 2px; }
   .stax-app .desktop-only { display: none !important; }
   .stax-app .mobile-only { display: inline-flex; }
-  .stax-app .topbar .pill { padding: 6px 10px; font-size: 12px; }
-  .stax-app .topbar .pill .num { font-size: 12px; }
-  .stax-app .topbar .icon-btn { width: 32px; height: 32px; }
+  .stax-app .topbar .pill { padding: 4px 8px; font-size: 11px; gap: 4px; }
+  .stax-app .topbar .pill .num { font-size: 11px; }
+  /* `flex: 0 0 32px` is REQUIRED here — the base .icon-btn rule sets
+     `flex: 0 0 36px` (the fix for the bare theme-toggle oval issue), and
+     without overriding the basis the @media rule's `width: 32px` only
+     squashes the box on one axis (oval). */
+  .stax-app .topbar .icon-btn { flex: 0 0 32px; width: 32px; height: 32px; }
   .stax-app .topbar .seg button { padding: 5px 8px; }
+
+  /* Latency badge: visible on mobile too — Chris's deliberate design
+     choice. Shrink to colored-dot + ms by hiding the "Live" word and the
+     redundant Signal icon. The earlier `display: none` at line 966 is
+     overridden here with higher specificity (`.topbar .topbar-tk-end`). */
+  .stax-app .topbar .topbar-tk-end {
+    display: flex;
+    gap: 5px;
+    padding: 0 4px 0 6px;
+    margin-left: 2px;
+    border-left: none;
+    font-size: 11px;
+  }
+  .stax-app .topbar .topbar-tk-end > span:first-child > .live { display: none; }
+  .stax-app .topbar .topbar-tk-end .tk-latency { gap: 0; padding: 0; }
+  .stax-app .topbar .topbar-tk-end .tk-latency > svg { display: none; }
+  .stax-app .topbar .topbar-tk-end .tk-latency .num { font-size: 11px; }
+
+  /* BTC pill: keep visible (the topbar is the only price reference on
+     mobile — the inline ticker is hidden). Compress to icon + price; the
+     pill rule above already drops padding + font-size. */
+  .stax-app .topbar .topbar-btc-pill img { width: 14px; height: 14px; flex: 0 0 14px; }
 
   /* Mobile nav appears, content needs space for it */
   .stax-app .mobile-bottom-nav { display: flex; }
@@ -2155,12 +2223,54 @@ html.light .stax-app .mobile-bottom-nav {
   .stax-app .stax-footer { padding: 24px 16px 18px; gap: 10px; margin: 4px 8px 0; }
 }
 
-/* Very small phones */
-@media (max-width: 380px) {
+/* Live Trading mobile — additional layout fixes beyond the card swap.
+   At narrow widths the OPEN POSITIONS card was being held wide by the
+   inline-flex filter-pill group (8 coin buttons in a non-wrapping row =
+   ~400-560px). Forcing wrap lets the card collapse to viewport width.
+   Min-width:0 on intermediate flex/grid items breaks the wide-child
+   propagation that was stretching .stax-page and its siblings. */
+@media (max-width: 768px) {
+  .stax-app .bt-tier-pills {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .stax-app .bt-trades-filters {
+    gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .stax-app .bt-filter-group {
+    flex-wrap: wrap;
+  }
+  .stax-app .stax-page,
+  .stax-app .bt-header,
+  .stax-app .row-stats,
+  .stax-app .card.card-pad { min-width: 0; }
+  /* bt-blurb has an inline maxWidth:600 from JSX — override so it can
+     never exceed the parent (which is now correctly viewport-constrained). */
+  .stax-app .bt-blurb { max-width: 100% !important; }
+  /* Card pad tighter on phone */
+  .stax-app .card.card-pad { padding: 14px 14px; }
+  /* bt-header padding tighter */
+  .stax-app .bt-header { padding: 0 4px; }
+  .stax-app .bt-eyebrow { padding-left: 0 !important; }
+}
+
+/* iPhone-class portrait widths — hide brand name to free 52px for the
+   topbar controls (icon alone still reads as Staxs). Bumped from <380
+   to <420 because the previous threshold left the brand name pushing
+   the controls off-screen on iPhone SE / 15 Pro / Pixel 8 (375–412px). */
+@media (max-width: 420px) {
   .stax-app .topbar-brand-name { display: none; }
-  .stax-app .topbar .pill { padding: 5px 8px; }
-  .stax-app .topbar .pill .num { font-size: 11px; }
+  .stax-app .topbar .pill { padding: 3px 7px; }
+  .stax-app .topbar .pill .num { font-size: 10.5px; }
   .stax-app .row-stats { grid-template-columns: repeat(2, 1fr); }
+  /* Pulse cell hardening on tightest widths — force the price row to
+     wrap if peak/trail prices are long. */
+  .stax-app .lt-sl-cell .lt-sl-prices { white-space: normal; }
+  /* Tier pills smaller font when wrapped */
+  .stax-app .bt-tier-pill { padding: 6px 12px; font-size: 11px; height: 28px; }
 }
 
 /* ── Bot Settings Wizard (settings/bot · "Reconfigure bot") ───────── */
@@ -4447,24 +4557,180 @@ html.light .stax-app .adm-log-tail {
      - in loss    → red, grows toward 100% as price approaches the 4% SL
      - critical   → red flashes inside 0.5% of SL hit
    Closed trades go to TRADE HISTORY which keeps the literal reason text. */
+
+/* ───────────────────────────────────────────────────────────────────
+   Live Trading — MOBILE card layout (≤768px)
+   The desktop 9-column table can't fit a 393px viewport. Mobile hides
+   the table and renders one card per trade with stacked rows. Same data,
+   same pagination — markup only. Cards use the existing theme tokens
+   (--card, --line, --text, --muted) so both light + dark themes work
+   without extra rules.
+   ─────────────────────────────────────────────────────────────────── */
+.stax-app .lt-cards { display: none; }
+@media (max-width: 768px) {
+  .stax-app .lt-table-wrap { display: none; }
+  .stax-app .lt-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 12px;
+  }
+}
+.stax-app .lt-cards-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stax-app .lt-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stax-app .lt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stax-app .lt-card-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.stax-app .lt-card-logo {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #0e0e13;
+  display: inline-block;
+  flex: 0 0 22px;
+}
+.stax-app .lt-card-logo img { width: 100%; height: 100%; object-fit: cover; }
+.stax-app .lt-card-sym {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.stax-app .lt-card-idx {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stax-app .lt-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+.stax-app .lt-card-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.stax-app .lt-card-label {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+.stax-app .lt-card-val {
+  font-size: 12px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.stax-app .lt-card-ts {
+  font-size: 10px;
+  color: var(--muted-2, var(--muted));
+  font-weight: 400;
+}
+.stax-app .lt-card-pnl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+}
+.stax-app .lt-card-pnl .bt-open-label {
+  margin-right: auto;
+  font-size: 11px;
+}
+.stax-app .lt-card-last {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.stax-app .lt-card-reason {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+/* Inside the card, the Pulse cell drops its min-width lock — the card
+   itself provides the layout container at 100% card width. */
+.stax-app .lt-card-last .lt-sl-cell {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .stax-app .lt-sl-cell {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 150px;
+  /* Fill the whole <td>. min-width keeps captions on one line at
+     standard desktop widths but is low enough that the whole table
+     fits ~1000px of card width without a horizontal scrollbar. Was
+     320 (too tight a constraint for the surrounding column widths);
+     240 fits all caption strings ("Trailing · 5.83% to take profit",
+     "Peak $1.5073 · Trail $1.4922") cleanly in mono at 10px. */
+  width: 100%;
+  min-width: 240px;
+  box-sizing: border-box;
+  /* Lock vertical height so caption swaps don't shift table rows. */
+  min-height: 44px;
+  justify-content: flex-start;
+  /* Override the global `tbody td:last-child { text-align: right }`
+     so the bar + caption flow left-to-right naturally, matching the
+     bar's fill direction. */
+  text-align: left;
+  /* Tabular figures so digit-width never changes when a number ticks. */
+  font-variant-numeric: tabular-nums;
 }
 .stax-app .lt-sl-bar { width: 100%; height: 7px; position: relative; }
 .stax-app .lt-sl-bar .adm-meter-fill {
-  /* Width animation handles the green-shrinks-then-red-grows transition
-     gracefully when price crosses entry. The class swap (pos→red) is
-     instant but the width passing through 0 makes it look smooth. */
-  transition: width 0.3s ease, background 0.3s ease;
+  /* Cell updates are throttled to ~750ms (see useThrottledValue in
+     SLDangerCell). A 600ms transition + small idle window = each value
+     change animates cleanly into the next without overlapping into a
+     rubber-band. ease-out so the bar settles into its target rather
+     than overshooting at the end. */
+  transition: width 0.6s ease-out, background 0.4s ease-out;
+  will-change: width;
 }
 .stax-app .lt-sl-text {
   font-size: 10px;
   color: var(--muted);
   font-family: 'JetBrains Mono', monospace;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* Inline numeric span used inside captions / prices. Forces tabular
+   digits even if the parent font-family ever drifts. Same colour as
+   parent so it inherits state (red/green/muted) automatically. */
+.stax-app .lt-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 /* Critical flash — last 0.5% before SL hit. Pulses the red fill brighter
@@ -4475,6 +4741,67 @@ html.light .stax-app .adm-log-tail {
 @keyframes lt-sl-flash {
   from { filter: none;                            box-shadow: none; }
   to   { filter: brightness(1.25) saturate(1.15); box-shadow: 0 0 6px rgba(var(--neg-rgb), 0.55); }
+}
+
+/* Optional second caption row showing the swing-high and (when the
+   engine has committed a real floor) the trail node price + gap %.
+   Smaller and muter than the main caption so it reads as supporting
+   detail without competing with the state label. */
+.stax-app .lt-sl-prices {
+  font-size: 9.5px;
+  color: var(--muted-2);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stax-app .lt-sl-prices-gap {
+  color: var(--muted);
+}
+
+/* Trail-meter warning mark — only rendered for the locked state when
+   we have both trailFloor and swing-high. Positioned at 20% of the bar
+   width as a fixed reference line; the green fill shrinks toward it
+   on a retrace, giving an at-a-glance sense of how close the trade is
+   to its trailing exit. */
+.stax-app .lt-trail-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.4;
+  border-radius: 1px;
+  transform: translateX(-1px);
+  pointer-events: none;
+  z-index: 2;
+}
+.stax-app.light .lt-trail-mark,
+html.light .stax-app .lt-trail-mark { background: var(--text); opacity: 0.55; }
+
+/* Projected variant — used when the API is synthesizing the trail location
+   because the engine hasn't yet committed (still inside the reprieve
+   window). Visual signal: gold colour + slow pulse, so the user can see
+   at a glance that this trail isn't locked yet. Three changes vs the
+   solid `.lt-trail-mark`: (1) brand gold instead of text-color (warm
+   "waiting" tone vs cold "locked" tone), (2) +1px wider for legibility
+   on small bars, (3) gentle opacity pulse to convey not-yet-active. */
+.stax-app .lt-trail-mark-projected {
+  background: var(--gold);
+  width: 3px;
+  opacity: 0.9;
+  box-shadow: 0 0 4px rgba(212, 160, 23, 0.55);
+  animation: lt-trail-projected-pulse 2.4s ease-in-out infinite;
+}
+.stax-app.light .lt-trail-mark-projected,
+html.light .stax-app .lt-trail-mark-projected {
+  background: var(--gold);
+  opacity: 1;
+  box-shadow: 0 0 3px rgba(184, 134, 11, 0.45);
+}
+@keyframes lt-trail-projected-pulse {
+  0%, 100% { opacity: 0.9; }
+  50%      { opacity: 0.55; }
 }
 
 /* LOCKED state — once a position can no longer lose, the bar goes solid
@@ -4683,4 +5010,562 @@ html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(
 }
 .stax-app .adm-parity-status {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BALANCE CARD — preview-state pill + connected-state watermark.
+
+   Two mutually-exclusive decorations sit in the same area of the balance
+   card (top-right corner of the empty space between the tier pill and the
+   BTC goal slider). In preview state (user hasn't connected keys / no
+   bot yet) we show a soft-gold "BACKTEST PREVIEW" pill so it's obvious
+   the $X balance is the strategy's notional base, not real money. Once
+   connected, the pill is replaced by a faint Staxs icon watermark — a
+   subtle "this is yours now" mark.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.stax-app .balance-card { position: relative; overflow: hidden; }
+
+.stax-app .balance-preview-pill {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);
+  text-transform: uppercase;
+  white-space: nowrap;
+  z-index: 2;
+  cursor: help;
+  /* Sit above the watermark + content but below the spotlight. */
+}
+.stax-app .balance-preview-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 6px var(--gold);
+  animation: balPreviewDot 1.8s ease-in-out infinite;
+}
+@keyframes balPreviewDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .55; transform: scale(.8); }
+}
+
+.stax-app .balance-watermark {
+  position: absolute;
+  /* Anchored to the right side of the card, vertically centered in the
+     empty space between the tier pill and the BTC goal slider. */
+  right: -8%;
+  top: 50%;
+  width: 56%;
+  max-width: 220px;
+  height: auto;
+  transform: translateY(-50%) rotate(-6deg);
+  opacity: .07;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+  /* Soft gold cast so the icon picks up the card's accent in either theme. */
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--gold) 30%, transparent));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .stax-app .balance-watermark {
+    transition: opacity .4s ease;
+  }
+  .stax-app .balance-card:hover .balance-watermark {
+    opacity: .11;
+  }
+}
+
+/* Make sure card body content sits above the watermark. */
+.stax-app .balance-card > .label,
+.stax-app .balance-card > .hero-balance,
+.stax-app .balance-card > .tier-pill,
+.stax-app .balance-card > .btc-goal {
+  position: relative;
+  z-index: 1;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ONBOARDING — banner (3-step progress strip) + custom tour engine.
+   Banner shows above the dashboard until step3_complete; tour fires on
+   top of the dashboard with a pulsing spotlight and arrow callout.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Banner ─────────────────────────────────────────────────────────── */
+
+.ob-banner {
+  position: relative;
+  margin: 0 0 14px;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--gold) 6%, transparent), color-mix(in srgb, var(--gold) 2%, transparent)),
+    var(--card);
+  padding: 12px 14px;
+  /* Pulsing gold halo — the border itself comes from the ::before layer
+     so we can animate the glow independently of the card content. */
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
+  animation: obBannerPulse 2.4s ease-in-out infinite;
+}
+.ob-banner::before {
+  /* Soft outer aura — drawn just outside the card with a wider blur so the
+     banner looks like it's gently breathing. Uses the same gold token in
+     both themes (dark = brighter gold #D4A017, light = darker #B8860B). */
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 14px;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--gold) 18%, transparent), transparent 70%),
+    radial-gradient(60% 100% at 50% 100%, color-mix(in srgb, var(--gold) 14%, transparent), transparent 70%);
+  filter: blur(8px);
+  opacity: .85;
+  animation: obBannerAura 3.6s ease-in-out infinite;
+  z-index: -1;
+}
+@keyframes obBannerPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--gold) 16%, transparent) inset,
+      0 0 0 0 color-mix(in srgb, var(--gold) 18%, transparent),
+      0 6px 22px -10px color-mix(in srgb, var(--gold) 40%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--gold) 28%, transparent) inset,
+      0 0 0 4px color-mix(in srgb, var(--gold) 10%, transparent),
+      0 10px 30px -10px color-mix(in srgb, var(--gold) 55%, transparent);
+  }
+}
+@keyframes obBannerAura {
+  0%, 100% { opacity: .65; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.01); }
+}
+.ob-banner-placeholder {
+  visibility: hidden;
+  min-height: 64px;
+}
+.ob-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ob-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 4px;
+}
+.ob-step-dot {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px;
+  border: 1.5px solid var(--muted-2);
+  color: var(--muted);
+  background: var(--card-2);
+  transition: border-color .25s ease, color .25s ease, background .25s ease, box-shadow .25s ease;
+}
+.ob-step-num {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  line-height: 1;
+}
+.ob-step-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: var(--muted);
+  transition: color .25s ease;
+}
+.ob-step-current .ob-step-dot {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, var(--card));
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--gold) 14%, transparent),
+    0 0 14px -2px color-mix(in srgb, var(--gold) 45%, transparent);
+  animation: obStepPulse 2.4s ease-in-out infinite;
+}
+.ob-step-current .ob-step-label {
+  color: var(--gold);
+}
+.ob-step-complete .ob-step-dot {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 18%, var(--card));
+}
+.ob-step-complete .ob-step-label {
+  color: color-mix(in srgb, var(--gold) 70%, var(--text));
+}
+.ob-step-pending .ob-step-dot { opacity: .72; }
+
+.ob-connector {
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 2px;
+  background: color-mix(in srgb, var(--muted-2) 70%, transparent);
+  border-radius: 1px;
+}
+.ob-connector-done {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 70%, transparent), color-mix(in srgb, var(--gold) 50%, transparent));
+}
+
+.ob-banner-cta-wrap {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+/* Primary CTA — premium gold gradient with depth. Three signals make
+   this read unambiguously as a BUTTON (not a label/badge):
+     1. Vertical gradient (gold-hi → gold → gold-dim) gives a physical
+        "lit from above" feel.
+     2. Two inset shadows — bright white top highlight + dark bottom
+        shadow — sell the depth.
+     3. Soft outer gold glow underneath floats the button slightly off
+        the page.
+   Background is very lightly translucent (95% opacity on the gradient
+   stops) so the underlying card surface bleeds through enough to feel
+   "alive" but the contrast is still high. Dark text in both themes —
+   gold is bright enough in dark mode that dark-on-gold remains the
+   right legibility move. Hover triggers a subtle left-to-right shine
+   sweep via the ::after layer.
+   Class is exposed as .stax-btn-gold for site-wide adoption. */
+.ob-banner-cta,
+.stax-btn-gold {
+  position: relative;
+  overflow: hidden;  /* clip the shine sweep */
+  display: inline-flex; align-items: center; gap: 8px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--gold-hi) 96%, transparent) 0%,
+      color-mix(in srgb, var(--gold) 95%, transparent) 55%,
+      color-mix(in srgb, var(--gold-dim) 95%, transparent) 100%);
+  color: #14130a;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: .01em;
+  padding: 10px 20px 10px 18px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--gold-hi) 85%, transparent);
+  text-decoration: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.40),     /* glossy top */
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10),          /* darker bottom edge */
+    inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent), /* inner gold rim */
+    0 8px 24px -8px color-mix(in srgb, var(--gold) 65%, transparent), /* glow halo */
+    0 2px 4px rgba(0, 0, 0, 0.08);
+  transition:
+    background .2s ease,
+    border-color .2s ease,
+    transform .15s ease,
+    box-shadow .2s ease;
+  -webkit-tap-highlight-color: transparent;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+  isolation: isolate;
+}
+/* Shine sweep — a translucent diagonal highlight that slides across
+   the button on hover. Pure CSS, no JS. Subtle by design — adds life
+   without being distracting. */
+.ob-banner-cta::after,
+.stax-btn-gold::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.28) 45%,
+    rgba(255, 255, 255, 0.18) 55%,
+    transparent 70%);
+  transform: translateX(-110%);
+  pointer-events: none;
+  z-index: 1;
+}
+.ob-banner-cta:hover,
+.stax-btn-gold:hover {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--gold-hi) 100%, transparent) 0%,
+      color-mix(in srgb, var(--gold) 100%, transparent) 55%,
+      color-mix(in srgb, var(--gold-dim) 100%, transparent) 100%);
+  border-color: var(--gold-hi);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
+    inset 0 0 0 1px color-mix(in srgb, var(--gold) 40%, transparent),
+    0 14px 32px -10px color-mix(in srgb, var(--gold) 75%, transparent),
+    0 4px 8px rgba(0, 0, 0, 0.10);
+}
+.ob-banner-cta:hover::after,
+.stax-btn-gold:hover::after {
+  animation: stxGoldShine .9s ease-out;
+}
+@keyframes stxGoldShine {
+  to { transform: translateX(110%); }
+}
+.ob-banner-cta:active,
+.stax-btn-gold:active {
+  transform: translateY(0);
+  box-shadow:
+    inset 0 1px 1px rgba(0, 0, 0, 0.12),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.20),
+    inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent),
+    0 4px 12px -6px color-mix(in srgb, var(--gold) 50%, transparent);
+}
+.ob-banner-cta:focus-visible,
+.stax-btn-gold:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.40),
+    inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--gold) 35%, transparent),
+    0 8px 24px -8px color-mix(in srgb, var(--gold) 65%, transparent);
+}
+/* Make sure label sits above the shine layer. */
+.ob-banner-cta > *,
+.stax-btn-gold > * { position: relative; z-index: 2; }
+
+@keyframes obStepPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--gold) 14%, transparent),
+      0 0 14px -2px color-mix(in srgb, var(--gold) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--gold) 6%, transparent),
+      0 0 22px -2px color-mix(in srgb, var(--gold) 60%, transparent);
+  }
+}
+
+/* ── Tour engine ────────────────────────────────────────────────────── */
+
+.otr-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+.otr-mask {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+/* Crisp inner edge of the spotlight — gold rim drawn just outside the hole. */
+.otr-ring {
+  position: fixed;
+  border-radius: 10px;
+  pointer-events: none;
+}
+.otr-ring-edge {
+  box-shadow:
+    0 0 0 1.5px var(--gold),
+    0 0 24px -2px color-mix(in srgb, var(--gold) 75%, transparent);
+}
+/* Slower outer ripple — gives the "pulsing" feel without overpowering. */
+.otr-ring-pulse {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--gold) 25%, transparent),
+    0 0 0 9px color-mix(in srgb, var(--gold) 10%, transparent);
+  animation: otrPulse 1.8s ease-in-out infinite;
+}
+@keyframes otrPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--gold) 25%, transparent),
+      0 0 0 9px color-mix(in srgb, var(--gold) 8%, transparent);
+    opacity: 1;
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px color-mix(in srgb, var(--gold) 14%, transparent),
+      0 0 0 18px color-mix(in srgb, var(--gold) 4%, transparent);
+    opacity: .85;
+  }
+}
+
+/* The callout card. position:fixed; engine sets top/left/width inline. */
+.otr-callout {
+  position: fixed;
+  pointer-events: auto;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--gold) 28%, transparent);
+  border-radius: 14px;
+  padding: 18px 18px 14px;
+  box-shadow:
+    0 24px 60px -12px rgba(0,0,0,0.55),
+    0 0 0 1px color-mix(in srgb, var(--gold) 8%, transparent) inset;
+  animation: otrCalloutIn .22s ease-out;
+}
+@keyframes otrCalloutIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Arrow — solid gold triangle pointing toward the target. Each .otr-place-*
+   class flips its position + the rotation so it sits on the right edge. */
+.otr-arrow {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--gold) 28%, transparent);
+  transform: rotate(45deg);
+}
+.otr-place-bottom .otr-arrow {
+  top: -8px; left: 50%; margin-left: -7px;
+  border-right: none; border-bottom: none;
+}
+.otr-place-top .otr-arrow {
+  bottom: -8px; left: 50%; margin-left: -7px;
+  border-left: none; border-top: none;
+}
+.otr-place-right .otr-arrow {
+  left: -8px; top: 50%; margin-top: -7px;
+  border-right: none; border-top: none;
+}
+.otr-place-left .otr-arrow {
+  right: -8px; top: 50%; margin-top: -7px;
+  border-left: none; border-bottom: none;
+}
+
+.otr-close {
+  position: absolute;
+  top: 8px; right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background .15s ease, color .15s ease;
+}
+.otr-close:hover { background: color-mix(in srgb, var(--muted-2) 30%, transparent); color: var(--text); }
+
+.otr-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 8px;
+}
+.otr-eyebrow-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold);
+  animation: otrEyebrowDot 1.6s ease-in-out infinite;
+}
+@keyframes otrEyebrowDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .55; transform: scale(.85); }
+}
+.otr-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: .002em;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.otr-body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.otr-note {
+  font-size: 12px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--gold) 4%, var(--card-2));
+  border: 1px solid color-mix(in srgb, var(--gold) 15%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+}
+.otr-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.otr-btn {
+  flex: 1;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+}
+.otr-btn-ghost {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--muted-2) 70%, transparent);
+  color: var(--muted);
+}
+.otr-btn-ghost:hover {
+  border-color: var(--muted);
+  color: var(--text);
+}
+.otr-btn-primary {
+  background: var(--gold);
+  color: #0a0a0f;
+  border-color: var(--gold);
+}
+.otr-btn-primary:hover {
+  background: var(--gold-hi);
+  border-color: var(--gold-hi);
+  transform: translateY(-1px);
+}
+
+.otr-progress {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+.otr-progress-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted-2) 70%, transparent);
+  transition: background .2s ease, width .2s ease;
+}
+.otr-progress-dot-on {
+  background: var(--gold);
+  width: 18px;
+  border-radius: 3px;
+}
+
+/* Mobile / narrow viewport: callout floats to the bottom-center, full width. */
+@media (max-width: 640px) {
+  .otr-callout {
+    width: auto !important;
+    left: 12px !important;
+    right: 12px !important;
+    top: auto !important;
+    bottom: 16px !important;
+  }
+  .otr-arrow { display: none; }
 }
