@@ -516,20 +516,23 @@ const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive', number> 
 }
 
 // Tier ratios — Phase H schema (2026-05-21).
-// Tier = (lanes, leverage). Each lane is sized at PER_LANE_NOTIONAL ($10,000)
-// regardless of tier. Tier choice controls how many concurrent lanes (FCFS
-// allocator caps at this number) and what leverage each lane runs at.
-// SL is 4% of entry across the basket.
+// Tier = (lanes, leverage). Per-lane notional = the user's starting capital.
+// Tier choice controls how many concurrent lanes (FCFS allocator caps at this
+// number) and what leverage each lane runs at. SL is 4% of entry across basket.
 //
 // Phase H invariants (locked 2026-05-20):
-//   conservative: 2 lanes × 2× leverage = $20k max notional / $10k margin
-//   moderate:     3 lanes × 3× leverage = $30k max notional / $10k margin
-//   aggressive:   5 lanes × 5× leverage = $50k max notional / $10k margin
+//   conservative: 2 lanes × 2× leverage = 2× capital max notional / 100% margin at full
+//   moderate:     3 lanes × 3× leverage = 3× capital max notional / 100% margin at full
+//   aggressive:   5 lanes × 5× leverage = 5× capital max notional / 100% margin at full
 //
-// Each lane's max single-trade loss = $10k × 4% = $400. With all 3 lanes
-// max-occupied on Moderate, simultaneous SL = $1,200 = 12% of starting capital.
-const PER_LANE_NOTIONAL = 10_000 as const
-const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× initial
+// Because leverage == lanes, full-lane utilisation uses exactly 100% of capital
+// as margin. Per-lane notional always equals capital — letting users dial in
+// a portion of their balance (e.g. $5k on a $10k account) cleanly scales every
+// downstream metric (position size, max loss, max concurrent) proportionally.
+//
+// Max single-trade loss per lane = capital × 4% SL. On Moderate with all 3
+// lanes occupied simultaneously, max simultaneous SL = capital × 12%.
+const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× capital_initial
 
 const TIER_RATIOS = {
   conservative: { lanes: 2, leverage: 2, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
@@ -772,24 +775,21 @@ function BotSettingsWizard({
   const ratios = TIER_RATIOS[preset]
   const bt = TIER_BACKTEST[preset]
   const capNum = Math.max(0, Number(capital) || 0)
-  // Position size per lane is fixed at PER_LANE_NOTIONAL ($10k) regardless
-  // of capital, except in compound mode where it scales with balance up to
-  // COMPOUND_CAP_MULTIPLIER × the initial. Capital sets the margin pool,
-  // not the per-trade notional.
-  const posSize = (() => {
-    if (mode === 'compound') {
-      // Compound: each lane = (current balance × lanes) / lanes = balance/lane
-      // Wait — actually per Chris's spec, compound scales position with balance:
-      // position size = current_balance / starting_capital × PER_LANE_NOTIONAL
-      // capped at COMPOUND_CAP_MULTIPLIER × PER_LANE_NOTIONAL.
-      // Without a live "current balance", we display the initial = PER_LANE_NOTIONAL.
-      return PER_LANE_NOTIONAL
-    }
-    return PER_LANE_NOTIONAL
-  })()
-  const maxNotional = ratios.lanes * PER_LANE_NOTIONAL
+  // Position size per lane = the user's starting capital.
+  //   The tier design (Conservative 2L/2×, Moderate 3L/3×, Aggressive 5L/5×)
+  //   uses leverage = lane_count, so at full utilisation the customer's
+  //   total margin used is exactly capital_initial (100%).
+  //
+  //   posSize per lane × lanes = capital × leverage = max notional exposure.
+  //
+  // In Fixed and Staxs modes posSize is LOCKED at capital_initial — even if
+  // the account grows or shrinks. Compound mode scales posSize with balance,
+  // capped at COMPOUND_CAP_MULTIPLIER × capital_initial per lane.
+  const posSize = capNum  // displayed as the locked initial; backend uses
+                          // current_balance for compound at execute-signal time
+  const maxNotional = ratios.lanes * capNum
   const maxLoss = posSize * (ratios.sl / 100)
-  const compoundCap = PER_LANE_NOTIONAL * COMPOUND_CAP_MULTIPLIER
+  const compoundCap = capNum * COMPOUND_CAP_MULTIPLIER
   const overBalance = maxBalance > 0 && capNum > maxBalance
   const allDisclosuresAck = d1 && d2 && d3 && d4
 
@@ -836,7 +836,7 @@ function BotSettingsWizard({
           capital_initial: capNum,
           lanes_active: ratios.lanes,
           leverage_multiplier: ratios.leverage,
-          per_lane_notional_usd: PER_LANE_NOTIONAL,
+          per_lane_notional_usd: capNum,
           compound_enabled: mode === 'compound',
           staxs_enabled: mode === 'staxs',
           compound_cap_usd: mode === 'compound' ? capNum * COMPOUND_CAP_MULTIPLIER : null,
@@ -1033,7 +1033,7 @@ function BotSettingsWizard({
             </div>
 
             <div className="bw-explain">
-              <strong>How it works:</strong> Each lane uses ${PER_LANE_NOTIONAL.toLocaleString()} notional. {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.
+              <strong>How it works:</strong> Each lane uses ${capNum.toLocaleString()} notional (matches your starting capital). {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.
             </div>
           </div>
 
@@ -1053,7 +1053,7 @@ function BotSettingsWizard({
           {/* Default-state card — visible when both toggles OFF */}
           {mode === 'fixed' ? (
             <div className="bw-control-card" style={{ marginBottom: 14 }}>
-              <strong>Default — Fixed Notional.</strong> Position size frozen at setup ({`$${PER_LANE_NOTIONAL.toLocaleString()} per lane`}). Profits accumulate in your account. 20% performance fee extracted monthly from net profit. Lowest risk scaling.
+              <strong>Default — Fixed Notional.</strong> Position size frozen at setup ({`$${capNum.toLocaleString()} per lane`}). Profits accumulate in your account. 20% performance fee extracted monthly from net profit. Lowest risk scaling.
             </div>
           ) : null}
 
@@ -1127,13 +1127,13 @@ function BotSettingsWizard({
             </div>
             <div className="bw-worked-intro">
               {mode === 'fixed' && (
-                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> position notional (per lane). Max concurrent: {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} = ${maxNotional.toLocaleString()} notional.</>
+                <>Each trade: <strong>${capNum.toLocaleString()}</strong> position notional (per lane). Max concurrent: {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} = ${maxNotional.toLocaleString()} notional.</>
               )}
               {mode === 'compound' && (
-                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> initial position notional (per lane). As account grows, positions scale proportionally. Capped at ${compoundCap.toLocaleString()} per lane.</>
+                <>Each trade: <strong>${capNum.toLocaleString()}</strong> initial position notional (per lane). As account grows, positions scale proportionally. Capped at ${compoundCap.toLocaleString()} per lane.</>
               )}
               {mode === 'staxs' && (
-                <>Each trade: <strong>${PER_LANE_NOTIONAL.toLocaleString()}</strong> position notional (per lane), frozen for life. Profits accumulate as BTC in your reserve.</>
+                <>Each trade: <strong>${capNum.toLocaleString()}</strong> position notional (per lane), frozen for life. Profits accumulate as BTC in your reserve.</>
               )}
             </div>
 
@@ -1141,7 +1141,7 @@ function BotSettingsWizard({
               <>
                 <div className="bw-worked-row">
                   <span>After profits — balance grows to ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()}</span>
-                  <span className="num pos-text">positions STAY ${PER_LANE_NOTIONAL.toLocaleString()} each</span>
+                  <span className="num pos-text">positions STAY ${capNum.toLocaleString()} each</span>
                 </div>
                 <div className="bw-worked-row">
                   <span>20% performance fee extracted monthly from net profit</span>
@@ -1153,7 +1153,7 @@ function BotSettingsWizard({
               <>
                 <div className="bw-worked-row">
                   <span>After profits — balance ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()}</span>
-                  <span className="num pos-text">positions scale to ~${Math.round(PER_LANE_NOTIONAL * 1.4).toLocaleString()} each</span>
+                  <span className="num pos-text">positions scale to ~${Math.round(capNum * 1.4).toLocaleString()} each</span>
                 </div>
                 <div className="bw-worked-row">
                   <span>Cap reached at ${compoundCap.toLocaleString()} per lane</span>
