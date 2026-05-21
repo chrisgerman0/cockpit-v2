@@ -534,6 +534,15 @@ const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive', number> 
 // lanes occupied simultaneously, max simultaneous SL = capital × 12%.
 const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× capital_initial
 
+// Staxs mode reserve target as % of capital_initial, per tier. The reserve
+// is built up monthly from profits and acts as a buffer before BTC DCA kicks
+// in. Higher-tier users carry more leverage risk → larger reserve cushion.
+const RESERVE_PCT_BY_TIER: Record<TierKey, number> = {
+  conservative: 0.15,
+  moderate:     0.20,
+  aggressive:   0.30,
+}
+
 const TIER_RATIOS = {
   conservative: { lanes: 2, leverage: 2, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
   moderate:     { lanes: 3, leverage: 3, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
@@ -790,6 +799,7 @@ function BotSettingsWizard({
   const maxNotional = ratios.lanes * capNum
   const maxLoss = posSize * (ratios.sl / 100)
   const compoundCap = capNum * COMPOUND_CAP_MULTIPLIER
+  const reserveTarget = Math.round(capNum * RESERVE_PCT_BY_TIER[preset])
   const overBalance = maxBalance > 0 && capNum > maxBalance
   const allDisclosuresAck = d1 && d2 && d3 && d4
 
@@ -1164,15 +1174,15 @@ function BotSettingsWizard({
             {mode === 'staxs' && (
               <>
                 <div className="bw-worked-row">
-                  <span>Month-end · balance ${(Math.round((capNum || 10000) * 1.4)).toLocaleString()} (40% profit)</span>
+                  <span>Month-end · balance ${(Math.round(capNum * 1.4)).toLocaleString()} (40% profit)</span>
                   <span className="num">step 1: top-up reserve</span>
                 </div>
                 <div className="bw-worked-row">
-                  <span>USDT reserve target: $2,000</span>
+                  <span>USDT reserve target: ${reserveTarget.toLocaleString()} ({Math.round(RESERVE_PCT_BY_TIER[preset] * 100)}% of capital · {ratios.label} tier)</span>
                   <span className="num">step 2: remaining → BTC</span>
                 </div>
                 <div className="bw-worked-row">
-                  <span>Trading account resets to ${(capNum || 10000).toLocaleString()} for next month</span>
+                  <span>Trading account resets to ${capNum.toLocaleString()} for next month</span>
                   <span className="num pos-text">BTC stack grows, never sold</span>
                 </div>
               </>
