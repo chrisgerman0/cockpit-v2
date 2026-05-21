@@ -1,15 +1,22 @@
 'use client'
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Browser-side Supabase client. Persists session to localStorage with the
- * EXACT same key the existing staxs-landing app uses, so users who logged
- * in on staxs.ai are auto-authenticated when they walk into /v2.
+ * Browser Supabase client (dashboard app on app.staxs.ai).
  *
- * Key shape: sb-<project-ref>-auth-token
- *   project-ref = the subdomain part of NEXT_PUBLIC_SUPABASE_URL
+ * Uses @supabase/ssr's createBrowserClient with cookie storage scoped to
+ * `.staxs.ai` — the same parent-domain cookies the landing app writes,
+ * so the dashboard reads the session set by staxs.ai/login without any
+ * URL-hash handshake. Handles cookie chunking automatically when the
+ * session payload exceeds the 4 KB per-cookie browser limit.
  */
+function isStaxsHost(): boolean {
+  if (typeof window === 'undefined') return false
+  const h = window.location.hostname
+  return h === 'staxs.ai' || h.endsWith('.staxs.ai')
+}
 
 let _client: SupabaseClient | null = null
 
@@ -17,12 +24,13 @@ export function browserClient(): SupabaseClient {
   if (_client) return _client
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  _client = createClient(url, anon, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: false,
-      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  _client = createBrowserClient(url, anon, {
+    cookieOptions: {
+      ...(isStaxsHost() ? { domain: '.staxs.ai' } : {}),
+      path: '/',
+      sameSite: 'lax',
+      secure: true,
+      maxAge: 60 * 60 * 24 * 365,
     },
   })
   return _client
