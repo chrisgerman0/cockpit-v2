@@ -273,7 +273,10 @@ function winRateFromPortfolio(trades: PortfolioTrade[], n: number) {
   return { pct: total ? Math.round((wins / total) * 100) : 0, wins, losses }
 }
 
-function streakFromPortfolio(trades: PortfolioTrade[]): StaxDashboardData['streak'] {
+function streakFromPortfolio(
+  trades: PortfolioTrade[],
+  tickerBySymbol: Record<string, { price: number } | undefined> = {},
+): StaxDashboardData['streak'] {
   if (trades.length === 0) return { value: '–', sub: 'No trades yet', recent: [], recentLabels: [], isWin: true }
 
   // Mirror streakFromUser semantics so the strategy-fallback view has feature
@@ -281,7 +284,11 @@ function streakFromPortfolio(trades: PortfolioTrade[]): StaxDashboardData['strea
   //  - Sort closed by exit_ts oldest→newest (so closed[end] = newest)
   //  - Sort opens by entry_ts oldest→newest (multi-position support)
   //  - Generate per-dot labels (COIN-SIDE) for hover tooltip
-  //  - All open positions rendered as pulsing OW/OL dots with current PnL
+  //  - Open dots (OW/OL) use LIVE ticker for color decisions when available,
+  //    so the dashboard reads consistently with the backtest List of Trades
+  //    (which uses the same live overlay). The published returnPct is from
+  //    last-bar close and goes stale within minutes — color from that would
+  //    diverge from what the OPEN row in the backtest list shows.
   const closedSorted = trades.filter(t => !isOpenPortfolioTrade(t))
     .slice()
     .sort((a, b) => a.exitTs - b.exitTs)
@@ -314,9 +321,14 @@ function streakFromPortfolio(trades: PortfolioTrade[]): StaxDashboardData['strea
   for (const t of opensSorted) {
     const sym = (t.symbol || '').replace('USDT', '')
     const side = t.dir === 1 ? 'LONG' : 'SHORT'
-    // returnPct is set by the publisher against the last-bar close. Use it
-    // as the dot's W/L color until the renderer overlays live-ticker data.
-    const isWin = (t.returnPct ?? t.pnl ?? 0) >= 0
+    // Live-ticker-derived isWin so the OW/OL color matches what the user
+    // sees in the backtest List of Trades opens row.
+    const entry = t.entryPx
+    const tickerPx = tickerBySymbol[t.symbol]?.price ?? 0
+    const liveReturnPct = (tickerPx > 0 && entry > 0)
+      ? ((tickerPx - entry) / entry) * 100 * t.dir
+      : (t.returnPct ?? 0)
+    const isWin = liveReturnPct >= 0
     dots.push(isWin ? 'OW' : 'OL')
     labels.push(`${sym}-${side}`)
   }
@@ -559,13 +571,24 @@ export function useStaxDashboardData(): StaxLoadState {
           const scale = balance / startCapital
           positions = Array.from(bySymbol.values()).map(t => {
             const entry = t.entryPx
-            const mark = tickerBySymbol[t.symbol]?.price || entry
+            const tickerPx = tickerBySymbol[t.symbol]?.price || 0
+            const mark = tickerPx > 0 ? tickerPx : entry
             // Strategy's notional was sized for $10k base — scale to user's balance
             const sizeUsd = (t.notional || 0) * scale
             const sizeUnits = entry > 0 ? sizeUsd / entry : 0
             const dir = t.dir
-            const pnlUsd = (mark - entry) * sizeUnits * dir
-            const pnlPct = entry > 0 ? ((mark - entry) / entry) * 100 * dir : 0
+            // Prefer live ticker for PnL; fall back to published returnPct
+            // (last-bar close at publisher run time) when ticker hasn't
+            // connected yet. Without the returnPct fallback, all 4 strategy-
+            // open positions render +$0.00 / +0.00% for the first ~5s of
+            // page load until the public ticker WS frame arrives — looks
+            // broken.
+            const pnlUsd = tickerPx > 0
+              ? (tickerPx - entry) * sizeUnits * dir
+              : (t.returnPct ?? 0) / 100 * sizeUsd
+            const pnlPct = entry > 0 && tickerPx > 0
+              ? ((tickerPx - entry) / entry) * 100 * dir
+              : (t.returnPct ?? 0)
             return {
               sym: symToCoin(t.symbol), pair: t.symbol,
               side: dir === 1 ? 'LONG' : 'SHORT',
@@ -577,6 +600,13 @@ export function useStaxDashboardData(): StaxLoadState {
               pos: pnlUsd >= 0,
               fromStrategy: true,
               entryTs: fmtTradeTs(t.entryTs),
+              // Raw fields for the page-level live ticker overlay (same
+              // pattern as user-trades positions above). Without these,
+              // the render-time overlay can't recompute PnL on each
+              // ticker frame and the cell stays frozen.
+              entryNum: entry,
+              sizeUnits,
+              dir: dir as 1 | -1,
             }
           })
         }
@@ -678,7 +708,7 @@ export function useStaxDashboardData(): StaxLoadState {
           ? winRateFromPortfolio(portfolio, 50)
           : buildWinRate(userTrades, 50)
         const streak = useStrategyForStats
-          ? streakFromPortfolio(portfolio)
+          ? streakFromPortfolio(portfolio, tickerBySymbol)
           : streakFromUser(userClosedTrades, openTrades)
 
         const stats = buildStats({
