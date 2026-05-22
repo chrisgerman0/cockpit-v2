@@ -261,7 +261,11 @@ function isOpenPortfolioTrade(t: PortfolioTrade): boolean {
 function winRateFromPortfolio(trades: PortfolioTrade[], n: number) {
   // Open trades are unrealised — exclude from win-rate. Otherwise a winning
   // open position counts as a "win" before the user has actually banked it.
+  // Sort by exit_ts so `slice(-n)` returns the most-recent n closed trades
+  // (the portfolio array can arrive in any order; don't trust insertion).
   const closed = trades.filter(t => !isOpenPortfolioTrade(t))
+    .slice()
+    .sort((a, b) => a.exitTs - b.exitTs)
   const recent = closed.slice(-n)
   let wins = 0, losses = 0
   for (const t of recent) (t.pnl > 0 ? wins++ : losses++)
@@ -270,30 +274,67 @@ function winRateFromPortfolio(trades: PortfolioTrade[], n: number) {
 }
 
 function streakFromPortfolio(trades: PortfolioTrade[]): StaxDashboardData['streak'] {
-  if (trades.length === 0) return { value: '–', sub: 'No trades yet', recent: [], isWin: true }
-  // Same exclusion rule as win-rate: streak counts only closed trades. The
-  // open trade still appears in the dots row (tagged 'O*') so the user sees
-  // its current state, but doesn't get folded into the consecutive count.
-  const closed = trades.filter(t => !isOpenPortfolioTrade(t))
-  const open = trades.find(isOpenPortfolioTrade) ?? null
+  if (trades.length === 0) return { value: '–', sub: 'No trades yet', recent: [], recentLabels: [], isWin: true }
+
+  // Mirror streakFromUser semantics so the strategy-fallback view has feature
+  // parity with the user-trades view:
+  //  - Sort closed by exit_ts oldest→newest (so closed[end] = newest)
+  //  - Sort opens by entry_ts oldest→newest (multi-position support)
+  //  - Generate per-dot labels (COIN-SIDE) for hover tooltip
+  //  - All open positions rendered as pulsing OW/OL dots with current PnL
+  const closedSorted = trades.filter(t => !isOpenPortfolioTrade(t))
+    .slice()
+    .sort((a, b) => a.exitTs - b.exitTs)
+  const opensSorted = trades.filter(isOpenPortfolioTrade)
+    .slice()
+    .sort((a, b) => a.entryTs - b.entryTs)
+
+  // Streak count — walk closed from newest backwards. Opens don't break streak.
   let len = 0
   let kind: 'W' | 'L' | null = null
-  for (let i = closed.length - 1; i >= 0; i--) {
-    const cur: 'W' | 'L' = closed[i].pnl > 0 ? 'W' : 'L'
+  for (let i = closedSorted.length - 1; i >= 0; i--) {
+    const cur: 'W' | 'L' = closedSorted[i].pnl > 0 ? 'W' : 'L'
     if (kind === null) { kind = cur; len = 1; continue }
     if (cur === kind) len++
     else break
   }
-  // Recent dots — last 10 NEWEST trades (closed), oldest→newest left-to-right.
-  // If there's a live open trade, append it as 'OW'/'OL' on the right so the
-  // user sees the current state of the position; the renderer pulses it.
-  const baseDots = closed.slice(open ? -9 : -10).map(t => (t.pnl > 0 ? 'W' : 'L') as 'W' | 'L')
-  const dots: Array<'W' | 'L' | 'OW' | 'OL'> = [...baseDots]
-  if (open) dots.push(open.pnl > 0 ? 'OW' : 'OL')
-  if (!kind || len === 0) return { value: '–', sub: 'No trades yet', recent: dots, isWin: true }
+
+  // Dots: closed (most-recent maxClosedDots of them) then opens.
+  // maxClosedDots leaves room for open dots — opens are the focal point.
+  const maxClosedDots = Math.max(5, 10 - opensSorted.length)
+  const closedSlice = closedSorted.slice(-maxClosedDots)
+  const dots: Array<'W' | 'L' | 'OW' | 'OL'> = []
+  const labels: string[] = []
+  for (const t of closedSlice) {
+    const sym = (t.symbol || '').replace('USDT', '')
+    const side = t.dir === 1 ? 'LONG' : 'SHORT'
+    dots.push(t.pnl > 0 ? 'W' : 'L')
+    labels.push(`${sym}-${side}`)
+  }
+  for (const t of opensSorted) {
+    const sym = (t.symbol || '').replace('USDT', '')
+    const side = t.dir === 1 ? 'LONG' : 'SHORT'
+    // returnPct is set by the publisher against the last-bar close. Use it
+    // as the dot's W/L color until the renderer overlays live-ticker data.
+    const isWin = (t.returnPct ?? t.pnl ?? 0) >= 0
+    dots.push(isWin ? 'OW' : 'OL')
+    labels.push(`${sym}-${side}`)
+  }
+
+  if (!kind || len === 0) {
+    return {
+      value: opensSorted.length > 0 ? '—' : '–',
+      sub: opensSorted.length > 0 ? `${opensSorted.length} open` : 'No trades yet',
+      recent: dots, recentLabels: labels, isWin: true,
+    }
+  }
   const sign = kind === 'W' ? '+' : '−'
   const word = kind === 'W' ? (len === 1 ? 'win' : 'wins') : (len === 1 ? 'loss' : 'losses')
-  return { value: `${sign}${len}${kind}`, sub: `${len} consecutive ${word}`, recent: dots, isWin: kind === 'W' }
+  return {
+    value: `${sign}${len}${kind}`,
+    sub: `${len} consecutive ${word}`,
+    recent: dots, recentLabels: labels, isWin: kind === 'W',
+  }
 }
 
 function buildStats(opts: {
