@@ -95,7 +95,12 @@ const ASSET_LOGOS: Record<string, string> = {
 
 export function BacktestingContent() {
   const t = useT()
-  const [tier, setTier] = useState<Tier>('conservative')
+  // Default to MODERATE when the user has no bot_config yet (or while /api/me
+  // resolves on first load). The useEffect below overrides this with the
+  // user's actual active tier when available. Moderate sits in the middle of
+  // the risk ladder so first-impression numbers aren't surprisingly tiny
+  // (Conservative) nor surprisingly aggressive — it's the safest fallback.
+  const [tier, setTier] = useState<Tier>('moderate')
   // User's live-config tier (from auth.users.user_metadata.bot_config). Set
   // once on mount; used to highlight the matching tab and show a "Your active
   // tier" indicator. Null until resolved or for non-activated users.
