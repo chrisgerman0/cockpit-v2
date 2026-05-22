@@ -69,9 +69,10 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
 }
 
 function statsPath(tier: Tier): string {
-  // Daemon publishes a pre-scaled file per tier — no client-side scaling.
-  if (tier === 'conservative') return '/data/strategies/satoshi-stacker/portfolio-stats.json'
-  return `/data/strategies/satoshi-stacker/tiers/${tier}/portfolio-stats.json`
+  // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
+  // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
+  if (tier === 'conservative') return '/data/strategies/phase-h/portfolio-stats.json'
+  return `/data/strategies/phase-h/tiers/${tier}/portfolio-stats.json`
 }
 
 const ASSET_LOGOS: Record<string, string> = {
@@ -95,6 +96,10 @@ const ASSET_LOGOS: Record<string, string> = {
 export function BacktestingContent() {
   const t = useT()
   const [tier, setTier] = useState<Tier>('conservative')
+  // User's live-config tier (from auth.users.user_metadata.bot_config). Set
+  // once on mount; used to highlight the matching tab and show a "Your active
+  // tier" indicator. Null until resolved or for non-activated users.
+  const [activeTier, setActiveTier] = useState<Tier | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
   // `trades` is CLOSED only — every metric on this page is computed against
   // it. `allTrades` is the raw set (closed + the strategy's currently-open
@@ -106,6 +111,32 @@ export function BacktestingContent() {
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
   const { isAdmin } = useIsAdmin()
+
+  // Resolve the user's active live tier once on mount. Default the tier picker
+  // to that tier so customers see their own performance first, with a "Your
+  // active tier" badge marking the matching tab.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/me', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        const cfg = data?.user?.user_metadata?.bot_config
+        const raw = (cfg?.tier || cfg?.preset || '').toLowerCase()
+        const mapped: Tier | null =
+          raw === 'conservative' ? 'conservative' :
+          raw === 'moderate' ? 'moderate' :
+          (raw === 'aggressive' || raw === 'bold') ? 'aggressive' :
+          null
+        if (!cancelled && mapped) {
+          setActiveTier(mapped)
+          setTier(mapped)
+        }
+      } catch {/* non-fatal */}
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -243,21 +274,33 @@ export function BacktestingContent() {
           value={derivedStats ? derivedStats.profitFactor.toFixed(2) : '—'} />
       </div>
 
-      {/* Tier picker */}
+      {/* Tier picker — highlights the user's live-config tier */}
       <div className="bt-tier-row">
         <div className="bt-tier-pills">
-          {(['conservative', 'moderate', 'aggressive'] as Tier[]).map(tk => (
-            <button
-              key={tk}
-              type="button"
-              className={'bt-tier-pill' + (tier === tk ? ' active' : '')}
-              onClick={() => setTier(tk)}
-            >
-              {isPt ? TIER_LABELS[tk].pt : TIER_LABELS[tk].en}
-            </button>
-          ))}
+          {(['conservative', 'moderate', 'aggressive'] as Tier[]).map(tk => {
+            const isActiveTier = activeTier === tk
+            return (
+              <button
+                key={tk}
+                type="button"
+                className={'bt-tier-pill' + (tier === tk ? ' active' : '') + (isActiveTier ? ' bt-tier-pill--your-tier' : '')}
+                onClick={() => setTier(tk)}
+                title={isActiveTier ? (isPt ? 'Seu tier ativo' : 'Your active tier') : undefined}
+              >
+                {isPt ? TIER_LABELS[tk].pt : TIER_LABELS[tk].en}
+                {isActiveTier ? <span className="bt-tier-pill__badge"> ★</span> : null}
+              </button>
+            )
+          })}
         </div>
         <div className="bt-tier-meta">
+          {activeTier ? (
+            <span className="bt-tier-active-indicator">
+              {isPt ? 'Seu tier ativo: ' : 'Your active tier: '}
+              <strong>{(isPt ? TIER_LABELS[activeTier].pt : TIER_LABELS[activeTier].en).toUpperCase()}</strong>
+              {' · '}
+            </span>
+          ) : null}
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
           {' '}{TIER_LABELS[tier].mult} ·
           {' '}{isPt ? 'Cesta de 14 ativos' : '14-asset basket'} ·
@@ -1247,7 +1290,20 @@ function fmtUnits(units: number, base: string): string {
 }
 
 function isOpenTrade(tr: PortfolioTrade): boolean {
-  return tr.reason === 'eod' || /^open/i.test(tr.displayReason || '')
+  // Note: 'eod' is NOT a true open trade — it's a backtest snapshot frozen at
+  // data-end. Render those as "Snapshot · Frozen" via isFrozenEod, no live
+  // ticker overlay. Only true /^open/i displayReason rows are treated as live.
+  return /^open/i.test(tr.displayReason || '')
+}
+
+function isFrozenEod(tr: PortfolioTrade): boolean {
+  // Backtest snapshot: the cfg was holding when the data window ended.
+  // Closed price is the last bar's close at the time the publisher ran.
+  // The publisher renames 'eod' → 'open' in the customer-facing file
+  // (see phase_i_dashboard_json_gen.reason_display_customer) so we check
+  // both raw and display values.
+  return tr.reason === 'eod' || tr.reason === 'open' ||
+         /^eod/i.test(tr.displayReason || '') || /^snapshot/i.test(tr.displayReason || '')
 }
 
 function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; showCfgColumn?: boolean }) {
@@ -1373,30 +1429,27 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
               const idx = filtered.length - (start + i)
               const logo = ASSET_LOGOS[tr.symbol]
               const open = isOpenTrade(tr)
-              const rowClass = open ? 'bt-trade-open' : (tr.pnl > 0 ? 'bt-trade-win' : 'bt-trade-loss')
+              const frozen = isFrozenEod(tr)
+              const rowClass = open ? 'bt-trade-open' : (frozen ? 'bt-trade-frozen' : (tr.pnl > 0 ? 'bt-trade-win' : 'bt-trade-loss'))
               const baseSym = (tr.symbol || '').replace('USDT', '')
-              // Open (EOD) rows arrive with COMPOUND-equity notional baked in
-              // — e.g. SUI's eod notional after 6yr of compounding is $74M
-              // and PnL is then mark-to-that-equity, producing six-figure
-              // numbers that misrepresent the strategy's per-trade sizing.
-              // The strategy's actual per-trade sizing is fixed: $10k base
-              // × tier multiplier (0.5 / 0.75 / 1.0). Override the display
-              // for open rows so the list reads consistently with closed
-              // rows. PnL is recomputed using the same returnPct so the
-              // percentage stays accurate (it's a price-movement %).
+              // Frozen (EOD) rows arrive with COMPOUND-equity notional baked in
+              // — e.g. SUI's eod notional after 6yr of compounding is $74M.
+              // Override to fixed $10k × tier so display is consistent with
+              // closed rows. NO live overlay — these are backtest snapshots.
               const tierMult = tr.tierMult || 0.5
-              const dispNotional = open ? 10000 * tierMult : tr.notional
+              const dispNotional = (open || frozen) ? 10000 * tierMult : tr.notional
               const dispUnits = tr.entryPx > 0 ? dispNotional / tr.entryPx : 0
-              // For OPEN trades, recompute return % and PnL against the live
-              // ticker price. The published returnPct in the JSON is frozen at
-              // whichever bar the producer wrote it from; the live rate ticks
-              // whenever the WS frame arrives.
+              // For OPEN (true live) trades only, recompute return % + PnL
+              // against the live ticker. Frozen-EOD rows use the published
+              // returnPct (last bar of data window) — no live overlay.
               const livePx = open ? priceBySymbol.get(tr.symbol) : undefined
               const liveReturnPct = (open && livePx && tr.entryPx > 0)
                 ? ((livePx - tr.entryPx) / tr.entryPx) * 100 * (tr.dir || 1)
                 : null
               const dispReturnPct = liveReturnPct ?? (tr.returnPct ?? 0)
-              const dispPnl = open ? dispNotional * dispReturnPct / 100 : tr.pnl
+              const dispPnl = open
+                ? dispNotional * dispReturnPct / 100
+                : (frozen ? dispNotional * (tr.returnPct ?? 0) / 100 : tr.pnl)
               const isLive = open && liveReturnPct !== null
               return (
                 <tr key={start + i} className={rowClass}>
@@ -1428,6 +1481,11 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
                           <span className="ts">${livePx.toFixed(livePx < 1 ? 4 : 2)} live</span>
                         ) : null}
                       </>
+                    ) : frozen ? (
+                      <>
+                        ${tr.exitPx.toFixed(tr.exitPx < 1 ? 4 : 2)}
+                        <span className="ts" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>Snapshot · Frozen at backtest EOD</span>
+                      </>
                     ) : (
                       <>
                         ${tr.exitPx.toFixed(tr.exitPx < 1 ? 4 : 2)}
@@ -1437,7 +1495,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
                   </td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(dispPnl)}</td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{dispReturnPct.toFixed(2)}%</td>
-                  <td className="num" style={{ color: 'var(--muted)' }}>{tr.displayReason || tr.reason}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{frozen ? 'Snapshot · Frozen' : (tr.displayReason || tr.reason)}</td>
                   {showCfgColumn ? (
                     <td className="num" style={{ color: 'var(--muted)', fontSize: 10, fontFamily: 'monospace' }}>
                       {tr.cfg_sid || '—'}

@@ -576,7 +576,17 @@ export function useStaxDashboardData(): StaxLoadState {
             exitTs: fmtTradeTs(exitTsMs),
           }
         }) : [...portfolio]
-          .filter(p => p.reason !== 'eod' && p.reason !== 'eod_pyr' && p.reason !== 'eod_pyr50' && p.reason !== 'scalp_eod')
+          // Recent Trades widget = CLOSED trades only. Use the same
+          // open-trade detector that powers the Open Positions fallback
+          // so both sides agree on what "open" means. Without this,
+          // backtest snapshots (reason='eod' raw, renamed to 'open' for
+          // customers) leak into Recent Trades with their last-bar close
+          // masquerading as an exit price, duplicating what's already
+          // shown in Open Positions.
+          .filter(p =>
+            !isOpenPortfolioTrade(p) &&
+            p.reason !== 'eod_pyr' && p.reason !== 'eod_pyr50' && p.reason !== 'scalp_eod'
+          )
           .sort((a, b) => b.exitTs - a.exitTs)
           .slice(0, 5)
           .map(p => {
