@@ -160,8 +160,14 @@ export function BacktestingContent() {
         ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
         : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
       try {
+        // Fix #1 (2026-05-23): drop `cache: 'no-store'` on the stats fetch.
+        // The publisher republishes /phase-h/ at bar-close cadence (4h TF) and
+        // hourly via PM2 cron safety net, so a 60s browser cache is fine and
+        // makes tier switches near-instant on warm cache. Use default cache:
+        // 'default' which honours the response's Cache-Control headers (set
+        // server-side in Fix #4).
         const [statsRes, closedTrades, rawTrades] = await Promise.all([
-          fetch(statsPath(tier), { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+          fetch(statsPath(tier)).then(r => r.ok ? r.json() : null),
           tradesFetcher(false).catch(() => [] as PortfolioTrade[]),
           tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
         ])
