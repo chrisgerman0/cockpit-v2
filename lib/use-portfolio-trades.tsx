@@ -59,9 +59,12 @@ export function normalizeTier(raw: string | undefined | null): Tier {
 }
 
 function pathForTier(tier: Tier): string {
-  // Daemon publishes each tier's pre-scaled file. No client-side scaling needed.
-  if (tier === 'conservative') return '/data/strategies/satoshi-stacker/portfolio-trades.json'
-  return `/data/strategies/satoshi-stacker/tiers/${tier}/portfolio-trades.json`
+  // 2026-05-21: cutover from V1 satoshi-stacker to Phase H. The V1 publisher
+  // pipeline was deleted (see archive/v1-satoshi-stacker-deprecated-2026-05-12/
+  // HANDOVER.md). Trade ledger remains [] until the shadow engine (Phase B)
+  // ships — stats render fine from portfolio-stats.json regardless.
+  if (tier === 'conservative') return '/data/strategies/phase-h/portfolio-trades.json'
+  return `/data/strategies/phase-h/tiers/${tier}/portfolio-trades.json`
 }
 
 // Tiny in-memory cache shared across hooks — daemon refreshes every 60s, so
@@ -164,19 +167,34 @@ export async function fetchPortfolioTrades(
  *
  * Caller is responsible for omitting strategy IP from the rendered DOM if
  * isAdmin flips false mid-session.
+ *
+ * Fix #3 (2026-05-23): module-scope 60s cache, mirrors the public path
+ * above. Without this every tier switch on an admin session re-hit the
+ * gated endpoint (which has no server-side cache, two Supabase round-
+ * trips per call, and re-reads the file from disk). Same TTL as public —
+ * the daemon publishes both feeds together at bar-close cadence.
  */
+const adminCache = new Map<Tier, CacheEntry>()
+
 export async function fetchAdminPortfolioTrades(
   tier: Tier,
   token: string,
   opts: { includeOpen?: boolean } = {},
 ): Promise<PortfolioTrade[]> {
-  const res = await fetch(`/api/admin/portfolio-trades?tier=${tier}`, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) throw new Error(`admin portfolio-trades fetch failed: ${res.status}`)
-  const j = await res.json() as { trades: PortfolioTrade[] }
-  const normalized = j.trades.map(t => normalizeTrade(t, tier))
+  const cached = adminCache.get(tier)
+  let normalized: PortfolioTrade[]
+  if (cached && Date.now() - cached.fetchedAt < CACHE_MS) {
+    normalized = cached.raw
+  } else {
+    const res = await fetch(`/api/admin/portfolio-trades?tier=${tier}`, {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) throw new Error(`admin portfolio-trades fetch failed: ${res.status}`)
+    const j = await res.json() as { trades: PortfolioTrade[] }
+    normalized = j.trades.map(t => normalizeTrade(t, tier))
+    adminCache.set(tier, { fetchedAt: Date.now(), raw: normalized })
+  }
   return opts.includeOpen ? normalized : normalized.filter(t => !isEodMarker(t))
 }
 
