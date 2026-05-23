@@ -28,6 +28,9 @@ const nextConfig: NextConfig = {
       { source: '/api/billing/:path*',    destination: `${STAXS_LANDING}/api/billing/:path*` },
       { source: '/api/broker/:path*',     destination: `${STAXS_LANDING}/api/broker/:path*` },
       { source: '/api/wizard/:path*',     destination: `${STAXS_LANDING}/api/wizard/:path*` },
+      // Admin-only endpoints (Bearer + admin-role gate enforced server-side).
+      // Includes /api/admin/portfolio-trades (Phase H trade ledger with cfg_sid).
+      { source: '/api/admin/:path*',      destination: `${STAXS_LANDING}/api/admin/:path*` },
     ]
   },
 }

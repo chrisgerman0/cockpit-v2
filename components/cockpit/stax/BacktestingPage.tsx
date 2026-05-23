@@ -115,6 +115,7 @@ export function BacktestingContent() {
   const [view, setView] = useState<'metrics' | 'trades'>('metrics')
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
+  const [updatedAgoMins, setUpdatedAgoMins] = useState<number | null>(null)
   const { isAdmin } = useIsAdmin()
 
   // Resolve the user's active live tier once on mount. Default the tier picker
@@ -193,6 +194,7 @@ export function BacktestingContent() {
           const ageMs = Date.now() - new Date(lm).getTime()
           const mins = Math.floor(ageMs / 60000)
           setUpdatedAgo(mins < 1 ? '< 1m' : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`)
+          setUpdatedAgoMins(mins)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -264,15 +266,31 @@ export function BacktestingContent() {
           <span>{trades.length > 0 ? new Date(trades[trades.length - 1].exitTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
           <span>·</span>
           <span>{trades.length.toLocaleString()} trades</span>
-          {updatedAgo ? (
-            <>
-              <span>·</span>
-              <span className="bt-fresh">
-                <span className={updatedAgo.endsWith('h') ? 'dot-stale' : 'dot-live'} />
-                {updatedAgo === '< 1m' ? (isPt ? 'Ao vivo' : 'Live') : `${isPt ? 'Atualizado' : 'Stale'} · ${updatedAgo} ${isPt ? 'atrás' : 'ago'}`}
-              </span>
-            </>
-          ) : null}
+          {updatedAgo ? (() => {
+            // Freshness banding. Publisher cron runs hourly + takes ~15 min,
+            // so portfolio-stats.json mtime cycles 0-60 min by design. The old
+            // "Stale · 51m ago" label flagged the routine cadence as a problem;
+            // the new banding treats only >90 min as actually stale.
+            const m = updatedAgoMins ?? 0
+            const cls = m >= 90 ? 'dot-stale' : m >= 60 ? 'dot-warn' : 'dot-live'
+            const label = updatedAgo === '< 1m'
+              ? (isPt ? 'Ao vivo' : 'Live')
+              : m >= 90
+                ? `${isPt ? 'Desatualizado' : 'Stale'} · ${updatedAgo} ${isPt ? 'atrás' : 'ago'}`
+                : `${isPt ? 'Atualizado' : 'Updated'} · ${updatedAgo} ${isPt ? 'atrás' : 'ago'}`
+            const tip = isPt
+              ? 'O backtest republica de hora em hora. Esperado: 0–60 min de idade. ≥90 min = sinal de problema.'
+              : 'Backtest republishes hourly. Expected age: 0–60 min. ≥90 min indicates an issue.'
+            return (
+              <>
+                <span>·</span>
+                <span className="bt-fresh" title={tip}>
+                  <span className={cls} />
+                  {label}
+                </span>
+              </>
+            )
+          })() : null}
         </div>
       </div>
 

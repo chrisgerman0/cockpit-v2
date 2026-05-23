@@ -1233,10 +1233,14 @@ html.light .stax-app .toggle-row { background: rgba(0,0,0,0.02); }
 .stax-app .bt-blurb { font-size: 13px; color: var(--muted); max-width: 900px; margin-bottom: 12px; line-height: 1.55; }
 .stax-app .bt-blurb strong { color: var(--text); font-weight: 600; }
 .stax-app .bt-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
-.stax-app .bt-fresh { display: inline-flex; align-items: center; gap: 6px; }
+.stax-app .bt-fresh { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
 .stax-app .dot-stale {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--neg);
+}
+.stax-app .dot-warn {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: #d4a017;
 }
 
 .stax-app .bt-metrics-row {
@@ -1417,6 +1421,19 @@ html.light .stax-app tr.bt-trade-win    > td { background-color: rgba(var(--pos-
 html.light .stax-app tr.bt-trade-loss   > td { background-color: rgba(var(--neg-rgb), 0.06); }
 .stax-app.light tr.bt-trade-open   > td,
 html.light .stax-app tr.bt-trade-open   > td { background-color: rgba(212, 160, 23, 0.09); }
+/* Frozen backtest snapshot: muted neutral, italic exit, no live overlay */
+.stax-app tr.bt-trade-frozen > td { background-color: rgba(128, 128, 128, 0.08); }
+.stax-app tr.bt-trade-frozen:hover > td { background-color: rgba(128, 128, 128, 0.14); }
+.stax-app.light tr.bt-trade-frozen > td,
+html.light .stax-app tr.bt-trade-frozen > td { background-color: rgba(128, 128, 128, 0.04); }
+
+/* Active-tier indicator: subtle gold outline + star on the pill matching the customer's live config */
+.stax-app .bt-tier-pill--your-tier { box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.55); }
+.stax-app .bt-tier-pill--your-tier.active { box-shadow: inset 0 0 0 2px rgba(212, 160, 23, 0.85); }
+.stax-app .bt-tier-pill__badge { color: rgba(212, 160, 23, 1); font-size: 0.85em; }
+.stax-app .bt-tier-active-indicator { color: rgba(212, 160, 23, 1); }
+.stax-app.light .bt-tier-active-indicator,
+html.light .stax-app .bt-tier-active-indicator { color: rgba(155, 110, 0, 1); }
 
 /* Broker page bits */
 .stax-app .broker-link-row { display: flex; gap: 8px; align-items: stretch; }
