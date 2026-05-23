@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
@@ -159,22 +159,25 @@ export function BacktestingContent() {
       const tradesFetcher = wantAdmin && adminToken
         ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
         : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
+      // Fix #2 (2026-05-23): de-dupe the includeOpen double-fetch. The page
+      // needs two views of the same trade ledger: closed-only (for metric
+      // computation) and raw (closed + open eod markers, for the trade list).
+      // Previously these were two parallel calls — both raced past the
+      // module-scope cache before either populated it, causing the same
+      // ~1 MB file to download twice on the first switch to any tier. Now
+      // we fetch the raw set once and partition client-side via isEodMarker.
       try {
-        // Fix #1 (2026-05-23): drop `cache: 'no-store'` on the stats fetch.
-        // The publisher republishes /phase-h/ at bar-close cadence (4h TF) and
-        // hourly via PM2 cron safety net, so a 60s browser cache is fine and
-        // makes tier switches near-instant on warm cache. Use default cache:
-        // 'default' which honours the response's Cache-Control headers (set
-        // server-side in Fix #4).
-        const [statsRes, closedTrades, rawTrades] = await Promise.all([
+        const [statsRes, rawTrades] = await Promise.all([
           fetch(statsPath(tier)).then(r => r.ok ? r.json() : null),
-          tradesFetcher(false).catch(() => [] as PortfolioTrade[]),
           tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
         ])
         if (cancelled) return
         setStats(statsRes || null)
-        setTrades(closedTrades)
         setAllTrades(rawTrades)
+        // closed-only = raw minus eod markers. Same filter the fetch layer
+        // applies when includeOpen=false, but applied here so we only pay
+        // for one network/disk hit per tier switch.
+        setTrades(rawTrades.filter(t => !isEodMarker(t)))
 
         try {
           const headRes = await fetch(statsPath(tier), { method: 'HEAD' })
