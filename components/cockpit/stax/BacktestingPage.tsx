@@ -166,12 +166,19 @@ export function BacktestingContent() {
       // module-scope cache before either populated it, causing the same
       // ~1 MB file to download twice on the first switch to any tier. Now
       // we fetch the raw set once and partition client-side via isEodMarker.
+      //
+      // Fix #5 (2026-05-23): consolidate the freshness probe. Previously a
+      // separate HEAD request was issued after the main GET to read the
+      // Last-Modified header. Browsers expose the same header on the GET
+      // response, so we grab it from the existing response and drop the
+      // extra roundtrip entirely.
       try {
-        const [statsRes, rawTrades] = await Promise.all([
-          fetch(statsPath(tier)).then(r => r.ok ? r.json() : null),
+        const [statsResp, rawTrades] = await Promise.all([
+          fetch(statsPath(tier)),
           tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
         ])
         if (cancelled) return
+        const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
         setAllTrades(rawTrades)
         // closed-only = raw minus eod markers. Same filter the fetch layer
@@ -179,15 +186,14 @@ export function BacktestingContent() {
         // for one network/disk hit per tier switch.
         setTrades(rawTrades.filter(t => !isEodMarker(t)))
 
-        try {
-          const headRes = await fetch(statsPath(tier), { method: 'HEAD' })
-          const lm = headRes.headers.get('last-modified')
-          if (lm) {
-            const ageMs = Date.now() - new Date(lm).getTime()
-            const mins = Math.floor(ageMs / 60000)
-            setUpdatedAgo(mins < 1 ? '< 1m' : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`)
-          }
-        } catch {}
+        // Freshness pill: read Last-Modified off the GET response we just
+        // received. No extra HEAD request needed.
+        const lm = statsResp.headers.get('last-modified')
+        if (lm) {
+          const ageMs = Date.now() - new Date(lm).getTime()
+          const mins = Math.floor(ageMs / 60000)
+          setUpdatedAgo(mins < 1 ? '< 1m' : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
