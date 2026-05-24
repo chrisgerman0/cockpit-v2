@@ -237,25 +237,49 @@ export async function fetchShadowTrades(): Promise<PortfolioTrade[]> {
 }
 
 /**
- * Merge publisher historical baseline + shadow recent trades. Publisher
- * dominates the historical span it has covered; shadow fills the gap from
- * the publisher's last_exit_ts to now. If publisher is empty, shadow trades
- * are returned alone.
+ * Merge publisher historical baseline + shadow recent trades.
  *
- * Dedup rule: shadow trades whose exitTs <= max(publisher exitTs) are
- * dropped (publisher already covered this span). Edge case (exact tie on
- * exitTs) — keep publisher's record since it ran the same logic and is the
- * historical-truth source for that period.
+ * 2026-05-24 (Issue A fix): the old "shadow.exitTs > max(publisher.exitTs)"
+ * filter dropped legitimate shadow trades whenever the publisher had a
+ * later same-day replay trade. Concrete incident: shadow fired HYPE on the
+ * 2026-05-24 00:00 UTC bar (entry 02:00 UTC); publisher's later historical
+ * replay produced a different HYPE trade on the same day at 08:00 UTC for
+ * the same cfg. The old merge silently dropped shadow's 02:00 trade — the
+ * Backtest page showed 08:00 (= 9am UTC+1 local), customer assumed
+ * timestamp bug, real cause was scope-of-replay divergence.
+ *
+ * New rule: per (cfg_sid, day) dedupe. Shadow wins for any (cfg, day) it
+ * has trades for; publisher wins everywhere else. Falls back to
+ * (symbol, day) dedupe when cfg_sid is missing (public path strips it).
+ *
+ * Why per-(cfg, day): publisher does a full historical replay from cold;
+ * shadow runs in real-time and carries state (e.g. lane already occupied
+ * → next signal CAP_REJECTED). They can legitimately produce different
+ * trades for the same cfg on the same day. Shadow is the source of truth
+ * for what actually happened; publisher's value is filling in cfgs that
+ * shadow hasn't run yet (older history, or cfgs that didn't fire in
+ * real-time but would have under a fresh replay).
  */
+function tradeKey(t: PortfolioTrade): string {
+  const day = Math.floor((t.entryTs || 0) / 86_400_000)
+  // Prefer cfg_sid when available (admin path); fall back to symbol+dir
+  // when stripped (public path).
+  const idKey = t.cfg_sid || `${t.symbol}|${t.dir}`
+  return `${idKey}|${day}`
+}
+
 export function mergePublisherAndShadow(
   publisher: PortfolioTrade[],
   shadow: PortfolioTrade[],
 ): PortfolioTrade[] {
   if (publisher.length === 0) return shadow
-  const lastPubExit = publisher.reduce((m, t) => Math.max(m, t.exitTs || 0), 0)
-  const recent = shadow.filter(t => (t.exitTs || 0) > lastPubExit)
-  if (recent.length === 0) return publisher
-  return [...publisher, ...recent]
+  if (shadow.length === 0) return publisher
+  // Build set of (cfg|symbol, day) keys covered by shadow
+  const shadowKeys = new Set<string>()
+  for (const t of shadow) shadowKeys.add(tradeKey(t))
+  // Filter publisher: drop entries whose (cfg|symbol, day) is in shadow's set
+  const survivors = publisher.filter(t => !shadowKeys.has(tradeKey(t)))
+  return [...survivors, ...shadow]
 }
 
 export type PortfolioLoad =
