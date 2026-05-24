@@ -6,6 +6,17 @@ import { Icons } from './Icons'
 import { useLiveTradingData, type LiveTradingData } from '@/lib/use-live-trading-data'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useT, getCurrentLang } from '@/lib/i18n'
+// 2026-05-24 (P5): 14-asset Phase H basket — single source of truth lives at
+// lib/phase-h-basket.ts. Replaces the hardcoded 7-asset V1 list that was
+// hiding HYPE / BNB / AVAX / ADA / TRX / ZEC / TON from the customer view.
+import {
+  PHASE_H_SYMBOLS,
+  ASSET_LOGOS as BASKET_LOGOS,
+  COIN_FILTERS as BASKET_COIN_FILTERS,
+  type CoinFilter as BasketCoinFilter,
+  type PhaseHAsset,
+  type PhaseHSymbol,
+} from '@/lib/phase-h-basket'
 
 /**
  * Throttle a high-frequency value down to one update per `ms` window.
@@ -46,8 +57,10 @@ const EMPTY_LIVE_DATA: LiveTradingData = {
     winRate: 0, wins: 0, losses: 0,
     bestTrade: 0, worstTrade: 0, avgWin: 0, avgLoss: 0,
   },
-  assetStates: (['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT'] as const).map(symbol => ({
-    sym: symbol.replace('USDT', '') as 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK',
+  // 2026-05-24 (P5): asset list now derives from PHASE_H_SYMBOLS so the
+  // Live Trading page shows all 14 basket assets, not just the legacy 7.
+  assetStates: PHASE_H_SYMBOLS.map(symbol => ({
+    sym: symbol.replace('USDT', '') as PhaseHAsset,
     symbol,
     side: 'FLAT' as const,
   })),
@@ -233,7 +246,9 @@ function Stat({ icon: Ico, label, value, sub, valueClass }: { icon: React.Compon
 
 type LiveTradeRow = {
   symbol: string
-  sym: 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+  // 2026-05-24 (P5): expanded to PhaseHAsset (14 symbols) so HYPE/BNB/AVAX/
+  // ADA/TRX/ZEC/TON render with proper type-narrowing on the trade table.
+  sym: PhaseHAsset
   side: 'LONG' | 'SHORT'
   notional: number       // USD per leg (×2 if pyramided)
   entryPx: number
@@ -256,20 +271,15 @@ type LiveTradeRow = {
   mfePeakTs?: number | null
 }
 
-const ASSET_LOGOS: Record<string, string> = {
-  BTCUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETHUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRPUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOLUSDT:  '/coin-icons/sol.png',
-  SUIUSDT:  '/coin-icons/sui.png',
-  DOGEUSDT: '/coin-icons/doge.svg',
-  LINKUSDT: '/coin-icons/link.svg',
-}
+// 2026-05-24 (P5): swapped 7-asset hardcoded map for the 14-asset basket-
+// derived map in lib/phase-h-basket.ts.
+const ASSET_LOGOS: Record<string, string> = BASKET_LOGOS as Record<string, string>
 
-type CoinFilter = 'ALL' | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+// 2026-05-24 (P5): basket-derived CoinFilter — 14 assets + ALL.
+type CoinFilter = BasketCoinFilter
 type SideFilter = 'ALL' | 'LONG' | 'SHORT'
 
-const COIN_FILTERS: CoinFilter[] = ['ALL', 'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK']
+const COIN_FILTERS: CoinFilter[] = BASKET_COIN_FILTERS
 const SIDE_FILTERS: SideFilter[] = ['ALL', 'LONG', 'SHORT']
 
 function fmtTradeTs(ms: number): string {

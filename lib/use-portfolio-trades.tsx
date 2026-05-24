@@ -198,6 +198,66 @@ export async function fetchAdminPortfolioTrades(
   return opts.includeOpen ? normalized : normalized.filter(t => !isEodMarker(t))
 }
 
+/**
+ * Real-time shadow simulation ledger. Reads the shadow daemon's trades.jsonl
+ * via /api/strategies/phase-h/shadow-trades — the same simulated trades that
+ * the publisher will eventually replay into portfolio-trades.json, but
+ * surfaced at sub-minute cadence so the Backtest page never trails the
+ * shadow engine by more than the poll interval.
+ *
+ * ARCHITECTURE (locked 2026-05-24):
+ *   Backtest page = clean shadow simulation.
+ *   Live Trading page = Bitget reality.
+ *   Pages never mix sources — shadow is read here, NEVER on Live Trading.
+ *
+ * Returned schema matches PortfolioTrade exactly; `type: 'shadow'` marks
+ * shadow-sourced rows. Caller merges with the publisher historical baseline
+ * (which dominates the historical span it has covered).
+ *
+ * 30s module-scope cache mirrors the endpoint's Cache-Control.
+ */
+type ShadowFeed = { trades: PortfolioTrade[]; fetchedAt: number }
+let shadowCache: ShadowFeed | null = null
+const SHADOW_CACHE_MS = 30_000
+
+export async function fetchShadowTrades(): Promise<PortfolioTrade[]> {
+  if (shadowCache && Date.now() - shadowCache.fetchedAt < SHADOW_CACHE_MS) {
+    return shadowCache.trades
+  }
+  try {
+    const res = await fetch('/api/strategies/phase-h/shadow-trades', { cache: 'no-store' })
+    if (!res.ok) return []
+    const j = await res.json() as { trades: PortfolioTrade[] }
+    const trades = j.trades || []
+    shadowCache = { trades, fetchedAt: Date.now() }
+    return trades
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Merge publisher historical baseline + shadow recent trades. Publisher
+ * dominates the historical span it has covered; shadow fills the gap from
+ * the publisher's last_exit_ts to now. If publisher is empty, shadow trades
+ * are returned alone.
+ *
+ * Dedup rule: shadow trades whose exitTs <= max(publisher exitTs) are
+ * dropped (publisher already covered this span). Edge case (exact tie on
+ * exitTs) — keep publisher's record since it ran the same logic and is the
+ * historical-truth source for that period.
+ */
+export function mergePublisherAndShadow(
+  publisher: PortfolioTrade[],
+  shadow: PortfolioTrade[],
+): PortfolioTrade[] {
+  if (publisher.length === 0) return shadow
+  const lastPubExit = publisher.reduce((m, t) => Math.max(m, t.exitTs || 0), 0)
+  const recent = shadow.filter(t => (t.exitTs || 0) > lastPubExit)
+  if (recent.length === 0) return publisher
+  return [...publisher, ...recent]
+}
+
 export type PortfolioLoad =
   | { status: 'loading' }
   | { status: 'ready'; trades: PortfolioTrade[] }

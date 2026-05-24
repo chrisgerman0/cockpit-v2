@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowTrades, mergePublisherAndShadow, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
@@ -174,24 +174,40 @@ export function BacktestingContent() {
       // response, so we grab it from the existing response and drop the
       // extra roundtrip entirely.
       try {
-        const [statsResp, rawTrades] = await Promise.all([
+        // 2026-05-24: Backtest page = clean shadow simulation (locked
+        // architecture). Publisher provides the historical baseline (hourly
+        // cron-rebuilt) and the shadow daemon's trades.jsonl is read directly
+        // for the gap between publisher's last run and now. Shadow is
+        // synthetic (bar-close prices, never Bitget) — that's correct for
+        // the Backtest page. Live Trading page reads Bitget reality
+        // separately and never mixes with this source.
+        const [statsResp, pubTrades, shadowTrades] = await Promise.all([
           fetch(statsPath(tier)),
           tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
+          fetchShadowTrades().catch(() => [] as PortfolioTrade[]),
         ])
         if (cancelled) return
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
+        const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades)
         setAllTrades(rawTrades)
         // closed-only = raw minus eod markers. Same filter the fetch layer
         // applies when includeOpen=false, but applied here so we only pay
         // for one network/disk hit per tier switch.
         setTrades(rawTrades.filter(t => !isEodMarker(t)))
 
-        // Freshness pill: read Last-Modified off the GET response we just
-        // received. No extra HEAD request needed.
+        // Freshness pill: prefer the shadow timestamp when shadow has fresher
+        // data than the publisher static file. The publisher's Last-Modified
+        // header reflects when /phase-h/portfolio-trades.json was last
+        // written (hourly cron). Shadow trades fill the gap to "now" — so
+        // when any shadow trade lands after the publisher mtime, freshness
+        // is effectively realtime.
         const lm = statsResp.headers.get('last-modified')
-        if (lm) {
-          const ageMs = Date.now() - new Date(lm).getTime()
+        const pubMtimeMs = lm ? new Date(lm).getTime() : 0
+        const shadowMaxExitTs = shadowTrades.reduce((m, t) => Math.max(m, t.exitTs || 0), 0)
+        const freshnessSourceTs = Math.max(pubMtimeMs, shadowMaxExitTs)
+        if (freshnessSourceTs > 0) {
+          const ageMs = Date.now() - freshnessSourceTs
           const mins = Math.floor(ageMs / 60000)
           setUpdatedAgo(mins < 1 ? '< 1m' : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`)
           setUpdatedAgoMins(mins)
@@ -201,7 +217,12 @@ export function BacktestingContent() {
       }
     }
     load()
-    return () => { cancelled = true }
+    // 60s poll for shadow refreshes — matches Live Mirror cadence + the
+    // shadow endpoint's 30s server cache so we hit it shortly after each
+    // cache turnover. Publisher rerun is hourly; nothing to gain from
+    // faster polling of statsResp.
+    const id = window.setInterval(load, 60_000)
+    return () => { cancelled = true; window.clearInterval(id) }
   }, [tier, isAdmin])
 
   const isPt = getCurrentLang() === 'PT'

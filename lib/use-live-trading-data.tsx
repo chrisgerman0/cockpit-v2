@@ -5,14 +5,22 @@ import { authedFetch, browserClient } from './api'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
 import { fetchPortfolioTrades, normalizeTier, type Tier } from './use-portfolio-trades'
 
-const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT'] as const
-type V1Symbol = typeof V1_SYMBOLS[number]
-type CoinShort = 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
+// 2026-05-24 (P5): use 14-asset Phase H basket. V1_SYMBOLS / V1Symbol /
+// CoinShort kept as local aliases so the rest of this 600-line hook reads
+// the same. The SHORT map is derived programmatically — adding a basket
+// asset only requires editing lib/phase-h-basket.ts.
+import { PHASE_H_BASKET, PHASE_H_SYMBOLS, type PhaseHAsset, type PhaseHSymbol } from './phase-h-basket'
+const V1_SYMBOLS = PHASE_H_SYMBOLS
+type V1Symbol = PhaseHSymbol
+type CoinShort = PhaseHAsset
 
-const SHORT: Record<V1Symbol, CoinShort> = {
-  BTCUSDT:  'BTC',  ETHUSDT:  'ETH',  SOLUSDT: 'SOL',  XRPUSDT: 'XRP',  SUIUSDT: 'SUI',
-  DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
-}
+const SHORT: Record<V1Symbol, CoinShort> = (() => {
+  const m = {} as Record<V1Symbol, CoinShort>
+  for (const a of PHASE_H_BASKET) {
+    m[`${a}USDT` as V1Symbol] = a
+  }
+  return m
+})()
 
 export type LiveTrade = {
   id: string
@@ -139,7 +147,9 @@ type StrategyStateResp = {
 
 function symToShort(symbol: string): CoinShort {
   const s = symbol.replace('USDT', '') as CoinShort
-  return (['BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK'] as const).includes(s) ? s : 'BTC'
+  // 2026-05-24 (P5): basket-aware validation. Unknown symbol → fall back to BTC
+  // to keep the type signature unchanged (callers rely on a non-null CoinShort).
+  return (PHASE_H_BASKET as readonly string[]).includes(s) ? s : 'BTC'
 }
 
 function normalize(t: RawTrade): LiveTrade {
