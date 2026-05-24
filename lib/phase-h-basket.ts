@@ -36,8 +36,8 @@ export const ASSET_LOGOS: Record<PhaseHSymbol, string> = {
   ADAUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/ada.svg',
   TRXUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/trx.svg',
   ZECUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/zec.svg',
-  TONUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/ton.svg',
-  HYPEUSDT: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/generic.svg',
+  TONUSDT:  '/coin-icons/ton.png',
+  HYPEUSDT: '/coin-icons/hype.png',
 }
 
 export type CoinFilter = 'ALL' | PhaseHAsset

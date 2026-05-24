@@ -261,11 +261,18 @@ export async function fetchShadowTrades(): Promise<PortfolioTrade[]> {
  * real-time but would have under a fresh replay).
  */
 function tradeKey(t: PortfolioTrade): string {
+  // 2026-05-24 Issue A v2 fix: ALWAYS key by (symbol, dir, day) regardless of
+  // cfg_sid presence. The publisher's PUBLIC path strips cfg_sid for IP
+  // protection, so shadow trades (which always have cfg_sid) and public
+  // publisher trades would generate DIFFERENT keys for the same logical
+  // trade — defeating the dedupe and leaving publisher's stale version on
+  // the page. Trade-off: this is coarser (two distinct cfgs firing on the
+  // same symbol+dir+day in publisher would collapse to one when shadow has
+  // ANY trade for that key). In practice shadow has very few trades so
+  // this only affects the days shadow has covered; the rest of history
+  // dedupes precisely because publisher's other days don't collide.
   const day = Math.floor((t.entryTs || 0) / 86_400_000)
-  // Prefer cfg_sid when available (admin path); fall back to symbol+dir
-  // when stripped (public path).
-  const idKey = t.cfg_sid || `${t.symbol}|${t.dir}`
-  return `${idKey}|${day}`
+  return `${t.symbol}|${t.dir}|${day}`
 }
 
 export function mergePublisherAndShadow(
