@@ -146,8 +146,15 @@ export function BacktestingContent() {
 
   useEffect(() => {
     let cancelled = false
+    // 2026-05-24 Issue A flicker fix: only show the loading skeleton on the
+    // INITIAL load (mount or tier switch). The 60s background poll
+    // re-fetches publisher + shadow, but if it flips loading=true on every
+    // tick the page goes blank for a second while data is in flight —
+    // that's the flicker the user reported. Keep the previous data visible
+    // and swap atomically when the new response lands.
+    let firstLoad = true
     async function load() {
-      setLoading(true)
+      if (firstLoad) setLoading(true)
       // Admins fetch the gated /api/admin/portfolio-trades endpoint which
       // returns trades enriched with cfg_sid + raw displayReason. Customers
       // fetch the public path which has those stripped server-side.
@@ -214,6 +221,7 @@ export function BacktestingContent() {
         }
       } finally {
         if (!cancelled) setLoading(false)
+        firstLoad = false
       }
     }
     load()
