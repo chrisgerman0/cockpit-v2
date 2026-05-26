@@ -67,13 +67,19 @@ function pathForTier(tier: Tier): string {
   return `/data/strategies/phase-h/tiers/${tier}/portfolio-trades.json`
 }
 
-// Tiny in-memory cache shared across hooks — daemon refreshes every 60s, so
-// 60s here is fine. Avoids re-downloading 4.5MB on every component mount.
-// We cache the RAW set (closed + open eod markers) and let callers choose
-// which view they want via the `includeOpen` flag.
+// Tiny in-memory cache shared across hooks. Cached across the SESSION so
+// tier switches (Conservative ↔ Moderate ↔ Aggressive) are instant after
+// the first visit. Publisher runs hourly, so 10-min TTL is safely fresher
+// than the underlying data anyway.
+//
+// 2026-05-26: bumped from 60s → 600s after Chris asked twice for "instant
+// tier switching" — the 60s TTL was forcing a full ~900KB re-download on
+// every tier change. Plus we now prewarm all 3 tiers on first mount (see
+// usePortfolioTrades), so the second + third switch are guaranteed cache
+// hits.
 type CacheEntry = { fetchedAt: number; raw: PortfolioTrade[] }
 const cache = new Map<Tier, CacheEntry>()
-const CACHE_MS = 60_000
+const CACHE_MS = 600_000  // 10 min
 
 /**
  * Returns true for the "open trade" placeholder rows the daemon writes at
@@ -157,6 +163,31 @@ export async function fetchPortfolioTrades(
     cache.set(tier, { fetchedAt: Date.now(), raw })
   }
   return opts.includeOpen ? raw : raw.filter(t => !isEodMarker(t))
+}
+
+/**
+ * Pre-warm the cache for all 3 tiers in parallel. Call once on Backtesting
+ * page mount so subsequent tier switches are guaranteed cache hits — no
+ * network round-trip, no skeleton flash.
+ *
+ * Fire-and-forget: errors are swallowed (the live load() will retry the
+ * single tier the user actually picked). Returns immediately so callers
+ * don't await.
+ */
+export function prewarmAllTiers(): void {
+  const tiers: Tier[] = ['conservative', 'moderate', 'aggressive']
+  for (const t of tiers) {
+    const cached = cache.get(t)
+    if (cached && Date.now() - cached.fetchedAt < CACHE_MS) continue
+    // Background fetch; ignore promise rejection.
+    void fetchPortfolioTrades(t).catch(() => {/* swallowed — live path will retry */})
+  }
+}
+
+/** Inspect cache state — true if the tier's trade list is already in memory and fresh. */
+export function isTierCached(tier: Tier): boolean {
+  const cached = cache.get(tier)
+  return !!cached && (Date.now() - cached.fetchedAt < CACHE_MS)
 }
 
 /**

@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, isEodMarker, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
@@ -144,6 +144,15 @@ export function BacktestingContent() {
     return () => { cancelled = true }
   }, [])
 
+  // 2026-05-26: prewarm all 3 tiers in the background on first mount.
+  // The user reported tier switching feels slow because the first switch to
+  // any new tier has to download ~900 KB of trade data. Prewarming makes the
+  // second and third tier switches instant (cache hit, no skeleton flash).
+  // Fire-and-forget — errors fall through to the live load() retry.
+  useEffect(() => {
+    prewarmAllTiers()
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     // 2026-05-24 Issue A flicker fix: only show the loading skeleton on the
@@ -152,9 +161,14 @@ export function BacktestingContent() {
     // tick the page goes blank for a second while data is in flight —
     // that's the flicker the user reported. Keep the previous data visible
     // and swap atomically when the new response lands.
+    //
+    // 2026-05-26: skip the skeleton when the tier's already cached. Combined
+    // with prewarmAllTiers above, this makes Conservative ↔ Moderate ↔
+    // Aggressive switches feel instant — old data stays visible, new data
+    // swaps in within milliseconds because no network round-trip is needed.
     let firstLoad = true
     async function load() {
-      if (firstLoad) setLoading(true)
+      if (firstLoad && !isTierCached(tier)) setLoading(true)
       // Admins fetch the gated /api/admin/portfolio-trades endpoint which
       // returns trades enriched with cfg_sid + raw displayReason. Customers
       // fetch the public path which has those stripped server-side.
@@ -448,27 +462,47 @@ function EquityCurveSection({ trades, stats, isPt }: { trades: PortfolioTrade[];
   const data = useMemo(() => {
     if (trades.length === 0) return { strategy: [] as EquityPoint[], bhPoints: [] as EquityPoint[] }
     const startCap = stats?.startCapital || 10000
+
+    // 2026-05-26: chronological sort first. The raw trade list is publisher
+    // order (per-asset replay) which interleaves time in ways that produce
+    // visible wobble — e.g. you'd see ETH-replay trades from 2024 stacked
+    // before BTC-replay trades from 2021, so an equity sample mid-array
+    // could be summing across non-chronological PnL. Sorting by exitTs
+    // means each sample point reflects total realised PnL up to that
+    // wall-clock moment, which is what an equity curve should show.
+    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+
+    // Sample density. Bumped 250 → 1500 (2026-05-26) so the curve no longer
+    // skips over short-duration drawdowns and rallies — at 250 samples on a
+    // 15k-trade ledger a single sample covered 60 trades, hiding meaningful
+    // intra-window shape. 1500 is still well below the input size (so we
+    // get genuine subsampling, not aliasing artifacts) but ~6× the previous
+    // resolution.
     let eq = startCap
-    const SAMPLE = 250
-    const step = Math.max(1, Math.floor(trades.length / SAMPLE))
-    const strategy: EquityPoint[] = [{ ts: trades[0].entryTs, value: startCap, month: '' }]
-    for (let i = 0; i < trades.length; i++) {
-      eq += trades[i].pnl
-      if (i % step === 0 || i === trades.length - 1) {
-        strategy.push({ ts: trades[i].exitTs, value: Math.max(1, Math.round(eq * 100) / 100), month: '' })
+    const SAMPLE = 1500
+    const step = Math.max(1, Math.floor(chrono.length / SAMPLE))
+    const strategy: EquityPoint[] = [{ ts: chrono[0].entryTs, value: startCap, month: '' }]
+    for (let i = 0; i < chrono.length; i++) {
+      eq += chrono[i].pnl
+      if (i % step === 0 || i === chrono.length - 1) {
+        strategy.push({ ts: chrono[i].exitTs, value: Math.max(1, Math.round(eq * 100) / 100), month: '' })
       }
     }
 
-    // BTC Buy & Hold from first BTC entryPx → last BTC trade exitPx, sampled along time axis
-    const btcTrades = trades.filter(t => (t.symbol || '').includes('BTC'))
+    // BTC Buy & Hold from first BTC entryPx → each BTC exitPx, sampled along
+    // its own timeline. 2026-05-26: previously this used the same `step` as
+    // the strategy, computed from total trade count. With 14 assets the BTC
+    // slice is <10% of the total — so step=60 produced ~25 BH samples on a
+    // 6-year span, making the line a coarse zig-zag. We now compute step
+    // independently against BTC count so the BH curve has comparable density
+    // to the strategy curve.
+    const btcChrono = chrono.filter(t => (t.symbol || '').includes('BTC'))
     let bhPoints: EquityPoint[] = []
-    if (btcTrades.length > 0) {
-      const firstPx = btcTrades[0].entryPx
-      const lastPx = btcTrades[btcTrades.length - 1].exitPx
-      // Assume buy at firstPx with full $10k, hold to lastPx — but interpolate
-      // along strategy timeline so the curve overlays. Use BTC's per-trade
-      // entryPx samples for shape.
-      bhPoints = btcTrades.filter((_, i) => i % step === 0 || i === btcTrades.length - 1).map(t => ({
+    if (btcChrono.length > 0) {
+      const firstPx = btcChrono[0].entryPx
+      const BH_SAMPLE = 1500
+      const bhStep = Math.max(1, Math.floor(btcChrono.length / BH_SAMPLE))
+      bhPoints = btcChrono.filter((_, i) => i % bhStep === 0 || i === btcChrono.length - 1).map(t => ({
         ts: t.exitTs,
         value: Math.max(1, Math.round((startCap * (t.exitPx / firstPx)) * 100) / 100),
         month: '',
