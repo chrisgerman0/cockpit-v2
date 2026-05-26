@@ -39,17 +39,25 @@ export function SettingsContent() {
   const router = useRouter()
 
   const tabFromUrl = (search?.get('tab') || 'profile') as TabId
-  const [tab, setTab] = useState<TabId>(
-    TABS.find(t => t.id === tabFromUrl) ? tabFromUrl : 'profile'
-  )
+  const initialTab: TabId = TABS.find(t => t.id === tabFromUrl) ? tabFromUrl : 'profile'
+  const [tab, setTab] = useState<TabId>(initialTab)
+  // 2026-05-26 lazy-mount tracking: tabs the user has activated at least
+  // once stay mounted thereafter (so subsequent tab switches are instant).
+  // Initial set = {initialTab} so the user only fetches data for the panel
+  // they actually land on, not all 7.
+  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(() => new Set([initialTab]))
 
   useEffect(() => {
     const next = (search?.get('tab') || 'profile') as TabId
-    if (TABS.find(x => x.id === next) && next !== tab) setTab(next)
+    if (TABS.find(x => x.id === next) && next !== tab) {
+      setTab(next)
+      setMountedTabs(prev => prev.has(next) ? prev : new Set([...prev, next]))
+    }
   }, [search])
 
   function selectTab(id: TabId) {
     setTab(id)
+    setMountedTabs(prev => prev.has(id) ? prev : new Set([...prev, id]))
     router.replace(`/settings?tab=${id}`, { scroll: false })
   }
 
@@ -73,17 +81,22 @@ export function SettingsContent() {
             )
           })}
         </nav>
-        {/* All panels stay mounted — toggling display instead of conditional
-            render means switching tabs is instant (no useEffect refetch).
-            Mirrors v1 client-dashboard.html which keeps all .settings-panel
-            divs in the DOM and just flips display:none/block. */}
-        <div className="settings-panel"><div style={{ display: tab === 'profile'       ? 'block' : 'none' }}><ProfilePanel /></div>
-        <div style={{ display: tab === 'billing'       ? 'block' : 'none' }}><BillingPanel /></div>
-        <div style={{ display: tab === 'bot'           ? 'block' : 'none' }}><BotPanel /></div>
-        <div style={{ display: tab === 'notifications' ? 'block' : 'none' }}><NotificationsPanel /></div>
-        <div style={{ display: tab === 'security'      ? 'block' : 'none' }}><SecurityPanel /></div>
-        <div style={{ display: tab === 'tour'          ? 'block' : 'none' }}><TourPanel active={tab === 'tour'} /></div>
-        <div style={{ display: tab === 'payout'        ? 'block' : 'none' }}><PayoutPanel /></div></div>
+        {/* 2026-05-26 Phase 1 #5 perf fix: lazy-mount + persistent-mount hybrid.
+            Original "all mounted" design fired ~10 parallel API calls on first
+            page load (each panel's own useEffect). Lazy-mount: panels mount on
+            FIRST activation, then stay mounted for instant subsequent switches
+            (no second useEffect refetch). Result: cold first-mount loads only
+            the active panel's data; subsequent tab switches stay instant
+            (same as before). */}
+        <div className="settings-panel">
+          {mountedTabs.has('profile')       && <div style={{ display: tab === 'profile'       ? 'block' : 'none' }}><ProfilePanel /></div>}
+          {mountedTabs.has('billing')       && <div style={{ display: tab === 'billing'       ? 'block' : 'none' }}><BillingPanel /></div>}
+          {mountedTabs.has('bot')           && <div style={{ display: tab === 'bot'           ? 'block' : 'none' }}><BotPanel /></div>}
+          {mountedTabs.has('notifications') && <div style={{ display: tab === 'notifications' ? 'block' : 'none' }}><NotificationsPanel /></div>}
+          {mountedTabs.has('security')      && <div style={{ display: tab === 'security'      ? 'block' : 'none' }}><SecurityPanel /></div>}
+          {mountedTabs.has('tour')          && <div style={{ display: tab === 'tour'          ? 'block' : 'none' }}><TourPanel active={tab === 'tour'} /></div>}
+          {mountedTabs.has('payout')        && <div style={{ display: tab === 'payout'        ? 'block' : 'none' }}><PayoutPanel /></div>}
+        </div>
       </div>
     </div>
   )
