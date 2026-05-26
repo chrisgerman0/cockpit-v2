@@ -173,7 +173,13 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
   return (
     <div className="stax-page">
       <PageHeader lastUpdatedMs={data.lastUpdatedMs} hasOpen={openRows.length > 0} />
-      <StatsRow totals={data.totals} unrealizedPnl={data.unrealizedPnl} openCount={openRows.length} />
+      {/* 2026-05-26 Unrealized PnL fix: pass the live-recomputed sum from
+          openRows (each row's pnl is updated on every ticker tick via the
+          openRows memo above). Previously we passed `data.unrealizedPnl`
+          which is the 30s-old Bitget snapshot from /api/balance — caused
+          the top card to lag the position-row PnL by up to a full polling
+          cycle, with no movement between polls. */}
+      <StatsRow totals={data.totals} unrealizedPnl={openRows.reduce((s, r) => s + (Number.isFinite(r.pnl) ? r.pnl : 0), 0)} openCount={openRows.length} />
       <LiveTradesTable
         title="OPEN POSITIONS"
         rows={openRows}
@@ -715,21 +721,24 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
             viewport without horizontal scroll. */}
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>
-            {/* Column widths tightened so the 9-col table fits ~1000px of
-                desktop content area without horizontal scroll. Sum of fixed
-                widths = ~49em (~700-790px depending on font-size base); the
-                last column (Pulse/Reason) fills whatever's left. Pulse cell
-                min-width was also reduced from 320 → 240 (see stax-design.css)
-                so the column can compress when the card is narrow. */}
-            <col style={{ width: '2.5em' }} />     {/* # */}
-            <col style={{ width: '8em' }} />       {/* Pair */}
-            <col style={{ width: '5em' }} />       {/* Side */}
-            <col style={{ width: '7em' }} />       {/* Size */}
-            <col style={{ width: '8em' }} />       {/* Entry */}
-            <col style={{ width: '8em' }} />       {/* Exit */}
-            <col style={{ width: '6em' }} />       {/* P&L */}
-            <col style={{ width: '5em' }} />       {/* % */}
-            <col />                                 {/* Pulse/Reason — fills remaining */}
+            {/* 2026-05-26: switched from fixed em widths + flex-last to
+                proportional percentages summing to 100%. Old layout left
+                the last column (Pulse/Reason) ~40-60% of a wide desktop
+                viewport because all other columns had absolute em widths
+                — gave the "EXIT/P&L/% clustered left, Pulse floating far
+                right" appearance Chris flagged. Proportional widths put
+                each cell where eye expects it across all screen sizes.
+                Pulse keeps a slightly higher share since the SL-danger
+                meter is wider than a text cell. */}
+            <col style={{ width: '4%' }} />        {/* # */}
+            <col style={{ width: '12%' }} />       {/* Pair */}
+            <col style={{ width: '7%' }} />        {/* Side */}
+            <col style={{ width: '11%' }} />       {/* Size */}
+            <col style={{ width: '13%' }} />       {/* Entry */}
+            <col style={{ width: '13%' }} />       {/* Exit */}
+            <col style={{ width: '10%' }} />       {/* P&L */}
+            <col style={{ width: '8%' }} />        {/* % */}
+            <col style={{ width: '22%' }} />       {/* Pulse/Reason */}
           </colgroup>
           <thead>
             <tr>
