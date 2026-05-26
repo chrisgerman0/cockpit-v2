@@ -216,23 +216,39 @@ export async function fetchAdminPortfolioTrades(
  *
  * 30s module-scope cache mirrors the endpoint's Cache-Control.
  */
-type ShadowFeed = { trades: PortfolioTrade[]; fetchedAt: number }
+type ShadowFeed = { trades: PortfolioTrade[]; lastEventTs: number; fetchedAt: number }
 let shadowCache: ShadowFeed | null = null
 const SHADOW_CACHE_MS = 30_000
 
 export async function fetchShadowTrades(): Promise<PortfolioTrade[]> {
+  const feed = await fetchShadowFeed()
+  return feed.trades
+}
+
+/**
+ * Same as fetchShadowTrades but exposes the lastEventTs (timestamp of the
+ * most recent shadow event regardless of whether it pairs into a complete
+ * trade). Open positions don't appear in `trades` but still update
+ * lastEventTs — use this for freshness signaling.
+ *
+ * 2026-05-25: added so the Backtest badge can reflect actual shadow
+ * activity (not just close-paired trades). Open shadow positions are
+ * evidence the daemon is alive even when there's no closed trade yet.
+ */
+export async function fetchShadowFeed(): Promise<{ trades: PortfolioTrade[]; lastEventTs: number }> {
   if (shadowCache && Date.now() - shadowCache.fetchedAt < SHADOW_CACHE_MS) {
-    return shadowCache.trades
+    return { trades: shadowCache.trades, lastEventTs: shadowCache.lastEventTs }
   }
   try {
     const res = await fetch('/api/strategies/phase-h/shadow-trades', { cache: 'no-store' })
-    if (!res.ok) return []
-    const j = await res.json() as { trades: PortfolioTrade[] }
+    if (!res.ok) return { trades: [], lastEventTs: 0 }
+    const j = await res.json() as { trades: PortfolioTrade[]; lastEventTs?: number }
     const trades = j.trades || []
-    shadowCache = { trades, fetchedAt: Date.now() }
-    return trades
+    const lastEventTs = Number(j.lastEventTs || 0)
+    shadowCache = { trades, lastEventTs, fetchedAt: Date.now() }
+    return { trades, lastEventTs }
   } catch {
-    return []
+    return { trades: [], lastEventTs: 0 }
   }
 }
 

@@ -1603,11 +1603,35 @@ export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
     })
   }, [data.positions, tickerByPair])
 
+  // 2026-05-26 Live Unrealized PnL: sum live-recomputed PnL across open
+  // positions (livePositions already merged ticker prices in the useMemo
+  // above). Override the static value baked into data.stats by the hook
+  // so the card moves with every ticker tick, in sync with the position
+  // rows. Mirrors the same fix applied to LiveTrading page's StatsRow.
+  const liveStats = useMemo(() => {
+    if (!data.stats) return data.stats
+    const liveUnrealized = livePositions.reduce((sum, p) => {
+      // Extract numeric pnl from the formatted string (e.g., "−$25.91" → -25.91).
+      const raw = (p.pnl || '').replace(/[^0-9.\-−]/g, '').replace('−', '-')
+      const n = parseFloat(raw)
+      return sum + (Number.isFinite(n) ? n : 0)
+    }, 0)
+    return data.stats.map(s => {
+      if (s.label !== 'Unrealized PnL') return s
+      // Don't override the "$0 / No open position" empty state.
+      if (livePositions.length === 0) return s
+      const abs = Math.abs(liveUnrealized).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const value = liveUnrealized >= 0 ? `+$${abs}` : `−$${abs}`
+      const valueClass: 'pos' | 'neg' = liveUnrealized >= 0 ? 'pos' : 'neg'
+      return { ...s, value, valueClass }
+    })
+  }, [data.stats, livePositions])
+
   return (
     <div className="stax-page">
       <OnboardingBanner />
       <Hero data={data} />
-      <StatsRow stats={data.stats} />
+      <StatsRow stats={liveStats} />
       <TablesRow positions={livePositions} trades={data.trades} />
       <BottomRow data={data} />
       {wizLoaded && (

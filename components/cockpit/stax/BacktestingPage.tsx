@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowTrades, mergePublisherAndShadow, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, isEodMarker, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
@@ -188,12 +188,13 @@ export function BacktestingContent() {
         // synthetic (bar-close prices, never Bitget) — that's correct for
         // the Backtest page. Live Trading page reads Bitget reality
         // separately and never mixes with this source.
-        const [statsResp, pubTrades, shadowTrades] = await Promise.all([
+        const [statsResp, pubTrades, shadowFeed] = await Promise.all([
           fetch(statsPath(tier)),
           tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
-          fetchShadowTrades().catch(() => [] as PortfolioTrade[]),
+          fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
         if (cancelled) return
+        const shadowTrades = shadowFeed.trades
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
         const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades)
@@ -206,13 +207,16 @@ export function BacktestingContent() {
         // Freshness pill: prefer the shadow timestamp when shadow has fresher
         // data than the publisher static file. The publisher's Last-Modified
         // header reflects when /phase-h/portfolio-trades.json was last
-        // written (hourly cron). Shadow trades fill the gap to "now" — so
-        // when any shadow trade lands after the publisher mtime, freshness
-        // is effectively realtime.
+        // written (hourly cron). Shadow events fill the gap to "now".
+        //
+        // 2026-05-25: use shadowFeed.lastEventTs instead of trades[].exitTs.
+        // Open positions (unpaired LIVE_ENTRY without close) update
+        // lastEventTs but produce no closed trade. Without this, the badge
+        // ignored shadow activity until the position closed — which can be
+        // many hours. Shadow being ACTIVE counts as fresh.
         const lm = statsResp.headers.get('last-modified')
         const pubMtimeMs = lm ? new Date(lm).getTime() : 0
-        const shadowMaxExitTs = shadowTrades.reduce((m, t) => Math.max(m, t.exitTs || 0), 0)
-        const freshnessSourceTs = Math.max(pubMtimeMs, shadowMaxExitTs)
+        const freshnessSourceTs = Math.max(pubMtimeMs, shadowFeed.lastEventTs || 0)
         if (freshnessSourceTs > 0) {
           const ageMs = Date.now() - freshnessSourceTs
           const mins = Math.floor(ageMs / 60000)

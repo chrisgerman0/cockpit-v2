@@ -592,7 +592,11 @@ html.light .stax-app .menu-item:hover { background: rgba(0,0,0,0.04); }
    spreads them evenly across the available row width. */
 .stax-app .row-stats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .stax-app .row-tables { grid-template-columns: 1fr 1fr; }
-.stax-app .row-bottom { grid-template-columns: 1.3fr 1fr 1fr 1.2fr; }
+/* 2026-05-26: 4 equal columns so the 4 cards align with the 50/50
+   row-tables grid above (OPEN POSITIONS | RECENT TRADES). Previously
+   1.3fr 1fr 1fr 1.2fr — asymmetric, made WIN RATE 50's right edge sit
+   inside RECENT TRADES' right edge instead of matching it. */
+.stax-app .row-bottom { grid-template-columns: 1fr 1fr 1fr 1fr; }
 
 /* hero balance card */
 .stax-app .balance-card { padding: 16px 20px 18px; min-height: auto; }

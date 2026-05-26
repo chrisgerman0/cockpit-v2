@@ -547,18 +547,21 @@ export function useStaxDashboardData(): StaxLoadState {
           }
         })
 
-        // Fallback: when the user has no real open positions on the exchange,
-        // surface what the STRATEGY is currently long/short on. These are
-        // sourced from portfolio-trades.json — entries with `reason: 'eod'`
-        // are the strategy's still-open positions at end-of-data (the
-        // simulator force-closed them only because it ran out of bars; in
-        // live trading they'd still be open).
+        // Strategy-positions FALLBACK (pre-activation only): when a
+        // not-yet-activated user has no real Bitget positions, surface
+        // what the strategy is currently long/short on so the dashboard
+        // isn't empty. Sourced from portfolio-trades.json `reason: 'eod'`
+        // entries (strategy's still-open positions at end-of-data).
         //
-        // P&L is calculated using the user's BALANCE-scaled notional so the
-        // numbers match what would actually happen if the bot opened it for
-        // them right now. Marked with fromStrategy:true so the UI can render
-        // a distinct badge.
-        if (positions.length === 0) {
+        // 2026-05-26 critical guard: only fall back when the user is NOT
+        // activated. If the user IS activated AND has zero positions, the
+        // honest display is "no open positions" — NOT "here are 4 phantom
+        // strategy positions that aren't yours". Previously the fallback
+        // fired any time openTrades was empty, including when /api/trades-
+        // live returned empty due to a transient Bitget API issue. Chris
+        // saw 4 phantom positions (SOL/AVAX/TON/TRX) on the Dashboard
+        // while only TRX was his real position.
+        if (positions.length === 0 && noBot) {
           const strategyOpen = portfolio.filter(isOpenPortfolioTrade)
           // Latest open per symbol (in case the file has multiple eod entries
           // for the same asset across cycles — keep the freshest).

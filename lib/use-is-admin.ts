@@ -31,7 +31,11 @@ async function probe(): Promise<boolean> {
   const token = await getAccessToken().catch(() => null)
   if (!token) return false
   try {
-    const res = await fetch('/api/admin/strategy-research', {
+    // 2026-05-25: was /api/admin/strategy-research (auth-check stub, now
+    // deleted). Replaced with /api/admin/users which is a maintained
+    // endpoint that has the same admin-gated auth behavior and returns
+    // consistent 200 for admin / 401 for non-admin.
+    const res = await fetch('/api/admin/users?limit=1', {
       headers: { Authorization: `Bearer ${token}` },
     })
     return res.status === 200

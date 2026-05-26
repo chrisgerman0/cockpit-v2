@@ -4,7 +4,7 @@
  * Admin cockpit — v2 design. Settings-style left sub-nav (220px) plus
  * right-side panels:
  *
- *   Operations  →  Overview · Radar · Execution · Alerts · Users
+ *   Operations  →  Overview · Execution · Alerts · Users  (Radar removed 2026-05-25 — V1-locked)
  *   Broker      →  Brokers · Invoices · Payouts · Wallets
  *   Business    →  Revenue
  *   Research    →  Strategy · Social
@@ -55,7 +55,7 @@ const ExternalLink = (p: IconProps) => <I {...p}><path d="M14 4h6v6M20 4l-9 9M19
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
 type TabId =
-  | 'overview' | 'radar' | 'execution' | 'alerts' | 'users'
+  | 'overview' | 'execution' | 'health' | 'alerts' | 'users'
   | 'brokers' | 'broker-invoices' | 'broker-payouts' | 'wallets'
   | 'revenue' | 'strategy' | 'social'
 
@@ -63,8 +63,11 @@ type TabDef = { id: TabId; label: string; group: string; icon: React.ComponentTy
 
 const TABS: TabDef[] = [
   { id: 'overview',         label: 'Overview',   group: 'Operations', icon: Icons.Grid },
-  { id: 'radar',            label: 'Radar',      group: 'Operations', icon: Icons.Bolt },
+  // Radar removed 2026-05-25: V1-locked, hardcoded 7-asset basket, V1 state
+  // files no longer updating. Phase H equivalent lives in Live Trading +
+  // Backtest pages. See SYSTEM_HANDOVER.md §5 Rule 26.
   { id: 'execution',        label: 'Execution',  group: 'Operations', icon: Icons.Signal },
+  { id: 'health',           label: 'Health',     group: 'Operations', icon: Heart },
   { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
   { id: 'users',            label: 'Users',      group: 'Operations', icon: People },
   { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
@@ -362,11 +365,11 @@ export function AdminContent() {
           <div style={{ display: tab === 'overview' ? 'block' : 'none' }}>
             <OverviewPanel active={tab === 'overview'} />
           </div>
-          <div style={{ display: tab === 'radar' ? 'block' : 'none' }}>
-            <RadarPanel active={tab === 'radar'} />
-          </div>
           <div style={{ display: tab === 'execution' ? 'block' : 'none' }}>
             <ExecutionPanel active={tab === 'execution'} />
+          </div>
+          <div style={{ display: tab === 'health' ? 'block' : 'none' }}>
+            <SystemHealthPanel active={tab === 'health'} />
           </div>
           <div style={{ display: tab === 'alerts' ? 'block' : 'none' }}>
             <AlertsPanel active={tab === 'alerts'} />
@@ -414,898 +417,401 @@ type OverviewData = {
     total_net_profit?: number
     total_volume?: number
   }
-  open_positions: any[]
-  critical_alerts: any[]
-  last_signal: any
-  recent_alerts: any[]
-  recent_signups: any[]
+  recent_alerts: Array<{ id: string; alert_type: string; severity: string; title: string; description: string | null; created_at: string }>
+  recent_signups: Array<{ email: string; full_name: string | null; created_at: string }>
   fetched_at: string
-}
-
-type SystemHealthData = {
-  ts: number
-  feed: { data: any; monitorAgeMs: number | null; missing: boolean }
-  deadman: { data: any; monitorAgeMs: number | null; missing: boolean }
-  recon: { data: any; monitorAgeMs: number | null; missing: boolean }
 }
 
 function OverviewPanel({ active }: { active: boolean }) {
   const ov = usePanelData<OverviewData>(active, () => authedFetch('/api/admin/overview'), 30_000)
-  const sh = usePanelData<SystemHealthData>(active, () => authedFetch('/api/admin/system-health'), 30_000)
-
   const o = ov.data?.overview
-  const opens = ov.data?.open_positions || []
   const recentAlerts = ov.data?.recent_alerts || []
+  const recentSignups = ov.data?.recent_signups || []
 
+  // 2026-05-25 (Session 3) — overview is business-only. Engine state
+  // belongs on the Health tab; live position state on Live Trading;
+  // strategy backtest on Backtest. This tab points at those instead
+  // of duplicating them.
   return (
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · OVERVIEW"
-        lead="Pipeline + business"
+        lead="Business"
         accent="snapshot."
-        blurb="Live counts, open positions, last signal, system health. Auto-refreshes every 30s."
-        refreshing={ov.loading || sh.loading}
-        onRefresh={() => { ov.refresh(); sh.refresh() }}
+        blurb="Pipeline counts + signups. Engine/cache/publisher state lives on Health. Position state on Live Trading. Strategy backtest on Backtest. Refreshes 30s."
+        refreshing={ov.loading}
+        onRefresh={ov.refresh}
       />
-      <ErrorBox msg={ov.error || sh.error} />
+      <ErrorBox msg={ov.error} />
 
-      {/* Tile row */}
+      {/* Business tiles only */}
       <div className="row row-stats">
-        <StatCard label="Open positions" value={opens.length} tone={opens.length > 0 ? 'pos' : 'muted'} />
-        <StatCard label="Pending fills" value={(o as any)?.tradesPending ?? '—'} />
         <StatCard label="Total users" value={(o?.total_leads ?? '—').toString()} />
         <StatCard label="Active subs" value={(o?.total_subscribed ?? '—').toString()} sub={`Trial ${o?.total_trial ?? '—'}`} />
-      </div>
-      <div className="row row-stats">
         <StatCard label="API connected" value={(o?.total_connected ?? '—').toString()} />
-        <StatCard label="Net profit" value={fmtUsd(o?.total_net_profit ?? null, true)} tone={(o?.total_net_profit ?? 0) >= 0 ? 'pos' : 'neg'} />
-        <StatCard label="Total volume" value={fmtUsd(o?.total_volume ?? null)} />
-        <StatCard label="Critical alerts" value={(ov.data?.critical_alerts || []).length} tone={(ov.data?.critical_alerts || []).length > 0 ? 'neg' : 'muted'} />
+        <StatCard
+          label="Net profit"
+          value={fmtUsd(o?.total_net_profit ?? null, true)}
+          tone={(o?.total_net_profit ?? 0) >= 0 ? 'pos' : 'neg'}
+        />
       </div>
 
-      {/* Feed health card */}
-      <SectionCard
-        title="FEED HEALTH"
-        right={sh.data?.feed?.data ? (
-          <span className="adm-eye">
-            {(sh.data.feed.data.assets || []).length - ((sh.data.feed.data.stale || []).length || 0)} / {(sh.data.feed.data.assets || []).length} healthy · monitor {fmtAge(sh.data.feed.data.ts)}
-          </span>
-        ) : null}
-      >
-        {!sh.data?.feed?.data ? (
-          <EmptyBox>feed-freshness-monitor not writing /tmp/staxs-feed-status.json — check PM2.</EmptyBox>
-        ) : (
-          <div className="adm-feed-grid">
-            {(sh.data.feed.data.assets || []).map((a: any) => {
-              const sym = a.symbol.replace('USDT', '')
-              return (
-                <div key={a.symbol} className={'adm-feed-cell' + (a.stale ? ' adm-feed-stale' : '')}>
-                  <div className="adm-feed-head">
-                    <span className={a.stale ? 'dot-stale' : 'dot-live'} />
-                    <span className="num" style={{ fontWeight: 600 }}>{sym}</span>
-                  </div>
-                  <div className="adm-feed-meta">lag <span className="num">{a.lagPretty}</span></div>
-                  <div className="adm-feed-meta sub">{a.lastIso ? a.lastIso.slice(11, 16) + 'Z' : 'no data'}</div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+      {/* Drill-down chips → other admin tabs / customer pages */}
+      <SectionCard title="DRILL-DOWN">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <a href="/v2/admin?tab=health" className="badge" style={{ textDecoration: 'none' }}>System Health →</a>
+          <a href="/v2/admin?tab=execution" className="badge" style={{ textDecoration: 'none' }}>Engine Parity →</a>
+          <a href="/v2/admin?tab=alerts" className="badge" style={{ textDecoration: 'none' }}>Alerts →</a>
+          <a href="/v2/admin?tab=users" className="badge" style={{ textDecoration: 'none' }}>Users →</a>
+          <a href="/v2/live-trading" className="badge" style={{ textDecoration: 'none' }}>Live Trading →</a>
+          <a href="/v2/backtesting" className="badge" style={{ textDecoration: 'none' }}>Backtest →</a>
+        </div>
       </SectionCard>
 
-      {/* Two-column: Last signal + Open positions */}
       <div className="bt-twin-row">
-        <SectionCard title="LAST SIGNAL">
-          {!ov.data?.last_signal ? (
-            <EmptyBox>No signals executed yet.</EmptyBox>
+        <SectionCard title={`RECENT ALERTS · ${recentAlerts.length}`}>
+          {recentAlerts.length === 0 ? (
+            <EmptyBox>No open alerts.</EmptyBox>
+          ) : (
+            <div className="adm-alert-list">
+              {recentAlerts.slice(0, 5).map((a) => (
+                <div key={a.id} className={'adm-alert ' + (a.severity === 'critical' ? 'adm-alert-crit' : 'adm-alert-warn')}>
+                  <span className="adm-alert-sev">{a.severity.toUpperCase()}</span>
+                  <span>
+                    <strong>{a.title}</strong>
+                    {a.description && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>{a.description}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard title={`RECENT SIGNUPS · ${recentSignups.length}`}>
+          {recentSignups.length === 0 ? (
+            <EmptyBox>No recent signups.</EmptyBox>
           ) : (
             <div className="adm-kvlist">
-              <div className="adm-kv"><span>Symbol</span><span className="num">{(ov.data.last_signal.signal_symbol || '—').replace('USDT', '/USDT')}</span></div>
-              <div className="adm-kv"><span>Action</span>
-                <span>
-                  <span style={{ fontWeight: 600 }}>{(ov.data.last_signal.signal_action || '').split(' ')[0] || '—'}</span>
-                  {' '}
-                  {(() => {
-                    const side = ((ov.data.last_signal.signal_action || '').split(' ')[1] || '').toUpperCase()
-                    if (!side) return null
-                    return <span className={'badge ' + (side === 'LONG' ? 'badge-long' : 'badge-short')}>{side}</span>
-                  })()}
-                </span>
-              </div>
-              {ov.data.last_signal.signal_price != null && (
-                <div className="adm-kv"><span>Price</span><span className="num">{fmtPx(ov.data.last_signal.signal_price)}</span></div>
-              )}
-              {ov.data.last_signal.signal_sl_px != null && (
-                <div className="adm-kv"><span>SL</span><span className="num neg-text">{fmtPx(ov.data.last_signal.signal_sl_px)}</span></div>
-              )}
-              {ov.data.last_signal.signal_reason && (
-                <div className="adm-kv"><span>Reason</span><span className="num adm-mono-sm">{ov.data.last_signal.signal_reason}</span></div>
-              )}
-              <div className="adm-kv"><span>Status</span><span className="pos-text">{ov.data.last_signal.status || '—'}</span></div>
-              <div className="adm-kv"><span>Users</span><span className="num">{ov.data.last_signal.total_users ?? '—'}</span></div>
-              <div className="adm-kv"><span>When</span><span>{fmtAge(ov.data.last_signal.signal_timestamp)}</span></div>
-              {ov.data.last_signal.signal_id && (
-                <div className="adm-kv"><span>ID</span><span className="num adm-mono-sm">{ov.data.last_signal.signal_id}</span></div>
-              )}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard title={`OPEN POSITIONS · ${opens.length}`}>
-          {opens.length === 0 ? (
-            <EmptyBox>No open positions.</EmptyBox>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="adm-table">
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Symbol</th>
-                    <th>Side</th>
-                    <th style={{ textAlign: 'right' }}>Entry</th>
-                    <th style={{ textAlign: 'right' }}>Size</th>
-                    <th style={{ textAlign: 'right' }}>PnL</th>
-                    <th style={{ textAlign: 'right' }}>Age</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {opens.map((p: any) => {
-                    const pnl = Number(p.pnl_usd) || 0
-                    const sideUp = (p.side || '').toUpperCase()
-                    return (
-                      <tr key={p.id}>
-                        <td className="adm-truncate" style={{ maxWidth: 180 }}>{p.profile?.email || (p.user_id || '').slice(0, 8)}</td>
-                        <td className="num">{p.symbol || '—'}</td>
-                        <td>{sideUp ? <span className={'badge ' + (sideUp === 'LONG' ? 'badge-long' : 'badge-short')}>{sideUp}</span> : '—'}</td>
-                        <td className="num" style={{ textAlign: 'right' }}>{fmtPx(p.entry_price)}</td>
-                        <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(p.size_usd)}</td>
-                        <td className="num" style={{ textAlign: 'right' }}><span className={pnl >= 0 ? 'pos-text' : 'neg-text'}>{fmtUsd(pnl, true)}</span></td>
-                        <td style={{ textAlign: 'right', color: 'var(--muted)' }}>{fmtAge(p.opened_at)}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
-      {recentAlerts.length > 0 && (
-        <SectionCard title="RECONCILIATION ALERTS">
-          <div className="adm-alert-list">
-            {recentAlerts.slice(0, 8).map((a: any, i: number) => (
-              <div key={i} className={'adm-alert ' + (a.severity === 'critical' ? 'adm-alert-crit' : 'adm-alert-warn')}>
-                <span className="adm-alert-sev">{(a.severity || '').toUpperCase()}</span>
-                <span>{a.description}</span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-    </div>
-  )
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// 2. Radar panel — visualises the Telegram digest
-// ────────────────────────────────────────────────────────────────────────────
-
-type RadarData = {
-  ts: number
-  nextBarTs: number
-  perfMs: number
-  cached?: boolean
-  account: {
-    equity: number | null
-    available: number | null
-    unrealizedPL: number | null
-    todayPnl: number
-    todayCount: number
-    strategyPnl: number
-    drawdownPct: number
-    peakEquity: number | null
-  } | null
-  assets: Array<{
-    symbol: string
-    sym: string
-    price?: number
-    hvn?: number | null
-    bbW?: number
-    bbWThresh?: number
-    bbWPass?: boolean
-    breakoutLong?: number
-    breakoutShort?: number
-    distToLongPct?: number | null
-    distToShortPct?: number | null
-    pos?: {
-      dir: 'LONG' | 'SHORT'
-      entry: number
-      sl: number
-      slDistPct: number
-      mfePct: number
-      mfePxPeak: number
-      trailArmed: boolean
-      togoPct: number
-      trailFloor: number | null
-      pyramidAdded: boolean
-      notional: number
-      bitgetActualEntry: number
-      bitgetActualSize: number
-      entryTs: number | null
-    } | null
-    engineLastTickAt?: string | null
-    engineRuns?: number
-    error?: string
-  }>
-  basket: { long: number; short: number; flat: number }
-  closestToEntry: { sym: string; distPct: number; dir: 'below' | 'above' } | null
-  health: any
-}
-
-const ASSET_LOGOS: Record<string, string> = {
-  BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOL: '/coin-icons/sol.png',
-  SUI: '/coin-icons/sui.png',
-}
-
-function nextBarLabel(nextBarTs: number) {
-  const minsAway = Math.max(0, Math.round((nextBarTs - Date.now()) / 60000))
-  const hh = new Date(nextBarTs).toISOString().slice(11, 16)
-  return `${hh} UTC · in ${minsAway}m`
-}
-
-function RadarPanel({ active }: { active: boolean }) {
-  const radar = usePanelData<RadarData>(active, () => authedFetch('/api/admin/radar'), 60_000)
-  const r = radar.data
-
-  return (
-    <div className="stax-page">
-      <PageHeader
-        eyebrow="SATOSHI STACKER · RADAR"
-        lead="Live engine"
-        accent="pulse."
-        blurb="Per-asset state, MFE, breakout triggers, and account snapshot. Same data as the 4-hourly Telegram digest, refreshes every 60s."
-        refreshing={radar.loading}
-        onRefresh={radar.refresh}
-      />
-      <ErrorBox msg={radar.error} />
-
-      {/* Hero strip — account top line */}
-      <div className="row row-stats">
-        <StatCard
-          label="Today"
-          value={r?.account ? fmtUsd(r.account.todayPnl, true) : '—'}
-          sub={r?.account ? `${r.account.todayCount} closed` : null}
-          tone={r?.account ? (r.account.todayPnl > 0 ? 'pos' : r.account.todayPnl < 0 ? 'neg' : 'muted') : undefined}
-        />
-        <StatCard
-          label="Since live"
-          value={r?.account ? fmtUsd(r.account.strategyPnl, true) : '—'}
-          sub="V1 cutover · 7 May"
-          tone={r?.account ? (r.account.strategyPnl > 0 ? 'pos' : r.account.strategyPnl < 0 ? 'neg' : 'muted') : undefined}
-        />
-        <StatCard
-          label="Equity"
-          value={r?.account?.equity != null ? fmtUsd(r.account.equity) : '—'}
-          sub={r?.account?.available != null ? `Avail ${fmtUsd(r.account.available)}` : null}
-        />
-        <StatCard
-          label="Drawdown"
-          value={r?.account ? fmtPct(r.account.drawdownPct, 1, false) : '—'}
-          sub={r?.account?.peakEquity != null ? `Peak ${fmtUsd(r.account.peakEquity)}` : null}
-          tone={r?.account ? ((r.account.drawdownPct ?? 0) > 5 ? 'neg' : 'muted') : undefined}
-        />
-      </div>
-
-      {/* Strategy banner */}
-      <div className="adm-banner">
-        <span className="bt-eyebrow" style={{ marginBottom: 0 }}>V1 STRATEGY</span>
-        <span className="adm-banner-text">VolumeProfile breakout + per-asset BB-width gate · 7-asset basket (BTC/ETH/SOL/XRP/SUI/DOGE/LINK) · next 4H bar {r ? nextBarLabel(r.nextBarTs) : '—'}</span>
-      </div>
-
-      {/* Per-asset cards */}
-      <div className="adm-asset-grid">
-        {r?.assets.map(a => <RadarAssetCard key={a.symbol} a={a} />)}
-        {!r && [0, 1, 2, 3, 4, 5, 6].map(i => <div key={i} className="card card-pad adm-asset-skel" />)}
-      </div>
-
-      {/* Basket summary + closest-to-entry */}
-      <div className="bt-twin-row">
-        <SectionCard title="BASKET">
-          {r ? (
-            <div className="adm-basket-row">
-              <div className="adm-basket-stat">
-                <span className="adm-basket-num pos-text">{r.basket.long}</span>
-                <span className="adm-basket-lab">long</span>
-              </div>
-              <div className="adm-basket-stat">
-                <span className="adm-basket-num neg-text">{r.basket.short}</span>
-                <span className="adm-basket-lab">short</span>
-              </div>
-              <div className="adm-basket-stat">
-                <span className="adm-basket-num">{r.basket.flat}</span>
-                <span className="adm-basket-lab">flat</span>
-              </div>
-              {r.closestToEntry && (
-                <div className="adm-closest">
-                  <div className="adm-closest-label">Closest to entry</div>
-                  <div className="adm-closest-val">
-                    <span className="num" style={{ fontWeight: 700, color: 'var(--gold)' }}>{r.closestToEntry.sym}</span>
-                    <span className="adm-closest-meta">{r.closestToEntry.distPct.toFixed(2)}% {r.closestToEntry.dir} long breakout</span>
-                  </div>
+              {recentSignups.slice(0, 5).map((u, i) => (
+                <div key={i} className="adm-kv">
+                  <span style={{ fontWeight: 600 }}>{u.full_name || u.email}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 11 }}>{fmtAge(u.created_at)}</span>
                 </div>
-              )}
-            </div>
-          ) : <EmptyBox>Loading…</EmptyBox>}
-        </SectionCard>
-
-        <SectionCard title="SYSTEM HEALTH">
-          {r?.health ? (
-            <div className="adm-health-row">
-              <HealthChip name="deadman" h={r.health.deadman} />
-              <HealthChip name="recon" h={r.health.recon} />
-              <HealthChip name="feed" h={r.health.feed} />
-            </div>
-          ) : <EmptyBox>Loading…</EmptyBox>}
-          {r && r.health?.recon?.details?.length > 0 && (
-            <div className="adm-recon-details">
-              {r.health.recon.details.map((d: string, i: number) => (
-                <div key={i} className="adm-recon-line">{d}</div>
               ))}
             </div>
           )}
         </SectionCard>
       </div>
 
-      {/* Footer meta */}
-      {r && (
-        <div className="adm-footer-meta">
-          Generated <span className="num">{new Date(r.ts).toISOString().slice(0, 19).replace('T', ' ')}Z</span>
-          {' · '}fetched in <span className="num">{r.perfMs}ms</span>
-          {r.cached ? <span className="adm-badge-cached"> cached</span> : null}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function RadarAssetCard({ a }: { a: RadarData['assets'][number] }) {
-  if (a.error) {
-    return (
-      <div className="card card-pad adm-asset adm-asset-err">
-        <div className="adm-asset-head">
-          <strong className="num">{a.sym}</strong>
-          <span className="badge" style={{ background: 'rgba(255,77,79,0.15)', color: 'var(--neg)', border: '1px solid rgba(255,77,79,0.4)' }}>FETCH FAIL</span>
-        </div>
-        <div className="adm-asset-err-msg">{a.error}</div>
+      <div className="adm-footer-meta">
+        <span style={{ color: 'var(--muted)', fontSize: 11 }}>
+          Total volume: <span className="num">{fmtUsd(o?.total_volume ?? null)}</span>
+        </span>
       </div>
-    )
-  }
-
-  const pos = a.pos
-  const stateClass = pos ? (pos.dir === 'LONG' ? 'adm-asset-long' : 'adm-asset-short') : 'adm-asset-flat'
-  const stateLabel = pos ? pos.dir : 'FLAT'
-  const stateBadge = pos ? (pos.dir === 'LONG' ? 'badge-long' : 'badge-short') : ''
-
-  // Progress to trail tier 1 (capped at 1.5%)
-  const tier1Target = 1.5
-  const trailPct = pos ? Math.min(100, Math.max(0, (pos.mfePct / tier1Target) * 100)) : 0
-
-  // Current unrealized PnL % — anchored to strategy entry, sign-flipped for
-  // shorts. This is what the trade is doing RIGHT NOW; pos.mfePct is the
-  // historical peak (very different number, common source of confusion).
-  let currentPct = 0
-  if (pos && a.price && pos.entry) {
-    currentPct = pos.dir === 'LONG'
-      ? ((a.price - pos.entry) / pos.entry) * 100
-      : ((pos.entry - a.price) / pos.entry) * 100
-  }
-
-  // bbW progress (capped at 2× threshold for visual)
-  const bbMax = (a.bbWThresh || 0) * 2
-  const bbPct = a.bbW != null && bbMax > 0 ? Math.min(100, (a.bbW / bbMax) * 100) : 0
-
-  return (
-    <div className={'card card-pad adm-asset ' + stateClass}>
-      <div className="adm-asset-head">
-        <div className="adm-asset-headleft">
-          <img src={ASSET_LOGOS[a.sym] || ''} alt={a.sym} className="adm-coin" />
-          <strong className="num">{a.sym}</strong>
-          <span className="adm-asset-price num">{fmtPx(a.price)}</span>
-        </div>
-        {pos ? (
-          <span className={'badge ' + stateBadge}>{stateLabel}</span>
-        ) : (
-          <span className="badge adm-badge-flat">FLAT</span>
-        )}
-      </div>
-
-      {pos ? (
-        <>
-          {/* Live unrealized PnL — shown in big text so it's instantly clear
-              whether the trade is currently winning or losing. Computed
-              against pos.entry (strategy's intended entry, same anchor the
-              radar uses everywhere else). */}
-          <div className="adm-asset-now">
-            <span className="adm-asset-lab">Now</span>
-            <span className={'adm-asset-now-val num ' + (currentPct >= 0 ? 'pos-text' : 'neg-text')}>
-              {currentPct >= 0 ? '+' : ''}{currentPct.toFixed(2)}%
-            </span>
-          </div>
-
-          <div className="adm-asset-grid3">
-            <div>
-              <div className="adm-asset-lab">Entry</div>
-              <div className="adm-asset-val num">{fmtPx(pos.entry)}</div>
-            </div>
-            <div>
-              <div className="adm-asset-lab">SL</div>
-              <div className="adm-asset-val num neg-text">{fmtPx(pos.sl)}</div>
-            </div>
-            <div>
-              <div className="adm-asset-lab">Mark</div>
-              <div className="adm-asset-val num">{fmtPx(a.price)}</div>
-            </div>
-          </div>
-
-          {/* Peak MFE — best favourable move since entry, NOT current PnL.
-              Arms the dynamic trailing stop at +1.5%. Made the label
-              explicit because "MFE" alone read like current PnL to admins
-              new to the term. */}
-          <div className="adm-asset-meter">
-            <div className="adm-asset-meter-head">
-              <span
-                className="adm-asset-lab"
-                title="Maximum Favorable Excursion — the best price the trade has reached since entry. Not current PnL. The dynamic trailing stop arms when this hits +1.5%."
-              >
-                Peak (MFE) · trail arms @ +1.5%
-              </span>
-              {/* Two-state sequence (matches /v2/live's Pulse):
-                    yellow (winning) → green (profit locked).
-                    No intermediate "armed" colour — collapsed into yellow. */}
-              <span className="num">
-                {pos.mfePct >= 0 ? '+' : ''}{pos.mfePct.toFixed(2)}%
-                {(() => {
-                  const lockedHere = pos.trailArmed
-                    && pos.trailFloor != null
-                    && Number.isFinite(pos.trailFloor)
-                    && (pos.dir === 'LONG' ? pos.trailFloor > pos.entry : pos.trailFloor < pos.entry)
-                  if (lockedHere) return <span className="pos-text"> · LOCKED</span>
-                  if (pos.trailArmed) return ' · ARMED'
-                  return ` · need +${pos.togoPct.toFixed(2)}%`
-                })()}
-              </span>
-            </div>
-            <div className="adm-meter-bar">
-              {(() => {
-                const lockedHere = pos.trailArmed
-                  && pos.trailFloor != null
-                  && Number.isFinite(pos.trailFloor)
-                  && (pos.dir === 'LONG' ? pos.trailFloor > pos.entry : pos.trailFloor < pos.entry)
-                const fillClass = lockedHere ? 'adm-meter-fill-pos' : 'adm-meter-fill-yellow'
-                return (
-                  <div
-                    className={'adm-meter-fill ' + fillClass}
-                    style={{ width: trailPct + '%' }}
-                  />
-                )
-              })()}
-            </div>
-          </div>
-
-          {/* SL danger meter — mirrors the MFE bar but in red. Fills as price
-              consumes the entry's 4% SL cushion. Empty = full cushion (low
-              risk). Full = SL hit (max risk). Visual answers "how close to
-              stop-out?" at a glance. */}
-          {(() => {
-            const SL_BASE_PCT = 4
-            const cushion = pos.slDistPct  // positive = above SL (long) / below SL (short)
-            const consumed = Math.max(0, SL_BASE_PCT - cushion)
-            const slPct = Math.min(100, (consumed / SL_BASE_PCT) * 100)
-            const cushionLabel = cushion >= 0
-              ? `${cushion.toFixed(2)}% cushion`
-              : `+${Math.abs(cushion).toFixed(2)}% past SL`
-            return (
-              <div className="adm-asset-meter">
-                <div className="adm-asset-meter-head">
-                  <span
-                    className="adm-asset-lab"
-                    title="Bar fills as price moves toward the 4% stop loss. Empty = full cushion. Full = SL hit."
-                  >
-                    SL danger · fires at full
-                  </span>
-                  <span className={'num ' + (slPct >= 75 ? 'neg-text' : slPct >= 50 ? '' : 'pos-text')}>
-                    {slPct.toFixed(0)}% used · {cushionLabel}
-                  </span>
-                </div>
-                <div className="adm-meter-bar">
-                  <div className="adm-meter-fill adm-meter-fill-red" style={{ width: slPct + '%' }} />
-                  {/* 50% mark (halfway-to-stop warning line) */}
-                  <div className="adm-meter-mark adm-meter-mark-red" style={{ left: '50%' }} />
-                </div>
-              </div>
-            )
-          })()}
-
-          {pos.pyramidAdded && (
-            <div className="adm-asset-pyramid">
-              <span className="badge badge-long" style={{ background: 'rgba(212,160,23,0.15)', color: 'var(--gold)', borderColor: 'rgba(212,160,23,0.4)' }}>PYRAMIDED</span>
-            </div>
-          )}
-        </>
-      ) : (
-        <>
-          <div className="adm-asset-grid3">
-            <div>
-              <div className="adm-asset-lab">HVN</div>
-              <div className="adm-asset-val num">{fmtPx(a.hvn ?? null)}</div>
-            </div>
-            <div>
-              <div className="adm-asset-lab">Long ≥</div>
-              <div className="adm-asset-val num pos-text">{fmtPx(a.breakoutLong)}</div>
-              {a.distToLongPct != null && <div className="adm-asset-sub">{a.distToLongPct >= 0 ? '+' : '−'}{Math.abs(a.distToLongPct).toFixed(2)}%</div>}
-            </div>
-            <div>
-              <div className="adm-asset-lab">Short ≤</div>
-              <div className="adm-asset-val num neg-text">{fmtPx(a.breakoutShort)}</div>
-              {a.distToShortPct != null && <div className="adm-asset-sub">{a.distToShortPct >= 0 ? '+' : '−'}{Math.abs(a.distToShortPct).toFixed(2)}%</div>}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* bbW gate footer */}
-      <div className="adm-asset-meter">
-        <div className="adm-asset-meter-head">
-          <span className="adm-asset-lab">bbW gate</span>
-          <span className={'num ' + (a.bbWPass ? 'pos-text' : '')}>
-            {(a.bbW ?? 0).toFixed(1)}% / {(a.bbWThresh ?? 0)}% {a.bbWPass ? '✓' : ''}
-          </span>
-        </div>
-        <div className="adm-meter-bar">
-          <div
-            className={'adm-meter-fill ' + (a.bbWPass ? 'adm-meter-fill-pos' : 'adm-meter-fill-muted')}
-            style={{ width: bbPct + '%' }}
-          />
-          {a.bbWThresh != null && bbMax > 0 && (
-            <div className="adm-meter-mark" style={{ left: ((a.bbWThresh / bbMax) * 100) + '%' }} />
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function HealthChip({ name, h }: { name: string; h: any }) {
-  const ok = !!h?.ok
-  return (
-    <div className={'adm-health-chip ' + (ok ? 'adm-health-ok' : 'adm-health-bad')}>
-      <span className={ok ? 'dot-live' : 'dot-stale'} />
-      <span className="adm-health-name">{name}</span>
-      <span className="adm-health-state">{h?.label || '—'}</span>
     </div>
   )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 3. Execution panel — per-signal parity check (live engine vs sim)
 // ────────────────────────────────────────────────────────────────────────────
+// 2. Execution panel — Live vs Shadow trade-level reconciliation
+//    (Radar removed 2026-05-25: V1-locked, replaced by this panel)
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Architecture: Live engine = Bitget reality; Shadow = clean simulation.
+// This panel shows both engines' trade ledgers side-by-side, paired by
+// cfg_sid + entry bar timestamp. Divergence (price diff, PnL diff, timing)
+// is the "execution friction" — the product's measurable value.
+//
+// Data: /api/admin/execution-comparison (new 2026-05-25).
+// Refresh: 60s.
 
-// Parity validator severity tiers (3-tier, 2026-05-09):
-//   'critical' — true engine/sim disagreement (>1% drift, missing match,
-//                direction mismatch). Loud alert.
-//   'warning'  — 0.25–1% drift. Quiet alert, worth noting if it persists.
-//   'ok'       — <0.25% drift. Suppressed (exchange noise).
-// Legacy values kept for backwards compat with old results JSON entries:
-//   'drift'      → render as warning
-//   'fail'       → render as critical
-//   'incomplete' → render as warning
-type ParitySeverity = 'ok' | 'warning' | 'critical' | 'drift' | 'fail' | 'incomplete'
+type TradeSide = {
+  entry_ts_ms: number
+  exit_ts_ms: number | null
+  entry_bar_ts: number
+  entry_price: number
+  exit_price: number | null
+  pnl_usd: number | null
+  exit_reason: string | null
+  open: boolean
+  qty: number
+  notional: number
+  direction: 1 | -1
+  tf: string
+}
 
-type ParityRecord = {
-  id: string
+type CompRow = {
+  key: string
+  cfg_sid: string
   asset: string
-  sym: string
-  type: string         // ENTRY | EXIT | PYRAMID
-  side: string         // long | short
-  dir: 1 | -1 | 0
-  liveTs: number
-  livePx: number | null
-  slPx: number | null
-  reason: string | null
-  retries: number
-  severity: ParitySeverity
-  match: {
-    simTs: number | null
-    simPx: number | null
-    simReason: string | null
-    simIdx: number | null
-    offsetSec: number | null
-    priceDiffPct: number | null
-    status: string | null
+  symbol: string
+  tf: string
+  entry_bar_ts: number
+  status: 'matched' | 'live_only' | 'shadow_only'
+  live: TradeSide | null
+  shadow: TradeSide | null
+  divergence: {
+    entry_price_diff: number | null
+    entry_price_diff_pct: number | null
+    pnl_diff: number | null
+    timing_diff_ms: number | null
+    verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
-  notFoundReason: string | null
-  dispatchedAt: number
 }
 
-type ParityResp = {
-  ts: number
-  counts: {
+type CompResp = {
+  trades: CompRow[]
+  summary: {
     total: number
-    filtered: number
-    last24h: number
-    severity: Record<string, number>
-    severity24h: Record<string, number>
+    matched: number
+    live_only: number
+    shadow_only: number
+    mean_entry_price_divergence_pct: number
   }
-  recent: ParityRecord[]
-  pendingChecks: Array<{ id: string; asset: string; type: string; side: string; ts: number; scheduledAt: number; retries: number }>
-  simFreshness: Array<{ asset: string; sym: string; mtimeMs: number | null; ageMs: number | null; tradeCount: number; missing?: boolean }>
-  logTail: string[]
+  as_of_ms: number
 }
-
-// 3. Execution panel — single table per signal showing LIVE vs SIM side-by-
-// side, so you can scan for parity discrepancies at a glance. Sourced from
-// /api/admin/parity (the parity-validator output). One row per live signal;
-// each row carries: when it fired, what asset, type, side, what the LIVE
-// engine emitted (price), what the SIM engine recorded (price + reason),
-// the % difference, and the parity verdict.
 
 function ExecutionPanel({ active }: { active: boolean }) {
-  const [sevFilter, setSevFilter] = useState<'all' | 'ok' | 'warning' | 'critical'>('all')
-  const [symFilter, setSymFilter] = useState<string>('all')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'ENTRY' | 'EXIT' | 'PYRAMID' | 'PYRAMID_EMA50'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'live_only' | 'shadow_only'>('all')
+  const [assetFilter, setAssetFilter] = useState<string>('all')
 
   const fetcher = useCallback(async () => {
     const q = new URLSearchParams({ limit: '200' })
-    if (sevFilter !== 'all') q.set('severity', sevFilter)
-    if (symFilter !== 'all') q.set('symbol', symFilter)
-    return authedFetch<ParityResp>(`/api/admin/parity?${q}`)
-  }, [sevFilter, symFilter])
-  const px = usePanelData<ParityResp>(active, fetcher, 30_000, `${sevFilter}|${symFilter}`)
+    if (statusFilter !== 'all') q.set('status', statusFilter)
+    if (assetFilter !== 'all') q.set('asset', assetFilter)
+    return authedFetch<CompResp>(`/api/admin/execution-comparison?${q}`)
+  }, [statusFilter, assetFilter])
+  const px = usePanelData<CompResp>(active, fetcher, 60_000, `${statusFilter}|${assetFilter}`)
   const r = px.data
 
-  // Combine new + legacy severity buckets so historic results still aggregate.
-  const okCount = r ? (r.counts.severity24h.ok || 0) : 0
-  const warnCount = r ? ((r.counts.severity24h.warning || 0) + (r.counts.severity24h.drift || 0) + (r.counts.severity24h.incomplete || 0)) : 0
-  const critCount = r ? ((r.counts.severity24h.critical || 0) + (r.counts.severity24h.fail || 0)) : 0
-  const total24h = r?.counts.last24h || 0
-
-  // Apply type filter client-side (server only filters by severity + symbol)
-  const visible = (r?.recent || []).filter(rec => {
-    if (typeFilter !== 'all' && rec.type !== typeFilter) return false
-    return true
-  })
+  // 14-asset Phase H symbols for filter dropdown
+  const PHASE_H_SYMS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT',
+    'LINKUSDT','SUIUSDT','AVAXUSDT','ADAUSDT','TRXUSDT','ZECUSDT','TONUSDT','HYPEUSDT']
 
   return (
     <div className="stax-page">
       <PageHeader
-        eyebrow="ADMIN · EXECUTION · PARITY"
+        eyebrow="ADMIN · ENGINE PARITY"
         lead="Live vs"
-        accent="sim."
-        blurb="One row per signal — what the live engine fired, what the backtest sim said, where they agree (✓) or drift (⚠/🚨). Auto-refreshes every 30s."
+        accent="shadow."
+        blurb={
+          'Trade-level reconciliation. LIVE = Bitget real fills. SHADOW = clean simulation. ' +
+          'Both paired by cfg_sid + entry bar. Gap between them = execution friction = product value. ' +
+          'Refreshes every 60s.'
+        }
         refreshing={px.loading}
         onRefresh={px.refresh}
       />
       <ErrorBox msg={px.error} />
 
-      {/* 24h header stats */}
+      {/* Summary row */}
       <div className="row row-stats">
-        <StatCard label="Last 24h" value={total24h} sub="signals checked" />
-        <StatCard label="OK" value={okCount} tone="pos" />
-        <StatCard label="Warning" value={warnCount} tone={warnCount > 0 ? 'gold' : 'muted'} />
-        <StatCard label="Critical" value={critCount} tone={critCount > 0 ? 'neg' : 'muted'} />
+        <StatCard label="Total trades" value={r?.summary.total ?? '—'} sub="across both engines" />
+        <StatCard
+          label="Matched"
+          value={r?.summary.matched ?? '—'}
+          sub="both engines fired"
+          tone="pos"
+        />
+        <StatCard
+          label="Live only"
+          value={r?.summary.live_only ?? '—'}
+          sub="shadow missed"
+          tone={r?.summary.live_only ? 'gold' : 'muted'}
+        />
+        <StatCard
+          label="Shadow only"
+          value={r?.summary.shadow_only ?? '—'}
+          sub="live missed"
+          tone={r?.summary.shadow_only ? 'gold' : 'muted'}
+        />
       </div>
 
-      {/* Sim freshness — explains NOT_FOUND severities (sim daemon stale) */}
-      {r && r.simFreshness && r.simFreshness.length > 0 && (
-        <SectionCard title="SIM FILE FRESHNESS">
-          <div className="adm-feed-grid">
-            {r.simFreshness.map(s => {
-              const stale = s.missing || (s.ageMs != null && s.ageMs > 15 * 60 * 1000)
-              const ageLabel = s.ageMs == null ? '—' : s.ageMs < 60_000 ? Math.round(s.ageMs / 1000) + 's' : Math.round(s.ageMs / 60_000) + 'm'
-              return (
-                <div key={s.asset} className={'adm-feed-cell' + (stale ? ' adm-feed-stale' : '')}>
-                  <div className="adm-feed-head">
-                    <span className={stale ? 'dot-stale' : 'dot-live'} />
-                    <span className="num" style={{ fontWeight: 600 }}>{s.sym}</span>
-                  </div>
-                  <div className="adm-feed-meta">{s.tradeCount} trades</div>
-                  <div className="adm-feed-meta sub">{s.missing ? 'sim file missing' : `${ageLabel} ago`}</div>
-                </div>
-              )
-            })}
-          </div>
-        </SectionCard>
+      {r?.summary.matched != null && r.summary.matched > 0 && (
+        <div className="adm-banner">
+          <span className="bt-eyebrow" style={{ marginBottom: 0 }}>MEAN ENTRY PRICE DIVERGENCE</span>
+          <span className="adm-banner-text num">
+            {r.summary.mean_entry_price_divergence_pct.toFixed(3)}% avg
+            {' · '}execution friction = this spread × notional × leverage
+          </span>
+        </div>
       )}
 
       {/* Filters */}
       <div className="adm-filter-row">
         <SubPills
-          value={sevFilter}
-          onChange={setSevFilter}
+          value={statusFilter}
+          onChange={setStatusFilter}
           items={[
-            { id: 'all', label: 'All', count: r?.counts.total ?? null },
-            { id: 'ok', label: 'OK', count: r?.counts.severity.ok ?? null },
-            { id: 'warning', label: 'Warning', count: r ? ((r.counts.severity.warning || 0) + (r.counts.severity.drift || 0) + (r.counts.severity.incomplete || 0)) : null },
-            { id: 'critical', label: 'Critical', count: r ? ((r.counts.severity.critical || 0) + (r.counts.severity.fail || 0)) : null },
+            { id: 'all', label: 'All', count: r?.summary.total ?? null },
+            { id: 'matched', label: 'Matched', count: r?.summary.matched ?? null },
+            { id: 'live_only', label: 'Live only', count: r?.summary.live_only ?? null },
+            { id: 'shadow_only', label: 'Shadow only', count: r?.summary.shadow_only ?? null },
           ]}
         />
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as any)} className="settings-input adm-select">
-          <option value="all">All types</option>
-          <option value="ENTRY">Entry</option>
-          <option value="EXIT">Exit</option>
-          <option value="PYRAMID">Pyramid</option>
-          <option value="PYRAMID_EMA50">Pyramid EMA50</option>
-        </select>
-        <select value={symFilter} onChange={e => setSymFilter(e.target.value)} className="settings-input adm-select" style={{ marginLeft: 'auto' }}>
-          <option value="all">All symbols</option>
-          <option value="BTCUSDT">BTC</option>
-          <option value="ETHUSDT">ETH</option>
-          <option value="SOLUSDT">SOL</option>
-          <option value="XRPUSDT">XRP</option>
-          <option value="SUIUSDT">SUI</option>
+        <select
+          value={assetFilter}
+          onChange={e => setAssetFilter(e.target.value)}
+          className="settings-input adm-select"
+          style={{ marginLeft: 'auto' }}
+        >
+          <option value="all">All assets</option>
+          {PHASE_H_SYMS.map(s => (
+            <option key={s} value={s}>{s.replace('USDT', '')}</option>
+          ))}
         </select>
       </div>
 
-      {/* Pending checks (still in retry window — verdict not in yet) */}
-      {r && r.pendingChecks.length > 0 && (
-        <SectionCard title={`PENDING CHECKS · ${r.pendingChecks.length} awaiting verdict`}>
-          <div className="adm-pending-grid">
-            {r.pendingChecks.map(p => {
-              const minsToCheck = Math.max(0, Math.round((p.scheduledAt - Date.now()) / 60000))
-              return (
-                <div key={p.id} className="adm-pending-cell">
-                  <div className="adm-pending-head">
-                    <span className={'badge ' + (p.side === 'long' ? 'badge-long' : 'badge-short')}>{p.side?.toUpperCase()}</span>
-                    <span className="num" style={{ fontWeight: 600 }}>{p.asset.replace('USDT', '')}</span>
-                    <span className="adm-stat-sub">{p.type}</span>
-                  </div>
-                  <div className="adm-stat-sub" style={{ marginTop: 4 }}>
-                    Live emit {fmtAge(p.ts)} · check in {minsToCheck}m · retry {p.retries}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </SectionCard>
-      )}
-
-      {/* The main table — one row per signal, LIVE + SIM side-by-side */}
-      {visible.length === 0 ? (
-        <SectionCard title="SIGNAL LOG · LIVE vs SIM">
-          <EmptyBox>{px.loading ? 'Loading…' : 'No signals match this filter.'}</EmptyBox>
+      {/* Trade comparison table */}
+      {!r || r.trades.length === 0 ? (
+        <SectionCard title="TRADE LEDGER · LIVE vs SHADOW">
+          <EmptyBox>
+            {px.loading
+              ? 'Loading…'
+              : 'No trades in ledger yet. The comparison surface lights up on the first natural signal end-to-end.'}
+          </EmptyBox>
         </SectionCard>
       ) : (
-        <SectionCard title={`SIGNAL LOG · LIVE vs SIM · ${visible.length} of ${r?.counts.total ?? 0}`}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="adm-parity-table">
+        <SectionCard title={`TRADE LEDGER · LIVE vs SHADOW · ${r.trades.length} entries`}>
+          {/* 2026-05-26 responsive: minWidth:0 lets the wrapper actually
+              shrink below content width, letting overflowX render a
+              scrollbar instead of pushing the table off-screen.
+              Consolidated 11 columns → 7 (price + PnL stack live/shadow/Δ
+              vertically per column instead of horizontally). */}
+          <div style={{ overflowX: 'auto', minWidth: 0, width: '100%' }}>
+            <table className="adm-parity-table" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
-                  <th>When</th>
-                  <th>Asset</th>
-                  <th>Type</th>
-                  <th>Side</th>
-                  <th style={{ textAlign: 'right' }}>LIVE px</th>
-                  <th style={{ textAlign: 'right' }}>SIM px</th>
-                  <th style={{ textAlign: 'right' }}>Diff</th>
-                  <th>SIM reason</th>
                   <th>Status</th>
+                  <th>Asset · cfg · TF</th>
+                  <th>Entry bar (UTC)</th>
+                  <th style={{ textAlign: 'right' }}>Entry px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
+                  <th style={{ textAlign: 'right' }}>PnL<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
+                  <th>Reason</th>
+                  <th>State</th>
                 </tr>
               </thead>
               <tbody>
-                {visible.map(rec => <ParityRow key={rec.id} r={rec} />)}
+                {r.trades.map(row => <CompRow key={row.key} row={row} />)}
               </tbody>
             </table>
           </div>
         </SectionCard>
       )}
 
-      {/* Validator log tail */}
-      {r && r.logTail.length > 0 && (
-        <SectionCard title="VALIDATOR LOG · last 30 lines">
-          <pre className="adm-log-tail">{r.logTail.join('\n')}</pre>
-        </SectionCard>
+      {r && (
+        <div className="adm-footer-meta">
+          As of <span className="num">{new Date(r.as_of_ms).toISOString().slice(0, 19).replace('T', ' ')}Z</span>
+          {' · '}{fmtAge(r.as_of_ms)}
+        </div>
       )}
     </div>
   )
 }
 
-// One row per signal. Live numbers always present (live engine fired the
-// signal); SIM may be null if the validator couldn't find a match (then
-// severity = critical and SIM cells show "no match").
-function ParityRow({ r }: { r: ParityRecord }) {
-  const sym = r.asset.replace('USDT', '')
-  // Normalise legacy severity values to the 3-tier scheme.
-  const sev = (r.severity === 'drift' || r.severity === 'incomplete') ? 'warning'
-            : r.severity === 'fail' ? 'critical'
-            : (r.severity as 'ok' | 'warning' | 'critical')
-  const sevConfig = {
-    ok:       { icon: '✓',  label: 'OK',       color: 'var(--pos)',   bg: 'rgba(46,204,113,0.04)' },
-    warning:  { icon: '⚠️', label: 'Warning',  color: 'var(--gold)',  bg: 'rgba(212,160,23,0.04)' },
-    critical: { icon: '🚨', label: 'Critical', color: 'var(--neg)',   bg: 'rgba(255,77,79,0.04)' },
-  }[sev]
-  const m = r.match
-  const sideColor = r.dir === 1 ? 'var(--pos)' : 'var(--neg)'
+function CompRow({ row }: { row: CompRow }) {
+  const sym = (row.symbol || row.asset + 'USDT').replace('USDT', '')
+  const dir = row.live?.direction ?? row.shadow?.direction ?? 1
+  const sideColor = dir === 1 ? 'var(--pos)' : 'var(--neg)'
+  const side = dir === 1 ? 'LONG' : 'SHORT'
 
-  // "When" column: live emit time + relative age. Sim cell shows offset (s).
-  const time = new Date(r.liveTs).toLocaleString('en-GB', {
-    day: '2-digit', month: '2-digit', year: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).replace(',', '')
-  const offsetTag = m && m.offsetSec != null
-    ? (m.offsetSec >= 0 ? `+${m.offsetSec}s` : `${m.offsetSec}s`)
-    : null
+  const statusCfg: Record<string, { label: string; color: string; bg: string }> = {
+    matched:     { label: 'Matched',     color: 'var(--pos)',  bg: 'rgba(46,204,113,0.04)' },
+    live_only:   { label: 'Live only',   color: 'var(--gold)', bg: 'rgba(212,160,23,0.04)' },
+    shadow_only: { label: 'Shadow only', color: 'var(--muted)', bg: 'rgba(255,255,255,0.02)' },
+  }
+  const sc = statusCfg[row.status] ?? statusCfg.matched
 
-  // Type pill colours (entry/pyramid gold, exit muted)
-  const typeColor = r.type === 'ENTRY' || r.type.startsWith('PYRAMID')
-    ? { bg: 'rgba(212,160,23,0.12)', fg: 'var(--gold)' }
-    : { bg: 'rgba(255,255,255,0.06)', fg: 'var(--text)' }
+  // Divergence coloring
+  const epDiffPct = row.divergence?.entry_price_diff_pct
+  const epColor = epDiffPct == null ? undefined
+    : Math.abs(epDiffPct) >= 0.5 ? 'var(--neg)'
+    : Math.abs(epDiffPct) >= 0.1 ? 'var(--gold)'
+    : 'var(--muted)'
+  const pnlDiff = row.divergence?.pnl_diff
+  const pnlDiffColor = pnlDiff == null ? undefined
+    : Math.abs(pnlDiff) >= 5 ? 'var(--neg)'
+    : Math.abs(pnlDiff) >= 1 ? 'var(--gold)'
+    : 'var(--muted)'
+
+  // 2026-05-25: show bar CLOSE (action time), not open. The trade decision
+  // and order placement happen at the bar's close. row.tf gives the cfg's
+  // timeframe, used to compute close = open + tf_seconds.
+  const TF_SEC: Record<string, number> = { '1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,'4h':14400,'6h':21600,'8h':28800,'12h':43200,'1d':86400 }
+  const tfMs = (TF_SEC[row.tf] || 0) * 1000
+  const barTs = row.entry_bar_ts + tfMs   // close-time = action time
+  const barStr = barTs ? new Date(barTs).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—'
+
+  const cfgShort = row.cfg_sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
 
   return (
-    <tr style={{ background: sevConfig.bg }}>
-      <td className="adm-parity-time">
-        <div className="num">{time}</div>
-        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{fmtAge(r.liveTs)}</div>
+    <tr style={{ background: sc.bg }}>
+      <td>
+        <span style={{ color: sc.color, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>
+          {sc.label}
+        </span>
+        <div style={{ color: sideColor, fontSize: 10, fontWeight: 600, fontFamily: "'JetBrains Mono', ui-monospace, monospace", marginTop: 2 }}>
+          {side}
+        </div>
       </td>
       <td>
-        <span className="adm-parity-sym">
-          <CoinDotMini sym={sym} />
-          <span className="num">{sym}</span>
-        </span>
+        <div className="num" style={{ fontWeight: 700 }}>{sym}</div>
+        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort}</div>
+        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{row.tf}</div>
       </td>
       <td>
-        <span className="adm-exec-type" style={{ background: typeColor.bg, color: typeColor.fg }}>
-          {r.type}
-        </span>
+        <div className="num" style={{ fontSize: 11 }}>{barStr}</div>
+        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{fmtAge(barTs)}</div>
       </td>
-      <td>
-        <span style={{ color: sideColor, fontWeight: 700, fontSize: 11, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
-          {(r.side || '').toUpperCase()}
-        </span>
-      </td>
+      {/* Entry px — live / shadow / Δ stacked vertically */}
       <td className="num" style={{ textAlign: 'right' }}>
-        {fmtParityPx(r.livePx)}
+        <div>{row.live ? fmtCompPx(row.live.entry_price) : <span className="adm-stat-sub">—</span>}{row.live?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}</div>
+        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{row.shadow ? fmtCompPx(row.shadow.entry_price) : '—'}{row.shadow?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}</div>
+        <div style={{ fontSize: 10, color: epColor }}>
+          {epDiffPct != null ? `${epDiffPct >= 0 ? '+' : ''}${epDiffPct.toFixed(3)}%` : '—'}
+        </div>
       </td>
+      {/* PnL — live / shadow / Δ stacked vertically */}
       <td className="num" style={{ textAlign: 'right' }}>
-        {m && m.simPx != null ? (
-          <>
-            {fmtParityPx(m.simPx)}
-            {offsetTag && <div className="adm-stat-sub" style={{ fontSize: 10 }}>{offsetTag}</div>}
-          </>
-        ) : (
-          <span style={{ color: 'var(--neg)', fontSize: 11 }}>no match</span>
-        )}
-      </td>
-      <td className="num" style={{ textAlign: 'right' }}>
-        {m && m.priceDiffPct != null ? (
-          <span style={{ color: m.priceDiffPct >= 1 ? 'var(--neg)' : m.priceDiffPct >= 0.25 ? 'var(--gold)' : 'var(--muted)' }}>
-            {m.priceDiffPct.toFixed(2)}%
-          </span>
-        ) : '—'}
+        <div>
+          {row.live?.pnl_usd != null
+            ? <span style={{ color: row.live.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(row.live.pnl_usd, true)}</span>
+            : <span className="adm-stat-sub">{row.live?.open ? 'open' : '—'}</span>}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+          {row.shadow?.pnl_usd != null
+            ? <span style={{ color: row.shadow.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(row.shadow.pnl_usd, true)}</span>
+            : (row.shadow?.open ? 'open' : '—')}
+        </div>
+        <div style={{ fontSize: 10, color: pnlDiffColor }}>
+          {pnlDiff != null ? `${pnlDiff >= 0 ? '+' : ''}${fmtUsd(pnlDiff, true)}` : '—'}
+        </div>
       </td>
       <td>
         <span className="adm-stat-sub" style={{ fontSize: 11 }}>
-          {m && m.simReason ? m.simReason : (r.notFoundReason ? 'no sim match' : '—')}
+          {row.live?.exit_reason ?? row.shadow?.exit_reason ?? '—'}
         </span>
       </td>
       <td>
-        <span className="adm-parity-status" style={{ color: sevConfig.color, fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>
-          {sevConfig.icon} {sevConfig.label}
+        {(row.live?.open || row.shadow?.open) ? (
+          <span className="dot-live" style={{ marginRight: 4 }} />
+        ) : (
+          <span className="dot-stale" style={{ marginRight: 4 }} />
+        )}
+        <span className="adm-stat-sub" style={{ fontSize: 10 }}>
+          {(row.live?.open || row.shadow?.open) ? 'open' : 'closed'}
         </span>
       </td>
     </tr>
   )
 }
 
-function fmtParityPx(n: number | null | undefined): string {
+function fmtCompPx(n: number | null | undefined): string {
   if (n == null) return '—'
-  if (n >= 1000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
-  if (n >= 10)   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  if (n >= 1)    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  if (n >= 10000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (n >= 100)   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (n >= 1)     return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
 }
 
@@ -1320,6 +826,294 @@ function CoinDotMini({ sym }: { sym: string }) {
   const src = url[sym]
   if (!src) return null
   return <img src={src} alt={sym} width={14} height={14} style={{ display: 'inline-block', borderRadius: '50%', verticalAlign: 'middle', marginRight: 4 }} />
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 3.5. System Health panel — Engine + Publisher + Cache + Watchdog roundup
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Added 2026-05-25 Session 2. Replaces V1's scattered health surfaces
+// (deadman/feed/recon /tmp files) with one consolidated tab pulling from
+// /api/admin/system-status. Refresh 30s.
+
+type SystemStatus = {
+  engine: {
+    live: { pid: number | null; alive: boolean; uptime_min: number | null; state_age_min: number | null
+            paused_global: boolean | null; g5b_disarmed: boolean | null; bot_net_pnl_usd: number | null
+            per_tf_last_processed: Record<string, { open_ts: number; age_min: number | null }>
+            cfg_count: number }
+    shadow: { pid: number | null; alive: boolean; uptime_min: number | null; state_age_min: number | null
+              per_tf_last_processed: Record<string, { open_ts: number; age_min: number | null }>
+              cfg_count: number }
+  }
+  publisher: {
+    halt_marker: string | null; halted: boolean
+    consecutive_fails: number
+    last_run_ts: number | null; last_run_kind: string | null; last_run_age_min: number | null
+    last_pass_ts: number | null; last_pass_age_min: number | null
+    last_fail_ts: number | null; last_fail_age_min: number | null
+    relock_history: Array<{ date: string; reason: string; previous_baseline_archived: string }>
+    runs_tail: string[]
+  }
+  cache: {
+    total: number; stale_4h_plus: number; missing: number
+    entries: Array<{ asset: string; tf: string; present: boolean; rows?: number
+                     first_ts?: number; last_ts?: number; last_age_min?: number
+                     mtime_ms?: number; mtime_age_min?: number; error?: string }>
+  }
+  watchdogs: {
+    daemon_heartbeat: { name: string; last_run_ts: number | null; last_run_age_min: number | null
+                       recent_alert: boolean; tail: string[] }
+    pipeline_heartbeat: { name: string; last_run_ts: number | null; last_run_age_min: number | null
+                          recent_alert: boolean; tail: string[] }
+  }
+  as_of_ms: number; fetched_in_ms: number
+}
+
+function SystemHealthPanel({ active }: { active: boolean }) {
+  const fetcher = useCallback(async () => authedFetch<SystemStatus>('/api/admin/system-status'), [])
+  const px = usePanelData<SystemStatus>(active, fetcher, 30_000)
+  const r = px.data
+
+  return (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · SYSTEM HEALTH"
+        lead="Engine ·"
+        accent="cache · publisher."
+        blurb="Single-pane view of daemon state, parquet cache freshness, publisher cron health, and watchdog roundup. Refresh 30s."
+        refreshing={px.loading}
+        onRefresh={px.refresh}
+      />
+      <ErrorBox msg={px.error} />
+
+      {/* ── ENGINE HEALTH ── */}
+      <SectionCard title="ENGINE · LIVE vs SHADOW">
+        {!r ? <EmptyBox>Loading…</EmptyBox> : (
+          <div className="bt-twin-row">
+            <DaemonCard
+              name="Live"
+              pid={r.engine.live.pid}
+              alive={r.engine.live.alive}
+              uptime_min={r.engine.live.uptime_min}
+              state_age_min={r.engine.live.state_age_min}
+              per_tf={r.engine.live.per_tf_last_processed}
+              cfg_count={r.engine.live.cfg_count}
+              extra={[
+                { label: 'paused_global', value: String(r.engine.live.paused_global), tone: r.engine.live.paused_global ? 'neg' : 'pos' },
+                { label: 'g5b_disarmed', value: String(r.engine.live.g5b_disarmed), tone: r.engine.live.g5b_disarmed ? 'gold' : 'muted' },
+                { label: 'bot_net_pnl_usd', value: r.engine.live.bot_net_pnl_usd != null ? fmtUsd(r.engine.live.bot_net_pnl_usd, true) : '—', tone: 'muted' },
+              ]}
+            />
+            <DaemonCard
+              name="Shadow"
+              pid={r.engine.shadow.pid}
+              alive={r.engine.shadow.alive}
+              uptime_min={r.engine.shadow.uptime_min}
+              state_age_min={r.engine.shadow.state_age_min}
+              per_tf={r.engine.shadow.per_tf_last_processed}
+              cfg_count={r.engine.shadow.cfg_count}
+              extra={[]}
+            />
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── PUBLISHER STATUS ── */}
+      <SectionCard title="PUBLISHER · phase-i-publisher cron">
+        {!r ? <EmptyBox>Loading…</EmptyBox> : (
+          <>
+            <div className="row row-stats">
+              <StatCard
+                label="Last run"
+                value={r.publisher.last_run_kind || '—'}
+                sub={r.publisher.last_run_age_min != null ? `${r.publisher.last_run_age_min}m ago` : 'never'}
+                tone={r.publisher.last_run_kind === 'PASS' ? 'pos' : r.publisher.last_run_kind === 'FAIL' ? 'neg' : 'muted'}
+              />
+              <StatCard
+                label="HALT marker"
+                value={r.publisher.halted ? 'PRESENT' : 'absent'}
+                sub={r.publisher.halted ? r.publisher.halt_marker?.slice(0, 60) || '' : 'clear'}
+                tone={r.publisher.halted ? 'neg' : 'pos'}
+              />
+              <StatCard
+                label="Consecutive fails"
+                value={r.publisher.consecutive_fails}
+                sub={r.publisher.consecutive_fails === 0 ? 'clean' : 'recent failures'}
+                tone={r.publisher.consecutive_fails === 0 ? 'pos' : 'neg'}
+              />
+              <StatCard
+                label="Last PASS"
+                value={r.publisher.last_pass_age_min != null ? `${r.publisher.last_pass_age_min}m` : 'never'}
+                sub="ago"
+                tone={r.publisher.last_pass_age_min != null && r.publisher.last_pass_age_min < 90 ? 'pos' : 'muted'}
+              />
+            </div>
+            {r.publisher.relock_history.length > 0 && (
+              <div className="adm-banner" style={{ marginTop: 12 }}>
+                <span className="bt-eyebrow" style={{ marginBottom: 0 }}>RELOCK HISTORY · {r.publisher.relock_history.length} entries</span>
+                <span className="adm-banner-text" style={{ fontSize: 11 }}>
+                  Latest: {new Date(r.publisher.relock_history[r.publisher.relock_history.length - 1].date).toISOString().slice(0, 19).replace('T', ' ')}Z
+                </span>
+              </div>
+            )}
+            <details style={{ marginTop: 12 }}>
+              <summary className="adm-stat-sub" style={{ cursor: 'pointer' }}>Recent runs.log tail ({r.publisher.runs_tail.length} lines)</summary>
+              <pre className="adm-log-tail" style={{ marginTop: 8 }}>{r.publisher.runs_tail.join('\n')}</pre>
+            </details>
+          </>
+        )}
+      </SectionCard>
+
+      {/* ── CACHE INTEGRITY ── */}
+      <SectionCard title={`CACHE INTEGRITY · ${r ? r.cache.total : '—'} (asset, TF) pairs`}>
+        {!r ? <EmptyBox>Loading…</EmptyBox> : (
+          <>
+            <div className="row row-stats" style={{ marginBottom: 12 }}>
+              <StatCard label="Total" value={r.cache.total} sub="14 assets × 7 TFs" />
+              <StatCard label="Stale ≥ 4h" value={r.cache.stale_4h_plus} tone={r.cache.stale_4h_plus > 0 ? 'gold' : 'pos'} />
+              <StatCard label="Missing" value={r.cache.missing} tone={r.cache.missing > 0 ? 'neg' : 'pos'} />
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="adm-parity-table">
+                <thead>
+                  <tr><th>Asset</th>{['1h','2h','4h','6h','8h','12h','1d'].map(tf => <th key={tf}>{tf}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {Array.from(new Set(r.cache.entries.map(e => e.asset))).map(asset => (
+                    <tr key={asset}>
+                      <td className="num" style={{ fontWeight: 700 }}>{asset}</td>
+                      {['1h','2h','4h','6h','8h','12h','1d'].map(tf => {
+                        const e = r.cache.entries.find(x => x.asset === asset && x.tf === tf)
+                        if (!e || !e.present) return <td key={tf} style={{ color: 'var(--neg)' }}>—</td>
+                        const age = e.last_age_min ?? 999999
+                        const color = age > 4 * 60 ? 'var(--neg)' : age > 60 ? 'var(--gold)' : 'var(--pos)'
+                        return (
+                          <td key={tf} style={{ color, fontSize: 11 }}>
+                            {age < 60 ? `${age}m` : age < 1440 ? `${Math.floor(age/60)}h` : `${Math.floor(age/1440)}d`}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="adm-stat-sub" style={{ fontSize: 10, marginTop: 8 }}>
+              Cell value = age of last bar in cache. Green &lt;60m, yellow 60m–4h, red &gt;4h. Some TFs legitimately update less often (1d only daily).
+            </div>
+          </>
+        )}
+      </SectionCard>
+
+      {/* ── WATCHDOG ROUNDUP ── */}
+      <SectionCard title="WATCHDOGS">
+        {!r ? <EmptyBox>Loading…</EmptyBox> : (
+          <div className="bt-twin-row">
+            <WatchdogCard w={r.watchdogs.daemon_heartbeat} />
+            <WatchdogCard w={r.watchdogs.pipeline_heartbeat} />
+          </div>
+        )}
+      </SectionCard>
+
+      {r && (
+        <div className="adm-footer-meta">
+          As of <span className="num">{new Date(r.as_of_ms).toISOString().slice(0, 19).replace('T', ' ')}Z</span>
+          {' · '}fetched in <span className="num">{r.fetched_in_ms}ms</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DaemonCard({ name, pid, alive, uptime_min, state_age_min, per_tf, cfg_count, extra }: {
+  name: string; pid: number | null; alive: boolean; uptime_min: number | null
+  state_age_min: number | null; per_tf: Record<string, { open_ts: number; age_min: number | null }>
+  cfg_count: number; extra: Array<{ label: string; value: string; tone: 'pos'|'neg'|'gold'|'muted' }>
+}) {
+  return (
+    <SectionCard title={`${name.toUpperCase()} DAEMON`}>
+      <div className="row row-stats" style={{ marginBottom: 12 }}>
+        <StatCard
+          label="Status"
+          value={alive ? 'ALIVE' : 'DOWN'}
+          sub={pid ? `PID ${pid}` : 'no PID'}
+          tone={alive ? 'pos' : 'neg'}
+        />
+        <StatCard
+          label="Uptime"
+          value={uptime_min != null ? (uptime_min < 60 ? `${uptime_min}m` : `${Math.floor(uptime_min/60)}h ${uptime_min%60}m`) : '—'}
+          sub="since restart"
+          tone="muted"
+        />
+        <StatCard
+          label="state.json age"
+          value={state_age_min != null ? `${state_age_min}m` : '—'}
+          sub="last persist"
+          tone={state_age_min != null && state_age_min < 90 ? 'pos' : state_age_min != null && state_age_min < 130 ? 'gold' : 'neg'}
+        />
+        <StatCard
+          label="cfgs loaded"
+          value={cfg_count}
+          sub="total in state"
+          tone="muted"
+        />
+      </div>
+      {extra.length > 0 && (
+        <div className="adm-feed-grid" style={{ marginBottom: 12 }}>
+          {extra.map((e, i) => (
+            <div key={i} className="adm-feed-cell">
+              <div className="adm-feed-head"><span className="num" style={{ fontWeight: 600, fontSize: 11 }}>{e.label}</span></div>
+              <div className="adm-feed-meta" style={{ color: e.tone === 'pos' ? 'var(--pos)' : e.tone === 'neg' ? 'var(--neg)' : e.tone === 'gold' ? 'var(--gold)' : 'var(--muted)' }}>{e.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="adm-stat-sub" style={{ fontSize: 10, marginBottom: 4 }}>Last processed bar by TF (age in minutes):</div>
+      <div className="adm-feed-grid">
+        {['1h','2h','4h','6h','8h','12h','1d'].map(tf => {
+          const v = per_tf[tf]
+          if (!v) return <div key={tf} className="adm-feed-cell"><div className="adm-feed-head"><span className="num">{tf}</span></div><div className="adm-feed-meta">—</div></div>
+          const age = v.age_min ?? 999999
+          // Each TF's expected oscillation peak ≈ 2× its interval
+          const tf_max: Record<string, number> = { '1h': 130, '2h': 250, '4h': 490, '6h': 730, '8h': 970, '12h': 1450, '1d': 2890 }
+          const limit = tf_max[tf] ?? 130
+          const color = age > limit ? 'var(--neg)' : age > limit * 0.8 ? 'var(--gold)' : 'var(--pos)'
+          return (
+            <div key={tf} className="adm-feed-cell">
+              <div className="adm-feed-head"><span className="num" style={{ fontWeight: 600 }}>{tf}</span></div>
+              <div className="adm-feed-meta" style={{ color }}>{age < 60 ? `${age}m` : `${Math.floor(age/60)}h ${age%60}m`}</div>
+            </div>
+          )
+        })}
+      </div>
+    </SectionCard>
+  )
+}
+
+function WatchdogCard({ w }: { w: SystemStatus['watchdogs']['daemon_heartbeat'] }) {
+  return (
+    <SectionCard title={w.name.toUpperCase().replace(/_/g, ' ')}>
+      <div className="row row-stats" style={{ marginBottom: 12 }}>
+        <StatCard
+          label="Last run"
+          value={w.last_run_age_min != null ? `${w.last_run_age_min}m ago` : 'never'}
+          sub={w.last_run_ts ? new Date(w.last_run_ts).toISOString().slice(11, 19) + 'Z' : ''}
+          tone={w.last_run_age_min != null && w.last_run_age_min < 20 ? 'pos' : w.last_run_age_min != null && w.last_run_age_min < 60 ? 'gold' : 'neg'}
+        />
+        <StatCard
+          label="Recent alert"
+          value={w.recent_alert ? 'yes' : 'no'}
+          sub={w.recent_alert ? 'check tail' : 'all clean'}
+          tone={w.recent_alert ? 'gold' : 'pos'}
+        />
+      </div>
+      <details>
+        <summary className="adm-stat-sub" style={{ cursor: 'pointer' }}>Last 8 log lines</summary>
+        <pre className="adm-log-tail" style={{ marginTop: 8, fontSize: 10 }}>{w.tail.join('\n')}</pre>
+      </details>
+    </SectionCard>
+  )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1406,7 +1200,7 @@ function AlertsPanel({ active }: { active: boolean }) {
           </select>
         </label>
         <span className="adm-filter-summary">
-          {al.data?.total ?? 0} total · DB {al.data?.dbCount ?? 0} · file {al.data?.fileCount ?? 0}
+          {al.data?.total ?? 0} total
         </span>
       </div>
 
@@ -1881,7 +1675,54 @@ function StrategyPanel({ active }: { active: boolean }) {
       <div style={{ display: sub === 'staxs' ? 'block' : 'none' }}>
         <BestStaxsPanel active={active && sub === 'staxs'} />
       </div>
+
+      {/* 2026-05-25 (Session 3): inline re-lock history. Visible across all
+          strategy sub-tabs since baselines are global, not sub-tab specific.
+          Read-only, sourced from PHASE_H_BASELINE.json's relock_history. */}
+      <RelockHistorySection active={active} />
     </div>
+  )
+}
+
+type RelockHistoryResp = {
+  relock_history: Array<{ date: string; reason: string; previous_baseline_archived: string }>
+  current_locked: any
+  total: number
+}
+
+function RelockHistorySection({ active }: { active: boolean }) {
+  const fetcher = useCallback(async () => authedFetch<RelockHistoryResp>('/api/admin/relock-history'), [])
+  const rh = usePanelData<RelockHistoryResp>(active, fetcher, 5 * 60_000) // 5min — re-locks are rare events
+  return (
+    <SectionCard title={`PHASE H BASELINE · RE-LOCK HISTORY · ${rh.data?.total ?? 0}`}>
+      {!rh.data ? <EmptyBox>{rh.loading ? 'Loading…' : 'No baseline data.'}</EmptyBox> : (
+        <div className="adm-kvlist">
+          {rh.data.relock_history.length === 0 ? (
+            <EmptyBox>No re-locks recorded. First re-lock will populate here.</EmptyBox>
+          ) : (
+            rh.data.relock_history.map((r, i) => (
+              <div key={i} className="adm-kv" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, paddingTop: 8, paddingBottom: 8, borderBottom: i < rh.data!.relock_history.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span className="num" style={{ fontSize: 11, fontWeight: 700 }}>
+                    {new Date(r.date).toISOString().slice(0, 19).replace('T', ' ')}Z
+                  </span>
+                  <span style={{ color: 'var(--muted)', fontSize: 10 }}>{fmtAge(r.date)}</span>
+                </div>
+                <div style={{ color: 'var(--text)', fontSize: 11, lineHeight: 1.4 }}>{r.reason}</div>
+                {r.previous_baseline_archived && (
+                  <div style={{ color: 'var(--muted)', fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
+                    archived → {r.previous_baseline_archived}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      <div className="adm-stat-sub" style={{ fontSize: 10, marginTop: 8 }}>
+        Per-re-lock metric deltas vs prior baseline deferred until 2nd real re-lock cycle (today's entries are recovery-sequence within the same window).
+      </div>
+    </SectionCard>
   )
 }
 
