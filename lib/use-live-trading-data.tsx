@@ -207,6 +207,16 @@ export function useLiveTradingData(): LiveLoadState {
           // open positions + position history straight from the exchange so
           // entry, exit, size, and PnL are exact (no DB drift). See
           // DESIGN_SYSTEM.md → Data Architecture.
+          //
+          // 2026-05-26 Track 1C #3 progressive-load investigation: tried
+          // limit=10 first / limit=500 bg-swap. Reverted: the data shape has
+          // realizedPnl/winRate/closedCount/avgWin etc. all derived from the
+          // closed-trades list, so a 10-first render would show "10 closed,
+          // 80% WR" then flicker to "47 closed, 67% WR" 1-2s later — worse
+          // UX than a slightly slower full-data render. A proper progressive
+          // load needs the totals card to skeleton during the gap, which is
+          // a UI refactor across Live Trading components. Deferred to
+          // Phase 2.5 with the full structural refactor.
           authedFetch<{ trades: RawTrade[] }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[] })),
           fetch('/api/strategy-state').then(r => r.ok ? r.json() : { positions: [] }).catch(() => ({ positions: [] })) as Promise<StrategyStateResp>,
         ])
