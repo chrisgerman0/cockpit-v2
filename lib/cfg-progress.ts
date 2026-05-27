@@ -177,7 +177,10 @@ export function computeProgressBarState(args: {
   )
   if (isGenuinelyGated) {
     const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
-    const gatePassed = (mfePct ?? 0) >= gateMfe
+    // 2026-05-27: gate-passed check uses live-peak MFE (engine mfe_abs may
+    // lag intra-bar). max(engine, current_pnl_if_favorable).
+    const livePeakMfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
+    const gatePassed = livePeakMfe >= gateMfe
     if (gatePassed) {
       badges.push({
         kind: 'strong_alert_armed',
@@ -253,7 +256,13 @@ function trailArchetypePhase(args: {
   beMovedFromState: boolean
 }): ProgressBarState {
   const { cfg, pnlPct, mfePct, badges } = args
-  const mfe = mfePct ?? Math.max(0, pnlPct)
+  // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
+  // bar close (4h / 2h / 1h cadence). If current price is making a new
+  // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
+  // MFE and current favorable PnL so the displayed value tracks the live
+  // peak — matches customer intuition + remains accurate (engine catches up
+  // at next bar close anyway).
+  const mfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
   const trailLabel = trailModeLabel(cfg.trail_mode)
   const activation = trailActivationPct(cfg.trail_mode)
 
@@ -318,7 +327,8 @@ function beOnlyArchetypePhase(args: {
   beMovedFromState: boolean
 }): ProgressBarState {
   const { cfg, pnlPct, mfePct, badges, beMovedFromState } = args
-  const mfe = mfePct ?? Math.max(0, pnlPct)
+  // 2026-05-27: live-peak max (see trailArchetypePhase comment).
+  const mfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
   const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
 
   if (mfe < gateMfe && cfg.strong_alert_gate !== 'baseline' && cfg.strong_alert_gate !== 'off') {
@@ -353,7 +363,8 @@ function rsiSlOnlyArchetypePhase(args: {
   badges: ProgressBadge[]
 }): ProgressBarState {
   const { cfg, pnlPct, mfePct, badges } = args
-  const mfe = mfePct ?? Math.max(0, pnlPct)
+  // 2026-05-27: live-peak max (see trailArchetypePhase comment).
+  const mfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
   const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
 
   // No trail/BE on this archetype — only RSI TP + strong-alert TP + hard SL
