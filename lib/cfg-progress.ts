@@ -266,7 +266,7 @@ function trailArchetypePhase(args: {
       return {
         phase: 'yellow',
         fillPct: fill,
-        label: `${need}% to ${trailLabel}`,
+        label: `${need}% to arm ${trailLabel}`,
         sublabel: `MFE ${mfe.toFixed(2)}%`,
         flash: false,
         badges,
