@@ -47,6 +47,29 @@ export type LiveTrade = {
   trailFloor?: number | null    // engine-committed protection floor OR a projection of where it would arm
   trailFloorCommitted?: boolean // true = engine actually committed; false = synthetic projection
   mfePeakTs?: number | null     // ms epoch of last MFE peak; drives the reprieve countdown
+  /** 2026-05-27: Phase H cfg dims passthrough. Surfaced by /api/trades-live
+   *  via metadata.cfgDims. Drives cfg-aware progress bar logic (see
+   *  lib/cfg-progress.ts). Undefined for positions outside the basket
+   *  (orphans, manual trades) — UI degrades to the legacy SLDangerCell. */
+  cfgDims?: CfgDims
+}
+
+/** Strategy IP — admin-only shape. Customer-facing labels in lib/cfg-progress.ts
+ *  translate to neutral vocabulary ("Trailing TP active" not "multi_tier"). */
+export type CfgDims = {
+  cfg_sid: string
+  archetype: 'A_TRAIL_ONLY' | 'B_TRAIL_PLUS_BE' | 'C_BE_ONLY' | 'D_RSI_SL_ONLY' | 'UNKNOWN'
+  tf: string
+  sl_price: number | null
+  mfe_pct: number | null
+  be_moved: boolean
+  trail_mode: string
+  breakeven_at_R: string
+  strong_alert_gate: string
+  tp_overbought: number
+  tp_oversold: number
+  sl_type: string
+  sl_pct: number
 }
 
 export type ActivePosition = LiveTrade & {
@@ -129,6 +152,7 @@ type RawTrade = {
     tpArmed?: boolean
     trailFloor?: number | null
     trailFloorCommitted?: boolean
+    cfgDims?: CfgDims
     mfePeakTs?: number | null
   }
 }
@@ -181,6 +205,10 @@ function normalize(t: RawTrade): LiveTrade {
     tpArmed: t.metadata?.tpArmed,
     trailFloor: t.metadata?.trailFloor ?? null,
     trailFloorCommitted: !!t.metadata?.trailFloorCommitted,
+    // 2026-05-27: cfg dims passthrough from /api/trades-live → drives the
+    // cfg-aware progress bar logic. Only present for positions inside the
+    // Phase H basket (lane-managed).
+    cfgDims: t.metadata?.cfgDims,
     mfePeakTs: t.metadata?.mfePeakTs ?? null,
   }
 }
