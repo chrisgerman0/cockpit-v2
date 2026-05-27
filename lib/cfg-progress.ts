@@ -90,10 +90,13 @@ function strongAlertGateMfeThreshold(gate: string): number {
 }
 
 /** Strong-alert gate label for customer display. Translates IP-loaded gate
- *  name to neutral vocabulary. */
-function strongAlertLabel(gate: string): string {
-  if (gate === 'baseline' || gate === 'off') return 'Strong-alert armed'
-  return 'Strong-alert armed'
+ *  name to neutral vocabulary. Per Chris (2026-05-27): customer-facing label
+ *  is "Take-profit armed" — generalizes the badge to "an extra TP signal is
+ *  available beyond the standard RSI path" without exposing the specific
+ *  strong-alert mechanic. The yellow-phase label still says "to Strong-alert
+ *  TP" because that's the precise condition the gate is waiting on. */
+function strongAlertLabel(_gate: string): string {
+  return 'Take-profit armed'
 }
 
 /** Translate trail_mode to customer-facing label. */
@@ -324,7 +327,7 @@ function beOnlyArchetypePhase(args: {
     return {
       phase: 'yellow',
       fillPct: fill,
-      label: `${need}% to Strong-alert TP`,
+      label: `${need}% to arm Take-profit`,
       sublabel: beMovedFromState ? 'Breakeven moved · MFE ' + mfe.toFixed(2) + '%' : `MFE ${mfe.toFixed(2)}%`,
       flash: false,
       badges,
@@ -360,7 +363,7 @@ function rsiSlOnlyArchetypePhase(args: {
     return {
       phase: 'yellow',
       fillPct: fill,
-      label: `${need}% to Strong-alert TP`,
+      label: `${need}% to arm Take-profit`,
       sublabel: `MFE ${mfe.toFixed(2)}% · awaiting RSI`,
       flash: false,
       badges,

@@ -697,7 +697,7 @@ function CfgProgressCell({
     trailing: 'Trailing TP follows price upward, locks in profit as MFE grows. Exit fires when price retraces from peak.',
     tier: 'Trail tightens at each MFE tier. Tier 1 starts at 1.5% MFE (60% retrace allowed). Tier 4 starts at 8% (only 30% retrace allowed).',
     retrace: 'If price gives back this percentage of MFE from peak, the trail exit fires.',
-    strongAlert: 'A take-profit that fires on a strong-alert signal, but only if the cfg-specific gate condition is satisfied (e.g., MFE ≥ 2%).',
+    strongAlert: 'Extra take-profit signal that arms when MFE crosses a cfg-specific threshold (e.g., MFE ≥ 2%). Fires on the next strong-alert pattern from the engine.',
     mfe: 'Maximum Favorable Excursion — the peak profit reached at any point in this trade.',
     breakeven: 'Stop Loss has been moved to entry price. Position is locked against loss.',
     sl: 'Hard Stop Loss — the engine closes the position at this price to cap risk.',
@@ -706,7 +706,7 @@ function CfgProgressCell({
   const cellTitle = state.phase === 'red'
     ? TOOLTIPS.sl
     : state.label.includes('Trailing') ? TOOLTIPS.trailing
-    : state.label.includes('Strong-alert') ? TOOLTIPS.strongAlert
+    : state.label.includes('Take-profit') ? TOOLTIPS.strongAlert
     : state.label.includes('RSI') ? TOOLTIPS.rsi
     : TOOLTIPS.mfe
 
