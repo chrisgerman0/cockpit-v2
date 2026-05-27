@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './stax-design.css'
 import { Icons } from './Icons'
-import { useLiveTradingData, type LiveTradingData } from '@/lib/use-live-trading-data'
+import { useLiveTradingData, type LiveTradingData, type CfgDims } from '@/lib/use-live-trading-data'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useT, getCurrentLang } from '@/lib/i18n'
+import { computeProgressBarState, type ProgressBarState } from '@/lib/cfg-progress'
 // 2026-05-24 (P5): 14-asset Phase H basket — single source of truth lives at
 // lib/phase-h-basket.ts. Replaces the hardcoded 7-asset V1 list that was
 // hiding HYPE / BNB / AVAX / ADA / TRX / ZEC / TON from the customer view.
@@ -145,6 +146,9 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
         trailFloor: t.trailFloor ?? null,
         trailFloorCommitted: !!t.trailFloorCommitted,
         mfePeakTs: t.mfePeakTs ?? null,
+        // 2026-05-27: cfg dims for cfg-aware progress bar. Undefined for
+        // positions outside the Phase H basket (orphan trades).
+        cfgDims: t.cfgDims,
       }
     }),
     [data.open, tickerByPair],
@@ -275,6 +279,11 @@ type LiveTradeRow = {
   trailFloor?: number | null    // engine-committed floor OR API-synthesized projection
   trailFloorCommitted?: boolean // true if engine actually locked; false = projection only
   mfePeakTs?: number | null
+  // 2026-05-27: Phase H cfg dims for cfg-aware progress bar. Surfaced by
+  // /api/trades-live → use-live-trading-data → here. When present, the
+  // cell renders the cfg-aware ProgressBarState via lib/cfg-progress.ts.
+  // When undefined, falls back to the legacy SLDangerCell hardcoded logic.
+  cfgDims?: CfgDims
 }
 
 // 2026-05-24 (P5): swapped 7-asset hardcoded map for the 14-asset basket-
@@ -624,6 +633,122 @@ function SLDangerCell({
   )
 }
 
+/**
+ * Cfg-aware progress cell — replacement for SLDangerCell when Phase H
+ * cfgDims are available. Different from SLDangerCell because the legacy
+ * version hardcodes 1.5% trail activation + 4% SL across all trades,
+ * which is correct only for ~50% of the basket. This version reads the
+ * actual cfg's trail_mode + breakeven_at_R + strong_alert_gate +
+ * tp_overbought/oversold + sl_type + sl_pct and selects the phase logic
+ * per archetype (A_TRAIL_ONLY / B_TRAIL_PLUS_BE / C_BE_ONLY /
+ * D_RSI_SL_ONLY). See lib/cfg-progress.ts + the audit doc at
+ * docs/PROGRESS_BAR_CFG_AWARE_DESIGN.md.
+ *
+ * Tooltips: every term is hoverable via native `title` (Chris-requested
+ * tooltip infrastructure). Phase 4 follow-up could replace these with a
+ * styled Tooltip component, but `title` is the lightest first cut and
+ * already gives customers the educational hover-to-learn pattern.
+ */
+function CfgProgressCell({
+  cfgDims, entry, mark, side,
+}: {
+  cfgDims: CfgDims
+  entry: number
+  mark: number | null
+  side: 'LONG' | 'SHORT'
+}) {
+  // Throttle high-frequency Bitget WS ticks down to the same 750ms cadence
+  // SLDangerCell uses, so the bar + caption update smoothly without jitter.
+  const stableMark = useThrottledValue(mark ?? entry, 750)
+
+  if (!Number.isFinite(entry) || entry <= 0 || mark == null || !Number.isFinite(mark) || mark <= 0) {
+    return <span style={{ color: 'var(--muted)' }}>—</span>
+  }
+
+  const state: ProgressBarState | null = computeProgressBarState({
+    cfg: cfgDims,
+    side,
+    entryPx: entry,
+    slPx: cfgDims.sl_price,
+    mfePct: cfgDims.mfe_pct,
+    beMovedFromState: cfgDims.be_moved,
+    currentPx: stableMark,
+  })
+
+  if (!state) {
+    return <span style={{ color: 'var(--muted)' }}>—</span>
+  }
+
+  // Map ProgressBarState → CSS classes that match the existing SLDangerCell
+  // visual language (red/yellow/green meter bar). Gold accent on badges is
+  // additive on top.
+  const fillClass =
+    state.phase === 'red'    ? 'lt-sl-fill-critical' :
+    state.phase === 'yellow' ? 'lt-sl-fill-warn' :
+    state.phase === 'green'  ? 'lt-sl-fill-armed' :
+    'lt-sl-fill-warn'
+  const barClasses = ['adm-meter-bar', 'lt-sl-bar']
+  if (state.phase === 'red' && state.flash) barClasses.push('lt-sl-bar-critical')
+  if (state.phase === 'green')              barClasses.push('lt-sl-bar-locked')
+
+  // Tooltips — each technical term gets hover-to-learn educational text.
+  // Keep concise; user can read deeper docs in the future.
+  const TOOLTIPS = {
+    trailing: 'Trailing TP follows price upward, locks in profit as MFE grows. Exit fires when price retraces from peak.',
+    tier: 'Trail tightens at each MFE tier. Tier 1 starts at 1.5% MFE (60% retrace allowed). Tier 4 starts at 8% (only 30% retrace allowed).',
+    retrace: 'If price gives back this percentage of MFE from peak, the trail exit fires.',
+    strongAlert: 'A take-profit that fires on a strong-alert signal, but only if the cfg-specific gate condition is satisfied (e.g., MFE ≥ 2%).',
+    mfe: 'Maximum Favorable Excursion — the peak profit reached at any point in this trade.',
+    breakeven: 'Stop Loss has been moved to entry price. Position is locked against loss.',
+    sl: 'Hard Stop Loss — the engine closes the position at this price to cap risk.',
+    rsi: 'RSI-based Take Profit. Fires when the indicator hits the cfg-specific overbought/oversold threshold.',
+  }
+  const cellTitle = state.phase === 'red'
+    ? TOOLTIPS.sl
+    : state.label.includes('Trailing') ? TOOLTIPS.trailing
+    : state.label.includes('Strong-alert') ? TOOLTIPS.strongAlert
+    : state.label.includes('RSI') ? TOOLTIPS.rsi
+    : TOOLTIPS.mfe
+
+  return (
+    <div className="lt-sl-cell" title={cellTitle}>
+      <div className={barClasses.join(' ')}>
+        <div className={'adm-meter-fill ' + fillClass} style={{ width: state.fillPct + '%' }} />
+      </div>
+      <div className={'lt-sl-text ' + (state.phase === 'red' ? 'lt-sl-text-critical' : state.phase === 'green' ? 'lt-sl-text-armed' : 'lt-sl-text-warn')}>
+        {state.label}
+      </div>
+      {state.sublabel ? (
+        <div className="lt-sl-prices" title={
+          state.sublabel.includes('Tier')   ? TOOLTIPS.tier :
+          state.sublabel.includes('retrace') ? TOOLTIPS.retrace :
+          state.sublabel.includes('MFE')     ? TOOLTIPS.mfe :
+          undefined
+        }>
+          {state.sublabel}
+        </div>
+      ) : null}
+      {state.badges.length > 0 ? (
+        <div className="lt-sl-badges">
+          {state.badges.map((b, i) => (
+            <span
+              key={i}
+              className={`lt-sl-badge lt-sl-badge-${b.kind}${b.pulse ? ' lt-sl-badge-pulse' : ''}`}
+              title={
+                b.kind === 'strong_alert_armed' ? TOOLTIPS.strongAlert :
+                b.kind === 'be_moved'           ? TOOLTIPS.breakeven :
+                undefined
+              }
+            >
+              {b.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel = 'Reason' }: {
   title: string
   rows: LiveTradeRow[]
@@ -800,17 +925,24 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
                   <td className={'num ' + (r.pnl > 0 ? 'pos-text' : 'neg-text')}>{r.pnlPct.toFixed(2)}%</td>
                   <td>
                     {r.open
-                      ? <SLDangerCell
-                          entry={r.entryPx}
-                          mark={r.markPx ?? null}
-                          side={r.side}
-                          mfePct={r.mfePct}
-                          mfePxPeak={r.mfePxPeak}
-                          tpArmed={r.tpArmed}
-                          trailFloor={r.trailFloor}
-                          trailFloorCommitted={r.trailFloorCommitted}
-                          mfePeakTs={r.mfePeakTs}
-                        />
+                      ? (r.cfgDims
+                          ? <CfgProgressCell
+                              cfgDims={r.cfgDims}
+                              entry={r.entryPx}
+                              mark={r.markPx ?? null}
+                              side={r.side}
+                            />
+                          : <SLDangerCell
+                              entry={r.entryPx}
+                              mark={r.markPx ?? null}
+                              side={r.side}
+                              mfePct={r.mfePct}
+                              mfePxPeak={r.mfePxPeak}
+                              tpArmed={r.tpArmed}
+                              trailFloor={r.trailFloor}
+                              trailFloorCommitted={r.trailFloorCommitted}
+                              mfePeakTs={r.mfePeakTs}
+                            />)
                       : <span className="num" style={{ color: 'var(--muted)' }}>{r.reason || '—'}</span>}
                   </td>
                 </tr>
@@ -881,17 +1013,24 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
 
               <div className="lt-card-last">
                 {r.open
-                  ? <SLDangerCell
-                      entry={r.entryPx}
-                      mark={r.markPx ?? null}
-                      side={r.side}
-                      mfePct={r.mfePct}
-                      mfePxPeak={r.mfePxPeak}
-                      tpArmed={r.tpArmed}
-                      trailFloor={r.trailFloor}
-                      trailFloorCommitted={r.trailFloorCommitted}
-                      mfePeakTs={r.mfePeakTs}
-                    />
+                  ? (r.cfgDims
+                      ? <CfgProgressCell
+                          cfgDims={r.cfgDims}
+                          entry={r.entryPx}
+                          mark={r.markPx ?? null}
+                          side={r.side}
+                        />
+                      : <SLDangerCell
+                          entry={r.entryPx}
+                          mark={r.markPx ?? null}
+                          side={r.side}
+                          mfePct={r.mfePct}
+                          mfePxPeak={r.mfePxPeak}
+                          tpArmed={r.tpArmed}
+                          trailFloor={r.trailFloor}
+                          trailFloorCommitted={r.trailFloorCommitted}
+                          mfePeakTs={r.mfePeakTs}
+                        />)
                   : <span className="lt-card-reason">{r.reason || '—'}</span>}
               </div>
             </div>

@@ -4780,6 +4780,59 @@ html.light .stax-app .adm-log-tail {
   color: var(--muted);
 }
 
+/* ── 2026-05-27: Cfg-aware progress bar badges ─────────────────────────
+   Strong-alert armed + Breakeven moved badges, rendered alongside the
+   cfg-aware ProgressBarState. Strong-alert uses a gold pulse to signal
+   "extra exit signal armed" — per Chris Q3 (gold accent for armed
+   states). BE-moved is solid (steady protection, not a new signal). */
+.stax-app .lt-sl-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.stax-app .lt-sl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.stax-app .lt-sl-badge-strong_alert_armed {
+  color: var(--gold);
+  background: rgba(212, 160, 23, 0.08);
+  border-color: rgba(212, 160, 23, 0.45);
+}
+.stax-app .lt-sl-badge-be_moved {
+  color: var(--pos);
+  background: rgba(46, 204, 113, 0.06);
+  border-color: rgba(46, 204, 113, 0.35);
+}
+/* Gold pulse for armed-state badges. ~1.6s cycle, just enough to draw
+   the eye without becoming distracting. */
+@keyframes lt-sl-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(212, 160, 23, 0); }
+  50%      { box-shadow: 0 0 4px 1px rgba(212, 160, 23, 0.55); }
+}
+.stax-app .lt-sl-badge-pulse {
+  animation: lt-sl-badge-pulse 1.6s ease-in-out infinite;
+}
+
+/* Cfg-aware text-color helpers. CfgProgressCell uses these per-phase
+   instead of the legacy SLDangerCell captionClass system. */
+.stax-app .lt-sl-text-critical { color: var(--neg); font-weight: 600; }
+.stax-app .lt-sl-text-warn     { color: var(--gold); font-weight: 600; }
+.stax-app .lt-sl-text-armed    { color: var(--pos); font-weight: 600; }
+.stax-app .lt-sl-fill-warn     { background: linear-gradient(90deg, var(--gold), rgba(212, 160, 23, 0.5)); }
+.stax-app .lt-sl-fill-armed    { background: linear-gradient(90deg, var(--pos), rgba(46, 204, 113, 0.5)); }
+.stax-app .lt-sl-fill-critical { background: linear-gradient(90deg, var(--neg), rgba(220, 53, 69, 0.5)); }
+
 /* Trail-meter warning mark — only rendered for the locked state when
    we have both trailFloor and swing-high. Positioned at 20% of the bar
    width as a fixed reference line; the green fill shrinks toward it

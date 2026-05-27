@@ -255,11 +255,13 @@ function trailArchetypePhase(args: {
       }
     }
     // Green — trail active at tier `lvl.tier`
+    // Per Chris (label tweak): "X% retrace allowed" mirrors engine reality
+    // honestly. Exit triggers if price retraces lvl.retracePct of MFE from peak.
     return {
       phase: 'green',
       fillPct: 100,
       label: `${trailLabel} active`,
-      sublabel: `Tier ${lvl.tier} · ${100 - lvl.retracePct}% locked · peak ${mfe.toFixed(2)}%`,
+      sublabel: `Tier ${lvl.tier} · ${lvl.retracePct}% retrace allowed · peak ${mfe.toFixed(2)}%`,
       flash: false,
       badges,
     }
