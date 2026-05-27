@@ -45,6 +45,15 @@ export type PortfolioTrade = {
   // side, so non-admin callers never see it. Strategy IP — never render
   // unless caller verified isAdmin.
   cfg_sid?: string
+  // 2026-05-27 Option D: the tier this trade belongs to. Shadow daemon runs
+  // ONE tier (currently 'moderate'); publisher emits per-tier files. The
+  // Backtest page tier picker switches between simulated views — without
+  // this tag, the merge layer would leak shadow's moderate trades into the
+  // conservative + aggressive views. Trades older than the 2026-05-27
+  // schema bump lack this field; the merge layer treats unknown tier as
+  // "drop from filtered views" so cross-tier bleed is impossible during
+  // the transition window.
+  tier?: 'conservative' | 'moderate' | 'aggressive'
 }
 
 export type Tier = 'conservative' | 'moderate' | 'aggressive'
@@ -325,15 +334,49 @@ function tradeKey(t: PortfolioTrade): string {
 export function mergePublisherAndShadow(
   publisher: PortfolioTrade[],
   shadow: PortfolioTrade[],
+  viewedTier?: Tier,
 ): PortfolioTrade[] {
-  if (publisher.length === 0) return shadow
-  if (shadow.length === 0) return publisher
-  // Build set of (cfg|symbol, day) keys covered by shadow
-  const shadowKeys = new Set<string>()
-  for (const t of shadow) shadowKeys.add(tradeKey(t))
-  // Filter publisher: drop entries whose (cfg|symbol, day) is in shadow's set
-  const survivors = publisher.filter(t => !shadowKeys.has(tradeKey(t)))
-  return [...survivors, ...shadow]
+  // 2026-05-27 Option D: tier-aware merge with split open/closed handling.
+  //
+  // Step 1 — tier filter.
+  // Shadow daemon runs ONE tier (currently 'moderate'). Publisher emits
+  // per-tier files (we get the right one via pathForTier). Pre-fix bug:
+  // shadow's moderate-tier trades were unioned into every tier view,
+  // leaking moderate-only opens (e.g. ADA SHORT on lane 2) into the
+  // conservative + aggressive simulated views and overflowing the lane
+  // caps the user expected. Filter shadow rows by tier match first.
+  // Shadow rows older than the 2026-05-27 schema bump have undefined
+  // `tier` and get dropped from filtered views — safer than leaking.
+  const shadowFiltered = viewedTier
+    ? shadow.filter(t => t.tier === viewedTier)
+    : shadow
+  if (publisher.length === 0) return shadowFiltered
+  if (shadowFiltered.length === 0) return publisher
+  // Step 2 — split open vs closed. Open and closed trades have different
+  // truth sources:
+  //   • OPEN positions: shadow is real-time, publisher's are stale-replay.
+  //     If shadow has any opens for this tier, replace ALL publisher opens
+  //     with shadow's opens. (Pre-fix bug: both views' opens got UNIONed,
+  //     which could exceed tier.n_lanes — e.g. publisher's moderate replay
+  //     held SOL+AVAX+TRX but shadow's real-time state held TRX+ADA;
+  //     union = 4, which busts moderate's 3-lane cap.)
+  //   • CLOSED trades: publisher dominates the historical span; shadow
+  //     fills the gap since publisher's last hourly run. Dedup by
+  //     (symbol, dir, day) — shadow wins where it has same-day coverage.
+  const isOpen = (t: PortfolioTrade): boolean =>
+    t.reason === 'eod' || t.reason === 'eod_pyr' || t.reason === 'eod_pyr50' ||
+    t.reason === 'scalp_eod' || t.reason === 'open'
+  const pubOpens = publisher.filter(isOpen)
+  const pubClosed = publisher.filter(t => !isOpen(t))
+  const shdOpens = shadowFiltered.filter(isOpen)
+  const shdClosed = shadowFiltered.filter(t => !isOpen(t))
+  // Opens: shadow is source-of-truth when it has any (same-tier) opens
+  const opens = shdOpens.length > 0 ? shdOpens : pubOpens
+  // Closed: dedup by tradeKey — shadow wins for any (cfg|symbol, day) it covers
+  const shadowClosedKeys = new Set<string>()
+  for (const t of shdClosed) shadowClosedKeys.add(tradeKey(t))
+  const survivorsClosed = pubClosed.filter(t => !shadowClosedKeys.has(tradeKey(t)))
+  return [...survivorsClosed, ...shdClosed, ...opens]
 }
 
 export type PortfolioLoad =

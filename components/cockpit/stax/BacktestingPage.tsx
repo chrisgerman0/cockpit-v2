@@ -211,7 +211,10 @@ export function BacktestingContent() {
         const shadowTrades = shadowFeed.trades
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
-        const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades)
+        // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered
+        // by tier match before merging. Without this, shadow's moderate
+        // tier trades would bleed into Conservative + Aggressive views.
+        const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades, tier)
         setAllTrades(rawTrades)
         // closed-only = raw minus eod markers. Same filter the fetch layer
         // applies when includeOpen=false, but applied here so we only pay
