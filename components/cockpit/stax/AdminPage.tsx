@@ -539,6 +539,11 @@ type TradeSide = {
   notional: number
   direction: 1 | -1
   tf: string
+  // 2026-05-27: canonical current SL price. For OPEN positions overlaid
+  // from each engine's state.json (engine sets SL post-entry, trades.jsonl
+  // LIVE_ENTRY was written before that). For CLOSED trades, null unless
+  // the exit was an SL fire (router stamps it on LIVE_EXIT).
+  sl_price?: number | null
 }
 
 type CompRow = {
@@ -687,6 +692,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
                   <th>Asset · cfg · TF</th>
                   <th>Entry bar (UTC)</th>
                   <th style={{ textAlign: 'right' }}>Entry px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
+                  <th style={{ textAlign: 'right' }}>SL px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
                   <th style={{ textAlign: 'right' }}>PnL<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
                   <th>Reason</th>
                   <th>State</th>
@@ -772,6 +778,31 @@ function CompRow({ row }: { row: CompRow }) {
           {epDiffPct != null ? `${epDiffPct >= 0 ? '+' : ''}${epDiffPct.toFixed(3)}%` : '—'}
         </div>
       </td>
+      {/* SL px — live / shadow / Δ stacked vertically.
+          Comparing live's current SL (set by engine post-entry + updated on
+          every trail/breakeven move) against what shadow's identical
+          strategy logic arrived at. They should match within slippage when
+          both engines are aligned. Δ > 0.1% on the same cfg = engine
+          divergence — surface it loud. */}
+      {(() => {
+        const liveSl = row.live?.sl_price ?? null
+        const shadowSl = row.shadow?.sl_price ?? null
+        const slDiff = (liveSl != null && shadowSl != null) ? liveSl - shadowSl : null
+        const slDiffPct = (slDiff != null && shadowSl) ? (slDiff / shadowSl) * 100 : null
+        const slColor = slDiffPct == null ? undefined
+          : Math.abs(slDiffPct) >= 0.5 ? 'var(--neg)'
+          : Math.abs(slDiffPct) >= 0.1 ? 'var(--gold)'
+          : 'var(--muted)'
+        return (
+          <td className="num" style={{ textAlign: 'right' }}>
+            <div>{liveSl != null ? fmtCompPx(liveSl) : <span className="adm-stat-sub">—</span>}</div>
+            <div style={{ fontSize: 10, color: 'var(--muted)' }}>{shadowSl != null ? fmtCompPx(shadowSl) : '—'}</div>
+            <div style={{ fontSize: 10, color: slColor }}>
+              {slDiffPct != null ? `${slDiffPct >= 0 ? '+' : ''}${slDiffPct.toFixed(3)}%` : '—'}
+            </div>
+          </td>
+        )
+      })()}
       {/* PnL — live / shadow / Δ stacked vertically */}
       <td className="num" style={{ textAlign: 'right' }}>
         <div>
