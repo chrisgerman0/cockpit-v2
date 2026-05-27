@@ -155,18 +155,33 @@ export function computeProgressBarState(args: {
   const archetype = cfg.archetype
   const badges: ProgressBadge[] = []
 
-  // ─── Strong-alert badge (cross-cutting across all archetypes) ─────────────
+  // ─── Strong-alert badge ───────────────────────────────────────────────────
   // The "strong-alert TP" is a separate exit signal gated by MFE/time. When
   // the gate passes, the TP can fire on the next bar-close strong-alert
-  // pattern. UI surfaces this as a "Strong-alert armed" badge.
-  const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
-  const gatePassed = (mfePct ?? 0) >= gateMfe && cfg.strong_alert_gate !== 'off'
-  if (gatePassed) {
-    badges.push({
-      kind: 'strong_alert_armed',
-      label: strongAlertLabel(cfg.strong_alert_gate),
-      pulse: true,
-    })
+  // pattern. UI surfaces this as a "Strong-alert armed" badge — but ONLY
+  // for cfgs whose gate is genuinely conditional. Baseline = "always armed"
+  // = default state; showing the badge would give the customer no signal
+  // since it'd just always be on. Off = TP disabled, never armed.
+  //
+  // Genuinely-gated values: mfe_gt_2pct, mfe_gt_4pct, mfe_and_time, time_gt_6bars.
+  // (2026-05-27 fix: previously the badge surfaced for `baseline` too,
+  // creating false-positive "armed" labels on TRX SHORT and other baseline cfgs.)
+  const isGenuinelyGated = (
+    cfg.strong_alert_gate === 'mfe_gt_2pct' ||
+    cfg.strong_alert_gate === 'mfe_gt_4pct' ||
+    cfg.strong_alert_gate === 'mfe_and_time' ||
+    cfg.strong_alert_gate === 'time_gt_6bars'
+  )
+  if (isGenuinelyGated) {
+    const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
+    const gatePassed = (mfePct ?? 0) >= gateMfe
+    if (gatePassed) {
+      badges.push({
+        kind: 'strong_alert_armed',
+        label: strongAlertLabel(cfg.strong_alert_gate),
+        pulse: true,
+      })
+    }
   }
 
   // ─── Breakeven moved badge (cross-cutting for archetypes B + C) ──────────
