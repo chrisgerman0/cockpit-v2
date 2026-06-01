@@ -68,11 +68,19 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
   aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '5 lanes / 5× lev' },
 }
 
-function statsPath(tier: Tier): string {
+// 2026-06-01: optional `base` lets the ?preview=1 path point at the 71-cfg
+// staging dir (/data/strategies/phase-h-preview) without touching the live
+// 62-cfg files. Defaults to the live base for all normal traffic.
+const LIVE_DATA_BASE = '/data/strategies/phase-h'
+function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
   // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
-  if (tier === 'conservative') return '/data/strategies/phase-h/portfolio-stats.json'
-  return `/data/strategies/phase-h/tiers/${tier}/portfolio-stats.json`
+  if (tier === 'conservative') return `${base}/portfolio-stats.json`
+  return `${base}/tiers/${tier}/portfolio-stats.json`
+}
+function tradesPath(tier: Tier, base = LIVE_DATA_BASE): string {
+  if (tier === 'conservative') return `${base}/portfolio-trades.json`
+  return `${base}/tiers/${tier}/portfolio-trades.json`
 }
 
 const ASSET_LOGOS: Record<string, string> = {
@@ -117,6 +125,17 @@ export function BacktestingContent() {
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
   const [updatedAgoMins, setUpdatedAgoMins] = useState<number | null>(null)
   const { isAdmin } = useIsAdmin()
+
+  // 2026-06-01 71-cfg cutover PREVIEW: ?preview=1 points the page at the
+  // staging publisher output (/data/strategies/phase-h-preview) so the full
+  // new backtest (metrics, curves, counts, would-be-opens) can be reviewed
+  // before the live 62-cfg files are overwritten. Live traffic (no param) is
+  // byte-identical to before. Removable after promote.
+  const previewMode = useMemo(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1',
+    [],
+  )
+  const dataBase = previewMode ? '/data/strategies/phase-h-preview' : LIVE_DATA_BASE
 
   // Resolve the user's active live tier once on mount. Default the tier picker
   // to that tier so customers see their own performance first, with a "Your
@@ -203,9 +222,18 @@ export function BacktestingContent() {
         // the Backtest page. Live Trading page reads Bitget reality
         // separately and never mixes with this source.
         const [statsResp, pubTrades, shadowFeed] = await Promise.all([
-          fetch(statsPath(tier)),
-          tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
-          fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
+          fetch(statsPath(tier, dataBase)),
+          // PREVIEW: pure published 71-cfg output (public path on the staging
+          // base) — skip the admin endpoint + shadow merge so the page shows
+          // exactly what the publisher produced. LIVE path: unchanged.
+          previewMode
+            ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
+                .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
+                .catch(() => [] as PortfolioTrade[])
+            : tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
+          previewMode
+            ? Promise.resolve({ trades: [] as PortfolioTrade[], lastEventTs: 0 })
+            : fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
         if (cancelled) return
         const shadowTrades = shadowFeed.trades
@@ -299,9 +327,19 @@ export function BacktestingContent() {
 
   return (
     <div className="stax-page">
+      {previewMode && (
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 50, marginBottom: 16,
+          padding: '10px 16px', background: '#7c2d12', color: '#fed7aa',
+          border: '1px solid #ea580c', borderRadius: 8, fontSize: 13,
+          fontWeight: 600, textAlign: 'center', letterSpacing: '0.02em',
+        }}>
+          ⚠ PREVIEW — 71-cfg + Tier-S staging output (NOT live). Pinned 2026-05-29 · flat-notional · pure publisher, no shadow merge.
+        </div>
+      )}
       {/* Header */}
       <div className="bt-header">
-        <div className="bt-eyebrow">SWINGMATE v3 SUPER STACK · 14-ASSET BASKET</div>
+        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 14-ASSET BASKET'}</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
