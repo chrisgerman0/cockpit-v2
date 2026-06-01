@@ -590,9 +590,9 @@ function ExecutionPanel({ active }: { active: boolean }) {
   const px = usePanelData<CompResp>(active, fetcher, 60_000, `${statusFilter}|${assetFilter}`)
   const r = px.data
 
-  // 14-asset Phase H symbols for filter dropdown
+  // 16-asset Phase H symbols for filter dropdown
   const PHASE_H_SYMS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT',
-    'LINKUSDT','SUIUSDT','AVAXUSDT','ADAUSDT','TRXUSDT','ZECUSDT','TONUSDT','HYPEUSDT']
+    'LINKUSDT','SUIUSDT','AVAXUSDT','ADAUSDT','TRXUSDT','ZECUSDT','TONUSDT','HYPEUSDT','NEARUSDT','OPUSDT']
 
   return (
     <div className="stax-page">
@@ -685,13 +685,14 @@ function ExecutionPanel({ active }: { active: boolean }) {
               Consolidated 11 columns → 7 (price + PnL stack live/shadow/Δ
               vertically per column instead of horizontally). */}
           <div style={{ overflowX: 'auto', minWidth: 0, width: '100%' }}>
-            <table className="adm-parity-table" style={{ minWidth: 760 }}>
+            <table className="adm-parity-table" style={{ minWidth: 860 }}>
               <thead>
                 <tr>
                   <th>Status</th>
                   <th>Asset · cfg · TF</th>
                   <th>Entry bar (UTC)</th>
                   <th style={{ textAlign: 'right' }}>Entry px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
+                  <th style={{ textAlign: 'right' }}>Exit px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
                   <th style={{ textAlign: 'right' }}>SL px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
                   <th style={{ textAlign: 'right' }}>PnL<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
                   <th>Reason</th>
@@ -778,6 +779,43 @@ function CompRow({ row }: { row: CompRow }) {
           {epDiffPct != null ? `${epDiffPct >= 0 ? '+' : ''}${epDiffPct.toFixed(3)}%` : '—'}
         </div>
       </td>
+      {/* Exit px — live / shadow / Δ stacked vertically.
+          Closed trades show the fill price each engine recorded; "open"
+          surfaces for still-running positions (same convention as Entry).
+          Δ > 0.1% on the same cfg = exit divergence (slippage, late fill,
+          or one engine exited a bar earlier) — colour matches Entry/SL
+          thresholds for consistency. */}
+      {(() => {
+        const liveXp = row.live?.exit_price ?? null
+        const shadowXp = row.shadow?.exit_price ?? null
+        const xpDiff = (liveXp != null && shadowXp != null) ? liveXp - shadowXp : null
+        const xpDiffPct = (xpDiff != null && shadowXp) ? (xpDiff / shadowXp) * 100 : null
+        const xpColor = xpDiffPct == null ? undefined
+          : Math.abs(xpDiffPct) >= 0.5 ? 'var(--neg)'
+          : Math.abs(xpDiffPct) >= 0.1 ? 'var(--gold)'
+          : 'var(--muted)'
+        return (
+          <td className="num" style={{ textAlign: 'right' }}>
+            <div>
+              {liveXp != null
+                ? fmtCompPx(liveXp)
+                : row.live?.open
+                  ? <span style={{ fontSize: 10, color: 'var(--gold)' }}>open</span>
+                  : <span className="adm-stat-sub">—</span>}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+              {shadowXp != null
+                ? fmtCompPx(shadowXp)
+                : row.shadow?.open
+                  ? <span style={{ color: 'var(--gold)' }}>open</span>
+                  : '—'}
+            </div>
+            <div style={{ fontSize: 10, color: xpColor }}>
+              {xpDiffPct != null ? `${xpDiffPct >= 0 ? '+' : ''}${xpDiffPct.toFixed(3)}%` : '—'}
+            </div>
+          </td>
+        )
+      })()}
       {/* SL px — live / shadow / Δ stacked vertically.
           Comparing live's current SL (set by engine post-entry + updated on
           every trail/breakeven move) against what shadow's identical
@@ -1001,7 +1039,7 @@ function SystemHealthPanel({ active }: { active: boolean }) {
         {!r ? <EmptyBox>Loading…</EmptyBox> : (
           <>
             <div className="row row-stats" style={{ marginBottom: 12 }}>
-              <StatCard label="Total" value={r.cache.total} sub="14 assets × 7 TFs" />
+              <StatCard label="Total" value={r.cache.total} sub="16 assets × 7 TFs" />
               <StatCard label="Stale ≥ 4h" value={r.cache.stale_4h_plus} tone={r.cache.stale_4h_plus > 0 ? 'gold' : 'pos'} />
               <StatCard label="Missing" value={r.cache.missing} tone={r.cache.missing > 0 ? 'neg' : 'pos'} />
             </div>

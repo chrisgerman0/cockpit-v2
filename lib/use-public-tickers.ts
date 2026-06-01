@@ -2,20 +2,23 @@
 
 import { useEffect, useState } from 'react'
 
-// Full Phase H 14-asset basket. BTC/ETH/SOL/XRP/SUI/DOGE/LINK are the original
+// Full Phase H 16-asset basket. BTC/ETH/SOL/XRP/SUI/DOGE/LINK are the original
 // V1 set used by TickerBar + dashboard cards; ADA/AVAX/BNB/HYPE/TON/TRX/ZEC
-// were added so the backtesting page can recompute live PnL on open trades.
+// were added so the backtesting page can recompute live PnL on open trades;
+// NEAR/OP added 2026-06-01 with the assembled 71-cfg B+D system.
 // Symbols that don't trade on Bitget USDT-FUTURES will silently stay at price=0
 // (rest poll returns null; ws subscribe is a no-op).
 const V1_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT',
   'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'TONUSDT', 'TRXUSDT', 'ZECUSDT',
+  'NEARUSDT', 'OPUSDT',
 ] as const
 type V1Symbol = typeof V1_SYMBOLS[number]
 
 export type PublicTickerShort =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
   | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
+  | 'NEAR' | 'OP'
 
 export type PublicTicker = {
   symbol: V1Symbol
@@ -29,6 +32,7 @@ const SHORT: Record<V1Symbol, PublicTicker['short']> = {
   DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
   ADAUSDT:  'ADA',  AVAXUSDT: 'AVAX', BNBUSDT: 'BNB',  HYPEUSDT: 'HYPE',
   TONUSDT:  'TON',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
+  NEARUSDT: 'NEAR', OPUSDT:   'OP',
 }
 
 // ─── Singleton WebSocket store ──────────────────────────────────────────────

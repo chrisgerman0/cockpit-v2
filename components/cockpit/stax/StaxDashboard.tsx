@@ -44,6 +44,7 @@ export type TradeSide = 'LONG' | 'SHORT'
 export type CoinSym =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
   | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
+  | 'NEAR' | 'OP'
 
 export type Position = {
   pair: string
@@ -1165,6 +1166,8 @@ const COIN_ICON_SRC: Record<CoinSym, string> = {
   TON:  '/coin-icons/ton.png',
   TRX:  '/coin-icons/trx.png',
   ZEC:  '/coin-icons/zec.png',
+  NEAR: '/coin-icons/near.png',
+  OP:   '/coin-icons/op.png',
 }
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {

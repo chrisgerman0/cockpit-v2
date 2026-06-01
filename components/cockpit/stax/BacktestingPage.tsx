@@ -99,6 +99,8 @@ const ASSET_LOGOS: Record<string, string> = {
   ZECUSDT:  '/coin-icons/zec.png',
   TONUSDT:  '/coin-icons/ton.png',
   HYPEUSDT: '/coin-icons/hype.png',
+  NEARUSDT: '/coin-icons/near.png',
+  OPUSDT:   '/coin-icons/op.png',
 }
 
 export function BacktestingContent() {
@@ -339,14 +341,14 @@ export function BacktestingContent() {
       )}
       {/* Header */}
       <div className="bt-header">
-        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 14-ASSET BASKET'}</div>
+        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET'}</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (2×/3×/5×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE (14 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (2×/3×/5×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (2×/3×/5×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (2×/3×/5×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -429,7 +431,7 @@ export function BacktestingContent() {
           ) : null}
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
           {' '}{TIER_LABELS[tier].mult} ·
-          {' '}{isPt ? 'Cesta de 14 ativos' : '14-asset basket'} ·
+          {' '}{isPt ? 'Cesta de 16 ativos' : '16-asset basket'} ·
           {' '}{trades.length > 0 ? `${(((trades[trades.length - 1].exitTs - trades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
         </div>
       </div>

@@ -563,7 +563,7 @@ const TIER_RATIOS = {
 } as const
 type TierKey = keyof typeof TIER_RATIOS
 
-// Phase H 14-asset basket (locked 2026-05-20). All tiers trade the same basket.
+// Phase H 16-asset basket (locked 2026-05-20; NEAR+OP added 2026-06-01). All tiers trade the same basket.
 const ALPHA_BASKET = ['ADA','AVAX','BNB','BTC','DOGE','ETH','HYPE','LINK','SOL','SUI','TON','TRX','XRP','ZEC'] as const
 
 // Mode = profit handling. Mutually exclusive: at most one of compound / staxs.
@@ -663,7 +663,7 @@ function BotPanel() {
 // 3× lev / Aggressive 5 lanes × 5× lev. Per-lane notional fixed at $10,000.
 // SL is 4% across all tiers. Bitget leverage cap matches tier leverage.
 
-// Backtest stats per tier — Phase H 14-asset portfolio (BTC, ETH, SOL, BNB,
+// Backtest stats per tier — Phase H 16-asset portfolio (BTC, ETH, SOL, BNB,
 // XRP, LINK, SUI, DOGE, AVAX, ADA, TRX, ZEC, TON, HYPE) over 97 months of
 // Bitget USDT-FUTURES data (post-funding net, FCFS-gated portfolio).
 // Source: msga-replay/swingmate_v3/phase_c_runs/phase_h_cross_asset_portfolio.json
@@ -782,7 +782,7 @@ function BotSettingsWizard({
   const [fetchingBalance, setFetchingBalance] = useState(false)
   const [exchangeConnected, setExchangeConnected] = useState(true)
   const [showProjected, setShowProjected] = useState(false)
-  const [showBasket, setShowBasket] = useState(false)  // collapsible 14-asset list
+  const [showBasket, setShowBasket] = useState(false)  // collapsible 16-asset list
   // Mode is mutually exclusive: fixed (default) / compound / staxs.
   // Initial compound flag maps to legacy compound-mode state.
   const [mode, setMode] = useState<ModeKey>(initialCompound ? 'compound' : 'fixed')
@@ -1226,7 +1226,7 @@ function BotSettingsWizard({
       {step === 4 && (
         <div className="bw-step-body">
           <div className="bw-step-title">12-Month Projection</div>
-          <div className="bw-step-sub">Based on the 14-asset Phase H portfolio backtest (6.8 years post-funding Bitget USDT-FUTURES data). Past performance does not predict future results.</div>
+          <div className="bw-step-sub">Based on the 16-asset Phase H portfolio backtest (6.8 years post-funding Bitget USDT-FUTURES data). Past performance does not predict future results.</div>
 
           <div className="bw-proj-row">
             <ProjStat
