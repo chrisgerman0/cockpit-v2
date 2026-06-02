@@ -244,7 +244,15 @@ export function BacktestingContent() {
             : fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
         if (cancelled) return
-        const shadowTrades = shadowFeed.trades
+        // 2026-06-02: shadow overlay DISABLED here. The shadow daemon is
+        // currently DIVERGED from the backtest — after a flat restart it took an
+        // off-backtest TON (restart-drops-the-book), and its trades.jsonl is
+        // also missing that exit, so the feed is unreliable and was overlaying a
+        // stale TON onto the real backtest book. The "Backtesting" page must show
+        // the BACKTEST (publisher/liveref). Re-enable (restore
+        // `= shadowFeed.trades`) once restart-recovery lands and the shadow is
+        // proven faithful again. shadowFeed.lastEventTs is still used below.
+        const shadowTrades: PortfolioTrade[] = []
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
         // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered
