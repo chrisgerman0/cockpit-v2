@@ -71,7 +71,13 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
 // 2026-06-01: optional `base` lets the ?preview=1 path point at the 71-cfg
 // staging dir (/data/strategies/phase-h-preview) without touching the live
 // 62-cfg files. Defaults to the live base for all normal traffic.
-const LIVE_DATA_BASE = '/data/strategies/phase-h'
+// 2026-06-02: repointed from the PINNED `phase-h` (frozen at the 2026-05-29
+// backtest-end pin → open positions stuck at that date, e.g. NEAR which entered
+// 06-02 never appeared) to the FORWARD `phase-h-liveref` — the unpinned 71-cfg
+// B+D dataset the publisher refreshes hourly. Same logic/basket, just current:
+// the page now shows the strategy's live open book + recent trades. The pin
+// stays on `phase-h` for the internal baseline validation (decoupled).
+const LIVE_DATA_BASE = '/data/strategies/phase-h-liveref'
 function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
   // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
