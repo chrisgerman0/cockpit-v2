@@ -10,7 +10,7 @@
  * porting the 5-step wizard is a separate ~6h job).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Icons } from './Icons'
@@ -20,6 +20,7 @@ import { browserClient } from '@/lib/supabase-browser'
 import { authedFetch } from '@/lib/api'
 import { patchWizardState, useWizardState } from '@/lib/use-wizard-state'
 import { OnboardingTourController, TOUR1_STEPS, TOUR2_STEPS } from './OnboardingTour'
+import { buildCeilingGrid } from '../../../lib/leverage-ceiling'
 
 type TabId = 'profile' | 'billing' | 'bot' | 'notifications' | 'security' | 'tour' | 'payout'
 
@@ -786,6 +787,12 @@ function BotSettingsWizard({
   // Mode is mutually exclusive: fixed (default) / compound / staxs.
   // Initial compound flag maps to legacy compound-mode state.
   const [mode, setMode] = useState<ModeKey>(initialCompound ? 'compound' : 'fixed')
+  // Picker mode (Gap 2 — custom grid): 'tier' = named Conservative/Moderate/
+  // Aggressive cards; 'custom' = the {2,3,4,5} lanes × {25,50,75,100%} grid.
+  // When 'custom', a selected cell {nLanes, basePct} drives activation via the
+  // config.custom carrier; the leverage ceiling greys out unsafe cells.
+  const [pickerMode, setPickerMode] = useState<'tier' | 'custom'>('tier')
+  const [customSel, setCustomSel] = useState<{ nLanes: number; basePct: number } | null>(null)
   // Disclosure checkboxes (Step 5 — all 4 required for activate)
   const [d1, setD1] = useState(false)  // backtest disclaimer
   const [d2, setD2] = useState(false)  // leverage risk
@@ -815,6 +822,26 @@ function BotSettingsWizard({
   const reserveTarget = Math.round(capNum * RESERVE_PCT_BY_TIER[preset])
   const overBalance = maxBalance > 0 && capNum > maxBalance
   const allDisclosuresAck = d1 && d2 && d3 && d4
+
+  // ── Custom grid (Gap 2) effective sizing ──
+  // In custom mode the selected cell {nLanes, basePct} overrides the named
+  // tier's lanes/leverage. Per-lane notional = basePct × capital (the grid's
+  // sizing fraction); nominal leverage = round(nLanes × basePct). When no cell
+  // is selected yet, fall back to the named-tier numbers so Steps 2/4/5 still
+  // render coherently.
+  const isCustom = pickerMode === 'custom'
+  const customReady = isCustom && customSel != null
+  const effLanes = customReady ? customSel!.nLanes : ratios.lanes
+  const effLeverage = customReady ? Math.max(1, Math.round(customSel!.nLanes * customSel!.basePct)) : ratios.leverage
+  // Per-lane notional: custom = basePct × capital; named tier = full capital.
+  const effPerLane = customReady ? Math.round(customSel!.basePct * capNum) : posSize
+  const effMaxNotional = effLanes * effPerLane
+  const effMaxLoss = effPerLane * (ratios.sl / 100)
+  const effLabel = customReady
+    ? `Custom (${customSel!.nLanes}L · ${Math.round(customSel!.basePct * 100)}%)`
+    : ratios.label
+  // Activation gate: in custom mode a cell must be selected first.
+  const selectionReady = !isCustom || customReady
 
   async function fetchBalance() {
     setFetchingBalance(true)
@@ -847,9 +874,16 @@ function BotSettingsWizard({
   async function activateBot() {
     if (activating) return
     if (capNum < 100) { setActivateMsg({ ok: false, text: 'Capital must be at least $100.' }); return }
+    if (isCustom && !customReady) { setActivateMsg({ ok: false, text: 'Select a lanes × sizing cell first.' }); return }
     if (!allDisclosuresAck) { setActivateMsg({ ok: false, text: 'Please acknowledge all disclosures above.' }); return }
     setActivating(true); setActivateMsg(null)
     try {
+      // Custom grid carrier — the engine reads bot_assignments.config.custom =
+      // { n_lanes, base_pct } and falls back to the named tier when absent.
+      // Only sent in custom mode; named-tier path is byte-for-byte unchanged.
+      const customFields = customReady
+        ? { n_lanes: customSel!.nLanes, base_pct: customSel!.basePct }
+        : {}
       await authedFetch('/api/bot-activate', {
         method: 'POST',
         body: JSON.stringify({
@@ -857,20 +891,22 @@ function BotSettingsWizard({
           tier: preset,
           mode,                            // 'fixed' | 'compound' | 'staxs'
           capital_initial: capNum,
-          lanes_active: ratios.lanes,
-          leverage_multiplier: ratios.leverage,
-          per_lane_notional_usd: capNum,
+          lanes_active: effLanes,
+          leverage_multiplier: effLeverage,
+          per_lane_notional_usd: effPerLane,
           compound_enabled: mode === 'compound',
           staxs_enabled: mode === 'staxs',
           compound_cap_usd: mode === 'compound' ? capNum * COMPOUND_CAP_MULTIPLIER : null,
           config_schema_version: 4,
+          // Custom lanes × sizing grid (config.custom carrier). Absent → named tier.
+          ...customFields,
           // Legacy aliases preserved so the older backend code (lib/tier-sizing.ts,
           // /api/execute-signal) continues to read its expected fields until
           // Phase B lands the schema v4 server-side migration.
           preset,
           capital: capNum,
-          leverage: ratios.leverage,
-          notional: posSize,
+          leverage: effLeverage,
+          notional: effPerLane,
           compound: mode === 'compound',
           smart_sizing_enabled: false,
         }),
@@ -878,7 +914,7 @@ function BotSettingsWizard({
       patchWizardState({
         step2_settings_saved: true,
         step3_complete: true,
-        trading_mode: preset,
+        trading_mode: isCustom ? `custom_${effLanes}L_${Math.round((customSel?.basePct ?? 1) * 100)}` : preset,
       })
       setActivateMsg({ ok: true, text: 'Bot activated! Returning to settings…' })
       setTimeout(onSaved, 1200)
@@ -929,6 +965,29 @@ function BotSettingsWizard({
             </div>
           ) : null}
 
+          {/* Picker mode — named tiers vs custom lanes × sizing grid (Gap 2) */}
+          <div className="bw-picker-tabs">
+            <button
+              type="button"
+              className={'bw-picker-tab' + (pickerMode === 'tier' ? ' bw-active' : '')}
+              onClick={() => setPickerMode('tier')}
+            >
+              Preset tiers
+            </button>
+            <button
+              type="button"
+              className={'bw-picker-tab' + (pickerMode === 'custom' ? ' bw-active' : '')}
+              onClick={() => setPickerMode('custom')}
+            >
+              Custom grid
+            </button>
+          </div>
+
+          {pickerMode === 'custom' && (
+            <CustomGrid capitalUsd={capNum} sel={customSel} onSelect={setCustomSel} />
+          )}
+
+          {pickerMode === 'tier' && (
           <div className="bw-tier-grid">
             {(['conservative', 'moderate', 'aggressive'] as const).map(p => {
               const r = TIER_RATIOS[p]
@@ -956,7 +1015,9 @@ function BotSettingsWizard({
               )
             })}
           </div>
+          )}
 
+          {pickerMode === 'tier' && (
           <button
             type="button"
             className="bw-toggle-projected"
@@ -964,7 +1025,8 @@ function BotSettingsWizard({
           >
             {showProjected ? '▲ Hide' : '▼ Show'} Projected Performance
           </button>
-          {showProjected ? (
+          )}
+          {pickerMode === 'tier' && showProjected ? (
             <div className="bw-projected">
               <div className="bw-proj-head">
                 <span>Projected Performance</span>
@@ -1008,7 +1070,7 @@ function BotSettingsWizard({
           ) : null}
 
           <div className="bw-actions" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="bw-btn-primary" onClick={next}>Next →</button>
+            <button type="button" className="bw-btn-primary" onClick={next} disabled={!selectionReady} title={!selectionReady ? 'Select a lanes × sizing cell first' : undefined}>Next →</button>
           </div>
         </div>
       )}
@@ -1046,23 +1108,27 @@ function BotSettingsWizard({
             ) : null}
 
             <div className="bw-position-card">
-              <div className="bw-position-head">Position Parameters · {ratios.label} ({ratios.lanes} lanes / {ratios.leverage}× lev)</div>
+              <div className="bw-position-head">Position Parameters · {effLabel} ({effLanes} lanes / {effLeverage}× lev)</div>
               <div className="bw-position-grid">
-                <ProjStat label="Position Size"    val={`$${posSize.toLocaleString()}`} sub="per lane (notional)" />
-                <ProjStat label="Max Concurrent"   val={`$${maxNotional.toLocaleString()}`} sub={`${ratios.lanes} lane${ratios.lanes > 1 ? 's' : ''} total`} />
+                <ProjStat label="Position Size"    val={`$${effPerLane.toLocaleString()}`} sub="per lane (notional)" />
+                <ProjStat label="Max Concurrent"   val={`$${effMaxNotional.toLocaleString()}`} sub={`${effLanes} lane${effLanes > 1 ? 's' : ''} total`} />
                 <ProjStat label="Stop Loss"        val={`${ratios.sl}%`} sub="per trade" />
-                <ProjStat label="Max Loss / Trade" val={`$${Math.round(maxLoss).toLocaleString()}`} sub="per lane" negative />
+                <ProjStat label="Max Loss / Trade" val={`$${Math.round(effMaxLoss).toLocaleString()}`} sub="per lane" negative />
               </div>
             </div>
 
             <div className="bw-explain">
-              <strong>How it works:</strong> Each lane uses ${capNum.toLocaleString()} notional (matches your starting capital). {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.
+              {isCustom ? (
+                <><strong>How it works:</strong> Each lane uses ${effPerLane.toLocaleString()} notional ({Math.round((customSel?.basePct ?? 0) * 100)}% of your ${capNum.toLocaleString()} capital). {effLanes} lane{effLanes > 1 ? 's' : ''} maximum — at full utilisation that&apos;s ${effMaxNotional.toLocaleString()} of total concurrent exposure ({effLeverage}× nominal leverage). Sub-linear sizing damps real leverage below the nominal figure as your balance grows.</>
+              ) : (
+                <><strong>How it works:</strong> Each lane uses ${capNum.toLocaleString()} notional (matches your starting capital). {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.</>
+              )}
             </div>
           </div>
 
           <div className="bw-actions">
             <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
-            <button type="button" className="bw-btn-primary" onClick={next} disabled={overBalance || capNum < 100}>Next →</button>
+            <button type="button" className="bw-btn-primary" onClick={next} disabled={overBalance || capNum < 100 || !selectionReady}>Next →</button>
           </div>
         </div>
       )}
@@ -1228,6 +1294,24 @@ function BotSettingsWizard({
           <div className="bw-step-title">12-Month Projection</div>
           <div className="bw-step-sub">Based on the 16-asset Phase H portfolio backtest (6.8 years post-funding Bitget USDT-FUTURES data). Past performance does not predict future results.</div>
 
+          {isCustom ? (
+            <>
+              <div className="bw-proj-row">
+                <ProjStat label="Lanes × Sizing" val={`${effLanes}L · ${Math.round((customSel?.basePct ?? 0) * 100)}%`} sub="custom grid selection" big />
+                <ProjStat label="Nominal Leverage" val={`${effLeverage}×`} sub={`${effLanes} lanes × ${Math.round((customSel?.basePct ?? 0) * 100)}% sizing`} big />
+                <ProjStat label="Max Concurrent" val={`$${effMaxNotional.toLocaleString()}`} sub={`${effLanes} lanes × $${effPerLane.toLocaleString()}`} big />
+              </div>
+              <div className="bw-proj-row">
+                <ProjStat label="Risk per Trade" val={`$${Math.round(effMaxLoss).toLocaleString()}`} sub={`${ratios.sl}% × $${effPerLane.toLocaleString()} per lane`} negative />
+                <ProjStat label="Per-Lane Notional" val={`$${effPerLane.toLocaleString()}`} sub="at setup balance" />
+                <ProjStat label="Account Leverage Req." val={`≥ ${effLeverage}×`} sub="set on Bitget BTCUSDT" />
+              </div>
+              <div className="bw-control-card" style={{ marginTop: 14 }}>
+                <strong>Custom combo.</strong> Per-cell backtest projections aren&apos;t shown for custom lanes × sizing — only the preset tiers (Conservative / Moderate / Aggressive) have full validated backtests. Your selection sits at {effLeverage}× nominal leverage (within the stress-validated 5× ceiling). Sub-linear sizing keeps real peak leverage below the nominal figure as the account grows.
+              </div>
+            </>
+          ) : (
+          <>
           <div className="bw-proj-row">
             <ProjStat
               label="Projected Return"
@@ -1298,6 +1382,8 @@ function BotSettingsWizard({
           </div>
 
           <div className="bw-disclaimer">These projections are based on historical backtests. Actual results may vary. Never invest more than you can afford to lose.</div>
+          </>
+          )}
 
           <div className="bw-actions">
             <button type="button" className="bw-btn-back" onClick={back}>← Back</button>
@@ -1325,20 +1411,29 @@ function BotSettingsWizard({
           ) : null}
 
           <div className="bw-review-card">
-            <div className="bw-review-row"><span>Tier</span><span>{ratios.label} ({ratios.lanes} lanes / {ratios.leverage}× leverage)</span></div>
+            <div className="bw-review-row"><span>{isCustom ? 'Configuration' : 'Tier'}</span><span>{effLabel} ({effLanes} lanes / {effLeverage}× leverage)</span></div>
             <div className="bw-review-row"><span>Starting Capital</span><span className="num">${capNum.toLocaleString()}</span></div>
-            <div className="bw-review-row"><span>Position Size</span><span className="num">${posSize.toLocaleString()} per lane</span></div>
-            <div className="bw-review-row"><span>Max Concurrent</span><span className="num">{ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} = ${maxNotional.toLocaleString()} notional</span></div>
+            <div className="bw-review-row"><span>Position Size</span><span className="num">${effPerLane.toLocaleString()} per lane</span></div>
+            <div className="bw-review-row"><span>Max Concurrent</span><span className="num">{effLanes} lane{effLanes > 1 ? 's' : ''} = ${effMaxNotional.toLocaleString()} notional</span></div>
             <div className="bw-review-row"><span>Stop Loss</span><span className="num">{ratios.sl}% per position</span></div>
-            <div className="bw-review-row"><span>Max Loss / Trade</span><span className="num neg-text">-${Math.round(maxLoss).toLocaleString()} per lane</span></div>
-            <div className="bw-review-row"><span>Bitget Leverage</span><span className="num">{ratios.leverage}× (tier-matched)</span></div>
+            <div className="bw-review-row"><span>Max Loss / Trade</span><span className="num neg-text">-${Math.round(effMaxLoss).toLocaleString()} per lane</span></div>
+            <div className="bw-review-row"><span>Bitget Leverage</span><span className="num">{effLeverage}× {isCustom ? '(nominal)' : '(tier-matched)'}</span></div>
             <div className="bw-review-row"><span>Mode</span><span>{mode === 'fixed' ? 'Fixed Notional (default)' : mode === 'compound' ? `Compound (cap $${(capNum * COMPOUND_CAP_MULTIPLIER).toLocaleString()})` : 'Staxs — Satoshi Stacking'}</span></div>
             <div className="bw-review-row"><span>Fee Structure</span><span>20% of monthly net profit</span></div>
-            <div className="bw-review-row" style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 8 }}>
-              <span>Projected Return (12-month avg)</span>
-              <span className="num pos-text">+${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}</span>
-            </div>
-            <div className="bw-review-row"><span>Expected Max DD</span><span className="num neg-text">~-{bt.accountDdPct}% on account</span></div>
+            {!isCustom ? (
+              <>
+                <div className="bw-review-row" style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 8 }}>
+                  <span>Projected Return (12-month avg)</span>
+                  <span className="num pos-text">+${Math.round(capNum * (bt.annualPct / 100)).toLocaleString()}</span>
+                </div>
+                <div className="bw-review-row"><span>Expected Max DD</span><span className="num neg-text">~-{bt.accountDdPct}% on account</span></div>
+              </>
+            ) : (
+              <div className="bw-review-row" style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 8 }}>
+                <span>Nominal Leverage</span>
+                <span className="num">{effLeverage}× (within 5× safe ceiling)</span>
+              </div>
+            )}
             <div className="bw-review-row"><span>Exchange</span><span>Bitget USDT-M Futures</span></div>
             <div className="bw-review-row"><span>API Status</span><span className="pos-text">✓ Trading enabled · ✓ Withdrawal disabled</span></div>
           </div>
@@ -1378,6 +1473,78 @@ function BotSettingsWizard({
           <button type="button" className="bw-btn-back-wide" onClick={back}>← Back to Review Projection</button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Custom lanes × sizing grid (Gap 2) ──────────────────────────────────────
+// Rows = lanes {2,3,4,5}, columns = sizing {25,50,75,100%}. buildCeilingGrid
+// runs the SAME pure validator the server enforces in /api/bot-activate, so the
+// greyed-out (unsafe) cells here exactly mirror the server-side rejections.
+// Safe cells show nominal leverage + per-lane $ and are clickable; unsafe cells
+// are disabled with the rejection reason on hover (title attr).
+function CustomGrid({
+  capitalUsd, sel, onSelect,
+}: {
+  capitalUsd: number
+  sel: { nLanes: number; basePct: number } | null
+  onSelect: (s: { nLanes: number; basePct: number }) => void
+}) {
+  // accountLeverage = 0 → skip the per-account cap here; the 5× safe ceiling
+  // still applies, and /api/bot-activate runs the Bitget pre-flight separately.
+  const grid = buildCeilingGrid(capitalUsd || 0, 0)
+  const pctCols = [0.25, 0.5, 0.75, 1.0]
+  return (
+    <div className="bw-cg-wrap">
+      <div className="bw-cg-legend">
+        <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-safe" /> Available</span>
+        <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-unsafe" /> Exceeds 5× ceiling</span>
+        <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-on" /> Selected</span>
+      </div>
+      <div className="bw-cg-grid" style={{ gridTemplateColumns: `auto repeat(${pctCols.length}, 1fr)` }}>
+        {/* Header row */}
+        <div className="bw-cg-corner">Lanes \ Sizing</div>
+        {pctCols.map(p => (
+          <div key={`h-${p}`} className="bw-cg-colhead">{Math.round(p * 100)}%</div>
+        ))}
+        {/* Body rows */}
+        {grid.map(row => (
+          <Fragment key={`r-${row.nLanes}`}>
+            <div className="bw-cg-rowhead">{row.nLanes} lanes</div>
+            {row.cells.map(cell => {
+              const selected = sel != null && sel.nLanes === row.nLanes && Math.abs(sel.basePct - cell.basePct) < 1e-9
+              const cls = 'bw-cg-cell'
+                + (cell.safe ? ' bw-cg-safe' : ' bw-cg-unsafe')
+                + (selected ? ' bw-cg-on' : '')
+              return (
+                <button
+                  key={`c-${row.nLanes}-${cell.basePct}`}
+                  type="button"
+                  className={cls}
+                  disabled={!cell.safe}
+                  aria-pressed={selected}
+                  title={cell.message}
+                  onClick={() => cell.safe && onSelect({ nLanes: row.nLanes, basePct: cell.basePct })}
+                >
+                  {cell.safe ? (
+                    <>
+                      <span className="bw-cg-lev">{cell.nominalLeverage.toFixed(1)}×</span>
+                      <span className="bw-cg-notional">${Math.round(cell.perLaneNotionalUsd).toLocaleString()}/lane</span>
+                    </>
+                  ) : (
+                    <span className="bw-cg-x">✕</span>
+                  )}
+                </button>
+              )
+            })}
+          </Fragment>
+        ))}
+      </div>
+      <div className="bw-cg-help">
+        Each cell = how many concurrent lanes × what fraction of your capital each lane bets.
+        Nominal leverage = lanes × sizing; combos above the stress-validated 5× ceiling are disabled.
+        Per-lane $ assumes your current capital (capped at ${(25000).toLocaleString()}/lane).
+      </div>
     </div>
   )
 }

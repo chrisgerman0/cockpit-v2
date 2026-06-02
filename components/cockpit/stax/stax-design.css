@@ -2409,6 +2409,84 @@ html.light .stax-app .bw-pip { background: rgba(0,0,0,0.02); }
 html.light .stax-app .bw-toggle-projected { background: rgba(0,0,0,0.025); }
 .stax-app .bw-toggle-projected:hover { color: var(--text); }
 
+/* ── Picker mode tabs (preset tiers vs custom grid) — Gap 2 ── */
+.stax-app .bw-picker-tabs {
+  display: inline-flex; gap: 4px;
+  padding: 4px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  margin: 0 auto 4px;
+}
+.stax-app.light .bw-picker-tabs,
+html.light .stax-app .bw-picker-tabs { background: rgba(0,0,0,0.025); }
+.stax-app .bw-picker-tab {
+  padding: 7px 18px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--muted);
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.stax-app .bw-picker-tab:hover { color: var(--text); }
+.stax-app .bw-picker-tab.bw-active { background: var(--gold); color: #0b0b0f; }
+
+/* ── Custom lanes × sizing grid — Gap 2 ── */
+.stax-app .bw-cg-wrap {
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: 600px; margin: 0 auto;
+  width: 100%;
+}
+.stax-app .bw-cg-legend {
+  display: flex; flex-wrap: wrap; gap: 14px; justify-content: center;
+  font-size: 11px; color: var(--muted);
+}
+.stax-app .bw-cg-legend-row { display: inline-flex; align-items: center; gap: 5px; }
+.stax-app .bw-cg-swatch {
+  width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  border: 1px solid var(--line);
+}
+.stax-app .bw-cg-swatch.bw-cg-safe { background: rgba(212,160,23,0.10); border-color: rgba(212,160,23,0.35); }
+.stax-app .bw-cg-swatch.bw-cg-unsafe { background: rgba(255,77,79,0.06); border-color: rgba(255,77,79,0.28); }
+.stax-app .bw-cg-swatch.bw-cg-on { background: var(--gold); border-color: var(--gold); }
+.stax-app .bw-cg-grid {
+  display: grid; gap: 6px; width: 100%;
+}
+.stax-app .bw-cg-corner {
+  font-size: 10.5px; font-weight: 600; color: var(--muted);
+  display: flex; align-items: center; justify-content: flex-start;
+  padding: 4px 6px;
+}
+.stax-app .bw-cg-colhead {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  text-align: center; padding: 4px 0;
+}
+.stax-app .bw-cg-rowhead {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; padding: 0 6px;
+  white-space: nowrap;
+}
+.stax-app .bw-cg-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; min-height: 52px; padding: 6px 4px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: transparent; color: var(--text);
+  cursor: pointer; text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.18s cubic-bezier(0.2,0.8,0.2,1);
+}
+.stax-app .bw-cg-cell.bw-cg-safe { background: rgba(212,160,23,0.05); border-color: rgba(212,160,23,0.28); }
+.stax-app .bw-cg-cell.bw-cg-safe:hover { border-color: rgba(212,160,23,0.6); transform: translateY(-1px); }
+.stax-app .bw-cg-cell.bw-cg-unsafe {
+  background: rgba(255,77,79,0.05); border-color: rgba(255,77,79,0.22);
+  color: var(--muted); cursor: not-allowed; opacity: 0.55;
+}
+.stax-app .bw-cg-cell.bw-cg-on {
+  border: 2px solid var(--gold); background: rgba(212,160,23,0.14);
+}
+.stax-app .bw-cg-lev { font-size: 14px; font-weight: 700; color: var(--text); }
+.stax-app .bw-cg-cell.bw-cg-on .bw-cg-lev { color: var(--gold); }
+.stax-app .bw-cg-notional { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.stax-app .bw-cg-x { font-size: 15px; color: var(--neg, #ff4d4f); opacity: 0.7; }
+.stax-app .bw-cg-help {
+  font-size: 11px; color: var(--muted); line-height: 1.5; text-align: center;
+}
+
 .stax-app .bw-projected {
   display: flex; flex-direction: column; gap: 10px;
   max-width: 600px; margin: 0 auto;
