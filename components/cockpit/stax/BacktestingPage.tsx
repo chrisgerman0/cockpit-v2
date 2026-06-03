@@ -244,15 +244,26 @@ export function BacktestingContent() {
             : fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
         if (cancelled) return
-        // 2026-06-02: shadow overlay DISABLED here. The shadow daemon is
-        // currently DIVERGED from the backtest — after a flat restart it took an
-        // off-backtest TON (restart-drops-the-book), and its trades.jsonl is
-        // also missing that exit, so the feed is unreliable and was overlaying a
-        // stale TON onto the real backtest book. The "Backtesting" page must show
-        // the BACKTEST (publisher/liveref). Re-enable (restore
-        // `= shadowFeed.trades`) once restart-recovery lands and the shadow is
-        // proven faithful again. shadowFeed.lastEventTs is still used below.
-        const shadowTrades: PortfolioTrade[] = []
+        // 2026-06-03: shadow overlay RE-ENABLED — faithful restore of the
+        // working 62-cfg behaviour (git 698cd39 line 211: `= shadowFeed.trades`).
+        // The precondition the 2026-06-02 disable named — "restart-recovery lands
+        // and the shadow is proven faithful again" — is now met for EXITS: the
+        // twin fixes (entry-bar guard, reprieve removal, mfe) shipped (d3291308)
+        // and live+shadow now match on entry AND trail-exit (TON 2026-06-03:
+        // live exit 1.8959 vs shadow 1.8955, both TRAIL_INTRA_BAR). The shadow
+        // bridges the publisher's intra-hour gap so a recent trade surfaces
+        // before the next publisher run.
+        //
+        // ⚠ KNOWN LANDMINE (mergePublisherAndShadow line ~374): the OPEN-merge
+        // does `opens = shdOpens.length > 0 ? shdOpens : pubOpens` — it REPLACES
+        // all publisher (backtest) opens with shadow's whenever shadow has any.
+        // Safe only while shadow's OPEN BOOK == the backtest's. It currently
+        // DIVERGES (shadow holds OP only; backtest holds OP/AVAX/DOGE), so it is
+        // safe ONLY because the shadow feed has 0 opens right now (→ falls back
+        // to pubOpens). The next time the shadow feed carries a divergent open it
+        // will hide backtest opens. Harden to a lane-cap-aware reconciliation
+        // before the shadow open-book is relied on. Tracked 2026-06-03.
+        const shadowTrades = shadowFeed.trades
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
         // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered
