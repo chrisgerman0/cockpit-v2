@@ -370,8 +370,36 @@ export function mergePublisherAndShadow(
   const pubClosed = publisher.filter(t => !isOpen(t))
   const shdOpens = shadowFiltered.filter(isOpen)
   const shdClosed = shadowFiltered.filter(t => !isOpen(t))
-  // Opens: shadow is source-of-truth when it has any (same-tier) opens
-  const opens = shdOpens.length > 0 ? shdOpens : pubOpens
+  // Opens: UNION BY ASSET (2026-06-03 hardening). Replaces the old
+  // wholesale-replace `shdOpens.length > 0 ? shdOpens : pubOpens`, which HID
+  // every backtest open whenever the shadow held ANY open — safe only while the
+  // shadow's open book equalled the backtest's, and a live trap the moment the
+  // shadow diverged (the 2026-06-02 disable bug). Rules:
+  //   1. Publisher (backtest) is the open-book truth and is NEVER hidden — every
+  //      publisher open survives (as itself, or as the shadow's fresher row for
+  //      the same asset).
+  //   2. For an asset BOTH hold → use the shadow's row (fresher: it processes
+  //      intra-hour exits / trail updates before the next publisher run).
+  //   3. A shadow-ONLY asset (one the backtest doesn't currently hold) is ADDED
+  //      as bridge data, newest-first, but ONLY while under the tier lane cap —
+  //      so the union can never exceed n_lanes or double-count an asset. This is
+  //      the lane-cap invariant the original wholesale-replace was protecting,
+  //      now preserved WITHOUT hiding any backtest open.
+  const TIER_LANES: Record<string, number> = { conservative: 2, moderate: 3, aggressive: 5 }
+  const laneCap = viewedTier ? (TIER_LANES[viewedTier] ?? Infinity) : Infinity
+  const shdOpenBySymbol = new Map<string, PortfolioTrade>()
+  for (const t of shdOpens) shdOpenBySymbol.set(t.symbol, t)
+  // Start from publisher opens; swap in the shadow's row where it covers the same
+  // asset (single-lane-per-asset → at most one open per symbol on each side).
+  const opens: PortfolioTrade[] = pubOpens.map(t => shdOpenBySymbol.get(t.symbol) ?? t)
+  const pubOpenSymbols = new Set(pubOpens.map(t => t.symbol))
+  const shadowOnlyOpens = shdOpens
+    .filter(t => !pubOpenSymbols.has(t.symbol))
+    .sort((a, b) => (b.entryTs || 0) - (a.entryTs || 0))
+  for (const t of shadowOnlyOpens) {
+    if (opens.length >= laneCap) break
+    opens.push(t)
+  }
   // Closed: dedup by tradeKey — shadow wins for any (cfg|symbol, day) it covers
   const shadowClosedKeys = new Set<string>()
   for (const t of shdClosed) shadowClosedKeys.add(tradeKey(t))
