@@ -77,7 +77,15 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
 // B+D dataset the publisher refreshes hourly. Same logic/basket, just current:
 // the page now shows the strategy's live open book + recent trades. The pin
 // stays on `phase-h` for the internal baseline validation (decoupled).
-const LIVE_DATA_BASE = '/data/strategies/phase-h-liveref'
+// 2026-06-04: repointed to `phase-h-risk` — the locked RISK-SIZED verified-
+// performance dataset (constant-$-risk by SL distance, the live sizing model;
+// risk_sizing_canonical.py). COMPOUND stays OFF (each trade sized at constant-$
+// -risk off INITIAL, no equity scaling). Risk notionals are ≤$25k = ≤5×tier base,
+// so normalizeTrade passes them through unflattened → the page shows the
+// risk-sized pnls directly. The two axes stay independent: risk-sizing ON
+// (display), compound OFF (display). Numbers: PF 1.97/2.13/2.10, maxDD ~-10%,
+// Calmar 5.0/6.1/7.1 (cons/mod/aggr) — corrected exit-order maxDD.
+const LIVE_DATA_BASE = '/data/strategies/phase-h-risk'
 function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
   // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
