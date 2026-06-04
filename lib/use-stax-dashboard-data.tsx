@@ -56,9 +56,14 @@ type BotConfigResp = {
 
 function symToCoin(sym: string): CoinSym {
   const s = sym.replace('USDT', '') as CoinSym
+  // Full assembled 16-asset basket. NEAR + OP added 2026-06-04 — they were
+  // missing here, so symToCoin('NEARUSDT') fell through to the 'BTC' fallback
+  // and the NEAR open position rendered the BTC icon. Keep in lock step with
+  // CoinSym (StaxDashboard.tsx) + COIN_ICON_SRC + the publisher's ASSETS list.
   const KNOWN: ReadonlyArray<CoinSym> = [
     'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
     'ADA', 'AVAX', 'BNB', 'HYPE', 'TON', 'TRX', 'ZEC',
+    'NEAR', 'OP',
   ]
   return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
 }
