@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, isEodMarker, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, isEodMarker, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
@@ -180,6 +180,13 @@ export function BacktestingContent() {
     prewarmAllTiers()
   }, [])
 
+  // 2026-06-04 TWO-STORE consumer: immutable closed-trade backbone, held per
+  // tier. The 60s poll reads ONLY the forward open book + shadow; this frozen
+  // closed history is never re-fetched on poll (so the headline metrics can't
+  // twitch). It refreshes only on tier switch + tab-focus (to absorb the
+  // publisher's hourly appends), never on the churning interval.
+  const closedBackboneRef = useRef<Partial<Record<Tier, PortfolioTrade[]>>>({})
+
   useEffect(() => {
     let cancelled = false
     // 2026-05-24 Issue A flicker fix: only show the loading skeleton on the
@@ -194,87 +201,92 @@ export function BacktestingContent() {
     // Aggressive switches feel instant — old data stays visible, new data
     // swaps in within milliseconds because no network round-trip is needed.
     let firstLoad = true
-    async function load() {
-      if (firstLoad && !isTierCached(tier)) setLoading(true)
+    async function load(refetchClosed = false) {
+      // Skeleton only on a genuinely cold tier — neither the legacy cache nor
+      // the immutable closed backbone holds it yet. Revisiting a tier in-session
+      // keeps its data visible (no blank flash).
+      if (firstLoad && !isTierCached(tier) && !closedBackboneRef.current[tier]) setLoading(true)
       // Admins fetch the gated /api/admin/portfolio-trades endpoint which
       // returns trades enriched with cfg_sid + raw displayReason. Customers
       // fetch the public path which has those stripped server-side.
-      //
-      // If the admin probe is still loading we wait — falling through to the
-      // public path here would mean an admin briefly sees the scrubbed view
-      // on tier switch.
       const wantAdmin = isAdmin === true
       const adminToken = wantAdmin ? await getAccessToken().catch(() => null) : null
+      // TWO-STORE applies to the customer path only. Admin keeps cfg_sid on
+      // every row (its closed source carries provenance the public immutable
+      // store strips); preview shows raw publisher output. Both retain the
+      // single-forward-source behavior unchanged.
+      const useTwoStore = !wantAdmin && !previewMode
       const tradesFetcher = wantAdmin && adminToken
         ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
         : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
-      // Fix #2 (2026-05-23): de-dupe the includeOpen double-fetch. The page
-      // needs two views of the same trade ledger: closed-only (for metric
-      // computation) and raw (closed + open eod markers, for the trade list).
-      // Previously these were two parallel calls — both raced past the
-      // module-scope cache before either populated it, causing the same
-      // ~1 MB file to download twice on the first switch to any tier. Now
-      // we fetch the raw set once and partition client-side via isEodMarker.
-      //
-      // Fix #5 (2026-05-23): consolidate the freshness probe. Previously a
-      // separate HEAD request was issued after the main GET to read the
-      // Last-Modified header. Browsers expose the same header on the GET
-      // response, so we grab it from the existing response and drop the
-      // extra roundtrip entirely.
+
+      // CLOSED BACKBONE (two-store): the immutable append-only store, held per
+      // tier and frozen across polls. Fetched once on first visit to a tier;
+      // refreshed only when refetchClosed (tier switch / tab-focus) so it
+      // absorbs the publisher's hourly appends without ever re-deriving the
+      // existing history. This is the flicker fix — the headline metrics derive
+      // from THIS array, whose reference is stable between polls, so they can't
+      // twitch. Falls back to null → forward-closed if the store is absent.
+      let immutableClosed: PortfolioTrade[] | null = null
+      if (useTwoStore) {
+        immutableClosed = closedBackboneRef.current[tier] ?? null
+        if (!immutableClosed || refetchClosed) {
+          const fetched = await fetchClosedTrades(tier, dataBase).catch(() => null)
+          if (fetched && fetched.length) {
+            immutableClosed = fetched
+            closedBackboneRef.current[tier] = fetched
+          }
+        }
+      }
+
       try {
-        // 2026-05-24: Backtest page = clean shadow simulation (locked
-        // architecture). Publisher provides the historical baseline (hourly
-        // cron-rebuilt) and the shadow daemon's trades.jsonl is read directly
-        // for the gap between publisher's last run and now. Shadow is
-        // synthetic (bar-close prices, never Bitget) — that's correct for
-        // the Backtest page. Live Trading page reads Bitget reality
-        // separately and never mixes with this source.
-        const [statsResp, pubTrades, shadowFeed] = await Promise.all([
+        // Forward layer = the ONLY polling source. Two-store: open positions
+        // only (the live book — closed history is owned by the immutable store
+        // above). Admin/preview: the full forward set (closed + opens).
+        const [statsResp, fwdTrades, shadowFeed] = await Promise.all([
           fetch(statsPath(tier, dataBase), { cache: 'no-store' }),
-          // PREVIEW: pure published 71-cfg output (public path on the staging
-          // base) — skip the admin endpoint + shadow merge so the page shows
-          // exactly what the publisher produced. LIVE path: unchanged.
-          previewMode
-            ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
-                .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
-                .catch(() => [] as PortfolioTrade[])
-            : tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
+          useTwoStore
+            ? fetchForwardOpens(tier, dataBase).catch(() => [] as PortfolioTrade[])
+            : previewMode
+              ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
+                  .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
+                  .catch(() => [] as PortfolioTrade[])
+              : tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
           previewMode
             ? Promise.resolve({ trades: [] as PortfolioTrade[], lastEventTs: 0 })
             : fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
         if (cancelled) return
-        // 2026-06-03: shadow overlay RE-ENABLED — faithful restore of the
-        // working 62-cfg behaviour (git 698cd39 line 211: `= shadowFeed.trades`).
-        // The precondition the 2026-06-02 disable named — "restart-recovery lands
-        // and the shadow is proven faithful again" — is now met for EXITS: the
-        // twin fixes (entry-bar guard, reprieve removal, mfe) shipped (d3291308)
-        // and live+shadow now match on entry AND trail-exit (TON 2026-06-03:
-        // live exit 1.8959 vs shadow 1.8955, both TRAIL_INTRA_BAR). The shadow
-        // bridges the publisher's intra-hour gap so a recent trade surfaces
-        // before the next publisher run.
-        //
-        // ⚠ KNOWN LANDMINE (mergePublisherAndShadow line ~374): the OPEN-merge
-        // does `opens = shdOpens.length > 0 ? shdOpens : pubOpens` — it REPLACES
-        // all publisher (backtest) opens with shadow's whenever shadow has any.
-        // Safe only while shadow's OPEN BOOK == the backtest's. It currently
-        // DIVERGES (shadow holds OP only; backtest holds OP/AVAX/DOGE), so it is
-        // safe ONLY because the shadow feed has 0 opens right now (→ falls back
-        // to pubOpens). The next time the shadow feed carries a divergent open it
-        // will hide backtest opens. Harden to a lane-cap-aware reconciliation
-        // before the shadow open-book is relied on. Tracked 2026-06-03.
         const shadowTrades = shadowFeed.trades
         const statsRes = statsResp.ok ? await statsResp.json() : null
         setStats(statsRes || null)
-        // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered
-        // by tier match before merging. Without this, shadow's moderate
-        // tier trades would bleed into Conservative + Aggressive views.
+
+        // Assemble the publisher-side trade set + the metrics-closed set:
+        //   • two-store: immutable closed backbone + forward opens. Metrics
+        //     come from the frozen backbone (immutableClosed) so the headline
+        //     cards are spot-on and never twitch on the 60s poll.
+        //   • admin/preview (or two-store fallback when the immutable store is
+        //     missing): the single forward set, closed via isEodMarker — the
+        //     prior behavior, unchanged.
+        let pubTrades: PortfolioTrade[]
+        let metricsClosed: PortfolioTrade[]
+        if (useTwoStore && immutableClosed && immutableClosed.length) {
+          pubTrades = [...immutableClosed, ...(fwdTrades as PortfolioTrade[])]
+          metricsClosed = immutableClosed
+        } else {
+          const fwdAll = fwdTrades as PortfolioTrade[]
+          pubTrades = fwdAll
+          metricsClosed = fwdAll.filter(t => !isEodMarker(t))
+        }
+        // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered by
+        // tier match before merging (no cross-tier bleed). Shadow bridges the
+        // sub-hour gap between publisher runs; for two-store it supplies the
+        // open book + just-closed gap trades shown in the LIST (not the frozen
+        // metrics).
         const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades, tier)
         setAllTrades(rawTrades)
-        // closed-only = raw minus eod markers. Same filter the fetch layer
-        // applies when includeOpen=false, but applied here so we only pay
-        // for one network/disk hit per tier switch.
-        setTrades(rawTrades.filter(t => !isEodMarker(t)))
+        // METRICS source — frozen immutable closed (two-store) → no flicker.
+        setTrades(metricsClosed)
 
         // Freshness pill: prefer the shadow timestamp when shadow has fresher
         // data than the publisher static file. The publisher's Last-Modified
@@ -300,18 +312,20 @@ export function BacktestingContent() {
         firstLoad = false
       }
     }
-    load()
-    // 60s poll for shadow refreshes — matches Live Mirror cadence + the
-    // shadow endpoint's 30s server cache so we hit it shortly after each
-    // cache turnover. Publisher rerun is hourly; nothing to gain from
-    // faster polling of statsResp.
-    const id = window.setInterval(load, 60_000)
+    load(true)   // initial: fetch the immutable closed backbone for this tier
+    // 60s poll: forward open book + shadow ONLY. refetchClosed=false → the
+    // immutable closed backbone is NOT re-fetched and its array reference is
+    // reused, so the headline metrics derived from it cannot twitch. This is
+    // the polling layer; only the live opens move.
+    const id = window.setInterval(() => load(false), 60_000)
     // 2026-06-04 freshness fix: browsers THROTTLE/PAUSE setInterval in a
     // backgrounded tab, so the 60s poll stalls and the page shows a stale
     // snapshot until a manual reload (the reported bug). Re-fetch the moment
     // the tab regains visibility/focus → the page is current when the user
-    // looks at it, no manual refresh, no flicker (load() updates in place).
-    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    // looks at it. refetchClosed=true here so a returning user also absorbs any
+    // publisher appends to the closed history (still no flicker — the immutable
+    // store only grows; existing rows are byte-identical).
+    const onVisible = () => { if (document.visibilityState === 'visible') load(true) }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('focus', onVisible)
     return () => {

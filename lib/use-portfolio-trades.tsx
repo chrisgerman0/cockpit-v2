@@ -199,6 +199,94 @@ export function isTierCached(tier: Tier): boolean {
   return !!cached && (Date.now() - cached.fetchedAt < CACHE_MS)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// TWO-STORE consumer (2026-06-04). The customer Backtest page reads from two
+// physically separate stores instead of one churning file:
+//
+//   • CLOSED history  → closed-trades.json  — an APPEND-ONLY, write-once
+//     immutable store the publisher maintains (first-published value of each
+//     trade is frozen forever). Fetched ~once; never re-derived. This is what
+//     kills the flicker: the publisher's hourly full-replay used to rewrite
+//     portfolio-trades.json end-to-end, so every poll re-downloaded subtly
+//     different historical numbers (trade count 3102→3113, tiny pnl deltas) →
+//     the headline metrics + closed rows twitched. The immutable store can
+//     only GROW (new closes append); existing rows are byte-identical across
+//     refreshes, so metrics derived from it are permanently spot-on.
+//
+//   • OPEN positions  → portfolio-trades.json (forward store) — the live open
+//     book, which legitimately churns (NEAR enters, OP trails, TRX exits).
+//     This is the ONLY polling layer.
+//
+// Shadow bridges the sub-hour gap between publisher runs (merged in the page).
+const LIVEREF_BASE = '/data/strategies/phase-h-liveref'
+
+/** Open-position row: eod mark-to-market placeholders + explicit 'open'. */
+export function isOpenRow(t: PortfolioTrade): boolean {
+  return isEodMarker(t) || t.reason === 'open'
+}
+
+function closedPathForTier(tier: Tier, base: string): string {
+  if (tier === 'conservative') return `${base}/closed-trades.json`
+  return `${base}/tiers/${tier}/closed-trades.json`
+}
+function forwardPathForTier(tier: Tier, base: string): string {
+  if (tier === 'conservative') return `${base}/portfolio-trades.json`
+  return `${base}/tiers/${tier}/portfolio-trades.json`
+}
+
+// Closed-store cache keyed by `${tier}|${base}`. 10-min TTL mirrors the public
+// trade cache — but because the store is immutable, a stale read is never
+// WRONG (at most it lacks the last <10min of appends, which the shadow feed
+// surfaces anyway). The page additionally ref-caches per tier so the 60s poll
+// never re-fetches it (true fetch-once semantics → metrics can't twitch).
+const closedCache = new Map<string, { fetchedAt: number; raw: PortfolioTrade[] }>()
+
+/**
+ * Fetch the IMMUTABLE closed-trade history for a tier from the append-only
+ * store. Returns closed trades only (the store excludes open markers by
+ * construction). Normalized identically to fetchPortfolioTrades so derived
+ * metrics match. Throws on fetch failure — caller falls back to the forward
+ * store's closed subset so the page never goes blank if the file is absent.
+ */
+export async function fetchClosedTrades(tier: Tier, base: string = LIVEREF_BASE): Promise<PortfolioTrade[]> {
+  const key = `${tier}|${base}`
+  const cached = closedCache.get(key)
+  if (cached && Date.now() - cached.fetchedAt < CACHE_MS) return cached.raw
+  const res = await fetch(closedPathForTier(tier, base), { cache: 'no-store' })
+  if (!res.ok) throw new Error(`closed-trades fetch failed: ${res.status}`)
+  const fetched: PortfolioTrade[] = await res.json()
+  const raw = fetched.map(t => normalizeTrade(t, tier))
+  closedCache.set(key, { fetchedAt: Date.now(), raw })
+  return raw
+}
+
+// Forward-store opens cache — short TTL so the 60s poll always reflects the
+// live open book. Closed rows in the forward file are intentionally ignored
+// here (the immutable store owns closed history).
+const forwardOpensCache = new Map<string, { fetchedAt: number; raw: PortfolioTrade[] }>()
+const FORWARD_OPENS_CACHE_MS = 30_000
+
+/**
+ * Fetch ONLY the open positions from the forward portfolio-trades.json store.
+ * The closed history is served separately by fetchClosedTrades (immutable).
+ * Short-cached so it stays current on each poll.
+ */
+export async function fetchForwardOpens(tier: Tier, base: string = LIVEREF_BASE): Promise<PortfolioTrade[]> {
+  const key = `${tier}|${base}`
+  const cached = forwardOpensCache.get(key)
+  let raw: PortfolioTrade[]
+  if (cached && Date.now() - cached.fetchedAt < FORWARD_OPENS_CACHE_MS) {
+    raw = cached.raw
+  } else {
+    const res = await fetch(forwardPathForTier(tier, base), { cache: 'no-store' })
+    if (!res.ok) throw new Error(`forward-trades fetch failed: ${res.status}`)
+    const fetched: PortfolioTrade[] = await res.json()
+    raw = fetched.map(t => normalizeTrade(t, tier))
+    forwardOpensCache.set(key, { fetchedAt: Date.now(), raw })
+  }
+  return raw.filter(isOpenRow)
+}
+
 /**
  * Admin variant: fetches the full trade list (with cfg_sid, raw
  * displayReason) from /api/admin/portfolio-trades. Requires a Bearer token
