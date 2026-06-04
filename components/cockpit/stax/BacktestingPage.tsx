@@ -230,7 +230,7 @@ export function BacktestingContent() {
         // the Backtest page. Live Trading page reads Bitget reality
         // separately and never mixes with this source.
         const [statsResp, pubTrades, shadowFeed] = await Promise.all([
-          fetch(statsPath(tier, dataBase)),
+          fetch(statsPath(tier, dataBase), { cache: 'no-store' }),
           // PREVIEW: pure published 71-cfg output (public path on the staging
           // base) — skip the admin endpoint + shadow merge so the page shows
           // exactly what the publisher produced. LIVE path: unchanged.
@@ -306,7 +306,20 @@ export function BacktestingContent() {
     // cache turnover. Publisher rerun is hourly; nothing to gain from
     // faster polling of statsResp.
     const id = window.setInterval(load, 60_000)
-    return () => { cancelled = true; window.clearInterval(id) }
+    // 2026-06-04 freshness fix: browsers THROTTLE/PAUSE setInterval in a
+    // backgrounded tab, so the 60s poll stalls and the page shows a stale
+    // snapshot until a manual reload (the reported bug). Re-fetch the moment
+    // the tab regains visibility/focus → the page is current when the user
+    // looks at it, no manual refresh, no flicker (load() updates in place).
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [tier, isAdmin])
 
   const isPt = getCurrentLang() === 'PT'
