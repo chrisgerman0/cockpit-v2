@@ -203,7 +203,13 @@ export function computeProgressBarState(args: {
   // Phase activates when price is moving toward SL (not yet favorable, or
   // pulled back from MFE). The bar fills from 0 (just past entry toward SL)
   // to 100 (at SL).
-  if (pnlPct < 0 || (mfePct ?? 0) === 0) {
+  // 2026-06-05 fix (Chris): a fresh position in PROFIT but with mfePct still 0
+  // (engine writes mfe_abs only at bar close — the SAME lag corrected at line 265)
+  // was wrongly forced into RED "to Stop Loss". Lag-correct the MFE here too so a
+  // winning-but-pre-arm position (e.g. LINK +0.51%, mfePct=0) shows YELLOW tracking
+  // the trail-arm, not red tracking the stop. RED stays for genuine loss / flat-no-MFE.
+  const effMfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
+  if (pnlPct < 0 || effMfe === 0) {
     const fill = initialCushionPct > 0
       ? Math.max(0, Math.min(100, (1 - cushionToSl / initialCushionPct) * 100))
       : 50
