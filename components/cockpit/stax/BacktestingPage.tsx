@@ -1633,14 +1633,13 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
               const open = isOpenTrade(tr)
               const rowClass = open ? 'bt-trade-open' : (tr.pnl > 0 ? 'bt-trade-win' : 'bt-trade-loss')
               const baseSym = (tr.symbol || '').replace('USDT', '')
-              // Open (EOD) rows arrive with COMPOUND-equity notional baked in
-              // — e.g. SUI's eod notional after 6yr of compounding is $74M
-              // and PnL is then mark-to-that-equity, producing six-figure
-              // numbers that misrepresent the strategy's per-trade sizing.
-              // Override the display for open rows so the list reads
-              // consistently with closed rows.
+              // 2026-06-06: open rows now show their REAL risk-sized notional. The shadow
+              // API serves re-sized opens and risk-sizing caps notional at ≤$25k, so the old
+              // compound-equity bug this used to guard ($74M eod notional) can no longer
+              // occur; normalizeTrade still snaps any >5×base compound-corrupted row upstream.
+              // Forcing open rows to flat $10k× was hiding the strategy's real per-trade size.
               const tierMult = tr.tierMult || 0.5
-              const dispNotional = open ? 10000 * tierMult : tr.notional
+              const dispNotional = (tr.notional && tr.notional > 0) ? tr.notional : 10000 * tierMult
               const dispUnits = tr.entryPx > 0 ? dispNotional / tr.entryPx : 0
               // For OPEN trades, recompute return % and PnL against the live
               // ticker price. The published returnPct in the JSON is frozen at
