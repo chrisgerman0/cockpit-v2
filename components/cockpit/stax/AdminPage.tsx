@@ -546,6 +546,7 @@ type TradeSide = {
   sl_price?: number | null
 }
 
+type CompSeverity = 'none' | 'minor' | 'severe'
 type CompRow = {
   key: string
   cfg_sid: string
@@ -553,14 +554,22 @@ type CompRow = {
   symbol: string
   tf: string
   entry_bar_ts: number
-  status: 'matched' | 'live_only' | 'shadow_only'
+  status: 'matched' | 'discrepancy' | 'live_only' | 'shadow_only'
+  severity: CompSeverity
   live: TradeSide | null
   shadow: TradeSide | null
   divergence: {
     entry_price_diff: number | null
     entry_price_diff_pct: number | null
+    exit_price_diff: number | null
+    exit_price_diff_pct: number | null
     pnl_diff: number | null
+    return_drift_pct: number | null
     timing_diff_ms: number | null
+    eviction_mismatch: string | null
+    time_breach: boolean
+    price_breach: boolean
+    severity: CompSeverity
     verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
 }
@@ -570,15 +579,18 @@ type CompResp = {
   summary: {
     total: number
     matched: number
+    discrepancy: number
+    discrepancy_severe: number
     live_only: number
     shadow_only: number
     mean_entry_price_divergence_pct: number
+    tolerances?: { time_ms: number; price_pct: number; severe_time_ms: number; severe_price_pct: number }
   }
   as_of_ms: number
 }
 
 function ExecutionPanel({ active }: { active: boolean }) {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'live_only' | 'shadow_only'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'discrepancy' | 'live_only' | 'shadow_only'>('all')
   const [assetFilter, setAssetFilter] = useState<string>('all')
 
   const fetcher = useCallback(async () => {
@@ -610,35 +622,46 @@ function ExecutionPanel({ active }: { active: boolean }) {
       />
       <ErrorBox msg={px.error} />
 
-      {/* Summary row */}
+      {/* Summary row — matched / discrepancy / one-sided at a glance */}
       <div className="row row-stats">
         <StatCard label="Total trades" value={r?.summary.total ?? '—'} sub="across both engines" />
         <StatCard
           label="Matched"
           value={r?.summary.matched ?? '—'}
-          sub="both engines fired"
+          sub="within tolerance"
           tone="pos"
+        />
+        <StatCard
+          label="Discrepancy"
+          value={r?.summary.discrepancy ?? '—'}
+          sub={r?.summary.discrepancy_severe ? `${r.summary.discrepancy_severe} severe` : 'out of tolerance'}
+          tone={r?.summary.discrepancy ? (r?.summary.discrepancy_severe ? 'neg' : 'gold') : 'muted'}
         />
         <StatCard
           label="Live only"
           value={r?.summary.live_only ?? '—'}
-          sub="shadow missed"
-          tone={r?.summary.live_only ? 'gold' : 'muted'}
+          sub="shadow missed · 🔴"
+          tone={r?.summary.live_only ? 'neg' : 'muted'}
         />
         <StatCard
           label="Shadow only"
           value={r?.summary.shadow_only ?? '—'}
-          sub="live missed"
-          tone={r?.summary.shadow_only ? 'gold' : 'muted'}
+          sub="live missed · 🔴"
+          tone={r?.summary.shadow_only ? 'neg' : 'muted'}
         />
       </div>
 
-      {r?.summary.matched != null && r.summary.matched > 0 && (
+      {/* Tolerance banner — the thresholds that define matched vs discrepancy */}
+      {r?.summary.tolerances && (
         <div className="adm-banner">
-          <span className="bt-eyebrow" style={{ marginBottom: 0 }}>MEAN ENTRY PRICE DIVERGENCE</span>
+          <span className="bt-eyebrow" style={{ marginBottom: 0 }}>MATCH TOLERANCES</span>
           <span className="adm-banner-text num">
-            {r.summary.mean_entry_price_divergence_pct.toFixed(3)}% avg
-            {' · '}execution friction = this spread × notional × leverage
+            timing ≤ {(r.summary.tolerances.time_ms / 1000).toFixed(0)}s
+            {' · '}price ≤ {r.summary.tolerances.price_pct.toFixed(2)}%
+            {'  (severe > '}{(r.summary.tolerances.severe_time_ms / 1000).toFixed(0)}s{' / '}{r.summary.tolerances.severe_price_pct.toFixed(2)}%)
+            {r.summary.mean_entry_price_divergence_pct != null
+              ? `  ·  mean entry Δ ${r.summary.mean_entry_price_divergence_pct.toFixed(3)}%`
+              : ''}
           </span>
         </div>
       )}
@@ -651,6 +674,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
           items={[
             { id: 'all', label: 'All', count: r?.summary.total ?? null },
             { id: 'matched', label: 'Matched', count: r?.summary.matched ?? null },
+            { id: 'discrepancy', label: 'Discrepancy', count: r?.summary.discrepancy ?? null },
             { id: 'live_only', label: 'Live only', count: r?.summary.live_only ?? null },
             { id: 'shadow_only', label: 'Shadow only', count: r?.summary.shadow_only ?? null },
           ]}
@@ -679,24 +703,23 @@ function ExecutionPanel({ active }: { active: boolean }) {
         </SectionCard>
       ) : (
         <SectionCard title={`TRADE LEDGER · LIVE vs SHADOW · ${r.trades.length} entries`}>
-          {/* 2026-05-26 responsive: minWidth:0 lets the wrapper actually
-              shrink below content width, letting overflowX render a
-              scrollbar instead of pushing the table off-screen.
-              Consolidated 11 columns → 7 (price + PnL stack live/shadow/Δ
-              vertically per column instead of horizontally). */}
+          {/* 2026-06-06 redesign (Chris): one ROW PER ENGINE — a LIVE row
+              (green) + a SHADOW row (grey) stacked per trade, then a Δ row with
+              the entry/exit/SL/PnL/timing divergences. Lets him eyeball
+              live-vs-shadow at a glance instead of decoding stacked cells.
+              minWidth:0 + overflowX keeps it scrollable on narrow viewports. */}
           <div style={{ overflowX: 'auto', minWidth: 0, width: '100%' }}>
-            <table className="adm-parity-table" style={{ minWidth: 860 }}>
+            <table className="adm-parity-table adm-parity-paired" style={{ minWidth: 920 }}>
               <thead>
                 <tr>
-                  <th>Status</th>
-                  <th>Asset · cfg · TF</th>
-                  <th>Entry bar (UTC)</th>
-                  <th style={{ textAlign: 'right' }}>Entry px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
-                  <th style={{ textAlign: 'right' }}>Exit px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
-                  <th style={{ textAlign: 'right' }}>SL px<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
-                  <th style={{ textAlign: 'right' }}>PnL<br/><span style={{ fontSize: 9, color: 'var(--muted)' }}>live / shadow / Δ</span></th>
+                  <th>Trade</th>
+                  <th>Engine</th>
+                  <th style={{ textAlign: 'right' }}>Entry px</th>
+                  <th style={{ textAlign: 'right' }}>Exit px</th>
+                  <th style={{ textAlign: 'right' }}>SL px</th>
+                  <th style={{ textAlign: 'right' }}>PnL</th>
+                  <th style={{ textAlign: 'right' }}>Entry time (UTC)</th>
                   <th>Reason</th>
-                  <th>State</th>
                 </tr>
               </thead>
               <tbody>
@@ -717,162 +740,141 @@ function ExecutionPanel({ active }: { active: boolean }) {
   )
 }
 
+// 2026-06-06 redesign: renders ONE ROW PER ENGINE — a LIVE row (green) + a
+// SHADOW row (grey) + a Δ row (live−shadow divergences) — so live-vs-shadow is
+// eyeballable per trade. Returns a fragment of <tr>s; the status/identity cell
+// rowSpans the engine rows.
 function CompRow({ row }: { row: CompRow }) {
   const sym = (row.symbol || row.asset + 'USDT').replace('USDT', '')
   const dir = row.live?.direction ?? row.shadow?.direction ?? 1
   const sideColor = dir === 1 ? 'var(--pos)' : 'var(--neg)'
   const side = dir === 1 ? 'LONG' : 'SHORT'
 
+  // Status chip — matched=green, discrepancy=gold(minor)/red(severe), one-sided=red.
   const statusCfg: Record<string, { label: string; color: string; bg: string }> = {
-    matched:     { label: 'Matched',     color: 'var(--pos)',  bg: 'rgba(46,204,113,0.04)' },
-    live_only:   { label: 'Live only',   color: 'var(--gold)', bg: 'rgba(212,160,23,0.04)' },
-    shadow_only: { label: 'Shadow only', color: 'var(--muted)', bg: 'rgba(255,255,255,0.02)' },
+    matched:     { label: 'MATCHED',     color: 'var(--pos)',  bg: 'rgba(46,204,113,0.05)' },
+    discrepancy: { label: 'DISCREPANCY', color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)',
+                   bg: row.severity === 'severe' ? 'rgba(231,76,60,0.06)' : 'rgba(212,160,23,0.06)' },
+    live_only:   { label: 'LIVE ONLY',   color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
+    shadow_only: { label: 'SHADOW ONLY', color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
   }
   const sc = statusCfg[row.status] ?? statusCfg.matched
 
-  // Divergence coloring
-  const epDiffPct = row.divergence?.entry_price_diff_pct
-  const epColor = epDiffPct == null ? undefined
-    : Math.abs(epDiffPct) >= 0.5 ? 'var(--neg)'
-    : Math.abs(epDiffPct) >= 0.1 ? 'var(--gold)'
-    : 'var(--muted)'
-  const pnlDiff = row.divergence?.pnl_diff
-  const pnlDiffColor = pnlDiff == null ? undefined
-    : Math.abs(pnlDiff) >= 5 ? 'var(--neg)'
-    : Math.abs(pnlDiff) >= 1 ? 'var(--gold)'
-    : 'var(--muted)'
-
-  // 2026-05-25: show bar CLOSE (action time), not open. The trade decision
-  // and order placement happen at the bar's close. row.tf gives the cfg's
-  // timeframe, used to compute close = open + tf_seconds.
+  // bar CLOSE (action time) = bar open + tf
   const TF_SEC: Record<string, number> = { '1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,'4h':14400,'6h':21600,'8h':28800,'12h':43200,'1d':86400 }
   const tfMs = (TF_SEC[row.tf] || 0) * 1000
-  const barTs = row.entry_bar_ts + tfMs   // close-time = action time
+  const barTs = row.entry_bar_ts + tfMs
   const barStr = barTs ? new Date(barTs).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—'
-
   const cfgShort = row.cfg_sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
 
-  return (
-    <tr style={{ background: sc.bg }}>
+  const d = row.divergence
+  const paired = row.status === 'matched' || row.status === 'discrepancy'
+  const nRows = paired ? 3 : 2
+
+  // colour a price-divergence %: ≤0.15% tol = muted, >0.75% severe = red, else gold
+  const pctColor = (pct: number | null | undefined) =>
+    pct == null ? 'var(--muted)'
+      : Math.abs(pct) > 0.75 ? 'var(--neg)'
+      : Math.abs(pct) > 0.15 ? 'var(--gold)'
+      : 'var(--muted)'
+  const timeColor = (ms: number | null | undefined) =>
+    ms == null ? 'var(--muted)'
+      : Math.abs(ms) > 60000 ? 'var(--neg)'
+      : Math.abs(ms) > 10000 ? 'var(--gold)'
+      : 'var(--muted)'
+  const pctStr = (p: number | null | undefined) => p != null ? `${p >= 0 ? '+' : ''}${p.toFixed(3)}%` : '—'
+
+  // per-engine cell renderers
+  const pxCell = (s: TradeSide | null, field: 'entry_price' | 'exit_price' | 'sl_price') => {
+    if (!s) return <span className="adm-stat-sub">—</span>
+    const v = s[field]
+    if (v != null && v > 0) return <>{fmtCompPx(v)}</>
+    if (field === 'exit_price' && s.open) return <span style={{ color: 'var(--gold)', fontSize: 10 }}>open</span>
+    return <span className="adm-stat-sub">—</span>
+  }
+  const pnlCell = (s: TradeSide | null) => {
+    if (!s) return <span className="adm-stat-sub">—</span>
+    if (s.pnl_usd != null) return <span style={{ color: s.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(s.pnl_usd, true)}</span>
+    return <span className="adm-stat-sub">{s.open ? 'open' : '—'}</span>
+  }
+  const timeCell = (s: TradeSide | null) => {
+    if (!s || !s.entry_ts_ms) return <span className="adm-stat-sub">—</span>
+    return <>{new Date(s.entry_ts_ms).toISOString().slice(11, 19)}Z</>
+  }
+  const reasonCell = (s: TradeSide | null) =>
+    !s ? <span className="adm-stat-sub">—</span>
+      : <span className="adm-stat-sub" style={{ fontSize: 11 }}>{s.exit_reason ?? (s.open ? 'open' : '—')}</span>
+
+  // Status/identity cell — rowSpans the engine rows
+  const tradeCell = (
+    <td rowSpan={nRows} style={{ background: sc.bg, borderLeft: `3px solid ${sc.color}`, verticalAlign: 'top' }}>
+      <span style={{ color: sc.color, fontWeight: 800, fontSize: 11, whiteSpace: 'nowrap', letterSpacing: 0.3 }}>{sc.label}</span>
+      {row.status === 'discrepancy' && (
+        <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)', textTransform: 'uppercase' }}>{row.severity}</span>
+      )}
+      <div style={{ marginTop: 3 }}>
+        <span className="num" style={{ fontWeight: 700 }}>{sym}</span>
+        <span style={{ color: sideColor, fontSize: 10, fontWeight: 700, marginLeft: 6, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{side}</span>
+      </div>
+      <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort} · {row.tf}</div>
+      <div className="adm-stat-sub" style={{ fontSize: 10 }}>{barStr} · {fmtAge(barTs)}</div>
+    </td>
+  )
+
+  // one engine data row (LIVE green / SHADOW grey)
+  const engineRow = (label: string, color: string, bg: string, s: TradeSide | null, isFirst: boolean) => (
+    <tr style={{ background: bg }}>
+      {isFirst && tradeCell}
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <span style={{ color, fontWeight: 700, fontSize: 11 }}>● {label}</span>
+        {s?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}
+        {!s && <span className="adm-stat-sub" style={{ fontSize: 9, marginLeft: 4 }}>no trade</span>}
+      </td>
+      <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'entry_price')}</td>
+      <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'exit_price')}</td>
+      <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'sl_price')}</td>
+      <td className="num" style={{ textAlign: 'right' }}>{pnlCell(s)}</td>
+      <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s)}</td>
+      <td>{reasonCell(s)}</td>
+    </tr>
+  )
+
+  // SL divergence (not carried in `divergence` — computed from each side's current SL)
+  const slDiffPct = (() => {
+    const a = row.live?.sl_price, b = row.shadow?.sl_price
+    return (a != null && b != null && b) ? (a - b) / b * 100 : null
+  })()
+  const dCell = (val: React.ReactNode, color: string) => (
+    <td className="num" style={{ textAlign: 'right', fontSize: 10, color }}>{val}</td>
+  )
+  const deltaRow = paired && d ? (
+    <tr style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '2px solid rgba(255,255,255,0.07)' }}>
+      <td style={{ whiteSpace: 'nowrap' }}><span className="adm-stat-sub" style={{ fontSize: 10, fontWeight: 700 }}>Δ live−shadow</span></td>
+      {dCell(pctStr(d.entry_price_diff_pct), pctColor(d.entry_price_diff_pct))}
+      {dCell(pctStr(d.exit_price_diff_pct), pctColor(d.exit_price_diff_pct))}
+      {dCell(pctStr(slDiffPct), pctColor(slDiffPct))}
+      {dCell(d.return_drift_pct != null ? `${d.return_drift_pct >= 0 ? '+' : ''}${d.return_drift_pct.toFixed(2)}pp` : '—', pctColor(d.return_drift_pct))}
+      {dCell(d.timing_diff_ms != null ? `${d.timing_diff_ms >= 0 ? '+' : ''}${(d.timing_diff_ms / 1000).toFixed(0)}s` : '—', timeColor(d.timing_diff_ms))}
       <td>
-        <span style={{ color: sc.color, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>
-          {sc.label}
-        </span>
-        <div style={{ color: sideColor, fontSize: 10, fontWeight: 600, fontFamily: "'JetBrains Mono', ui-monospace, monospace", marginTop: 2 }}>
-          {side}
-        </div>
-      </td>
-      <td>
-        <div className="num" style={{ fontWeight: 700 }}>{sym}</div>
-        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort}</div>
-        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{row.tf}</div>
-      </td>
-      <td>
-        <div className="num" style={{ fontSize: 11 }}>{barStr}</div>
-        <div className="adm-stat-sub" style={{ fontSize: 10 }}>{fmtAge(barTs)}</div>
-      </td>
-      {/* Entry px — live / shadow / Δ stacked vertically */}
-      <td className="num" style={{ textAlign: 'right' }}>
-        <div>{row.live ? fmtCompPx(row.live.entry_price) : <span className="adm-stat-sub">—</span>}{row.live?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}</div>
-        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{row.shadow ? fmtCompPx(row.shadow.entry_price) : '—'}{row.shadow?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}</div>
-        <div style={{ fontSize: 10, color: epColor }}>
-          {epDiffPct != null ? `${epDiffPct >= 0 ? '+' : ''}${epDiffPct.toFixed(3)}%` : '—'}
-        </div>
-      </td>
-      {/* Exit px — live / shadow / Δ stacked vertically.
-          Closed trades show the fill price each engine recorded; "open"
-          surfaces for still-running positions (same convention as Entry).
-          Δ > 0.1% on the same cfg = exit divergence (slippage, late fill,
-          or one engine exited a bar earlier) — colour matches Entry/SL
-          thresholds for consistency. */}
-      {(() => {
-        const liveXp = row.live?.exit_price ?? null
-        const shadowXp = row.shadow?.exit_price ?? null
-        const xpDiff = (liveXp != null && shadowXp != null) ? liveXp - shadowXp : null
-        const xpDiffPct = (xpDiff != null && shadowXp) ? (xpDiff / shadowXp) * 100 : null
-        const xpColor = xpDiffPct == null ? undefined
-          : Math.abs(xpDiffPct) >= 0.5 ? 'var(--neg)'
-          : Math.abs(xpDiffPct) >= 0.1 ? 'var(--gold)'
-          : 'var(--muted)'
-        return (
-          <td className="num" style={{ textAlign: 'right' }}>
-            <div>
-              {liveXp != null
-                ? fmtCompPx(liveXp)
-                : row.live?.open
-                  ? <span style={{ fontSize: 10, color: 'var(--gold)' }}>open</span>
-                  : <span className="adm-stat-sub">—</span>}
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-              {shadowXp != null
-                ? fmtCompPx(shadowXp)
-                : row.shadow?.open
-                  ? <span style={{ color: 'var(--gold)' }}>open</span>
-                  : '—'}
-            </div>
-            <div style={{ fontSize: 10, color: xpColor }}>
-              {xpDiffPct != null ? `${xpDiffPct >= 0 ? '+' : ''}${xpDiffPct.toFixed(3)}%` : '—'}
-            </div>
-          </td>
-        )
-      })()}
-      {/* SL px — live / shadow / Δ stacked vertically.
-          Comparing live's current SL (set by engine post-entry + updated on
-          every trail/breakeven move) against what shadow's identical
-          strategy logic arrived at. They should match within slippage when
-          both engines are aligned. Δ > 0.1% on the same cfg = engine
-          divergence — surface it loud. */}
-      {(() => {
-        const liveSl = row.live?.sl_price ?? null
-        const shadowSl = row.shadow?.sl_price ?? null
-        const slDiff = (liveSl != null && shadowSl != null) ? liveSl - shadowSl : null
-        const slDiffPct = (slDiff != null && shadowSl) ? (slDiff / shadowSl) * 100 : null
-        const slColor = slDiffPct == null ? undefined
-          : Math.abs(slDiffPct) >= 0.5 ? 'var(--neg)'
-          : Math.abs(slDiffPct) >= 0.1 ? 'var(--gold)'
-          : 'var(--muted)'
-        return (
-          <td className="num" style={{ textAlign: 'right' }}>
-            <div>{liveSl != null ? fmtCompPx(liveSl) : <span className="adm-stat-sub">—</span>}</div>
-            <div style={{ fontSize: 10, color: 'var(--muted)' }}>{shadowSl != null ? fmtCompPx(shadowSl) : '—'}</div>
-            <div style={{ fontSize: 10, color: slColor }}>
-              {slDiffPct != null ? `${slDiffPct >= 0 ? '+' : ''}${slDiffPct.toFixed(3)}%` : '—'}
-            </div>
-          </td>
-        )
-      })()}
-      {/* PnL — live / shadow / Δ stacked vertically */}
-      <td className="num" style={{ textAlign: 'right' }}>
-        <div>
-          {row.live?.pnl_usd != null
-            ? <span style={{ color: row.live.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(row.live.pnl_usd, true)}</span>
-            : <span className="adm-stat-sub">{row.live?.open ? 'open' : '—'}</span>}
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-          {row.shadow?.pnl_usd != null
-            ? <span style={{ color: row.shadow.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(row.shadow.pnl_usd, true)}</span>
-            : (row.shadow?.open ? 'open' : '—')}
-        </div>
-        <div style={{ fontSize: 10, color: pnlDiffColor }}>
-          {pnlDiff != null ? `${pnlDiff >= 0 ? '+' : ''}${fmtUsd(pnlDiff, true)}` : '—'}
-        </div>
-      </td>
-      <td>
-        <span className="adm-stat-sub" style={{ fontSize: 11 }}>
-          {row.live?.exit_reason ?? row.shadow?.exit_reason ?? '—'}
-        </span>
-      </td>
-      <td>
-        {(row.live?.open || row.shadow?.open) ? (
-          <span className="dot-live" style={{ marginRight: 4 }} />
+        {d.eviction_mismatch ? (
+          <span style={{ fontSize: 9, color: 'var(--neg)' }}>evict: {d.eviction_mismatch}</span>
+        ) : (d.time_breach || d.price_breach) ? (
+          <span style={{ fontSize: 9, fontWeight: 700, color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)' }}>
+            {[d.time_breach ? 'timing' : null, d.price_breach ? 'price' : null].filter(Boolean).join(' + ')} breach
+          </span>
         ) : (
-          <span className="dot-stale" style={{ marginRight: 4 }} />
+          <span className="adm-stat-sub" style={{ fontSize: 9, color: 'var(--pos)' }}>✓ in tolerance</span>
         )}
-        <span className="adm-stat-sub" style={{ fontSize: 10 }}>
-          {(row.live?.open || row.shadow?.open) ? 'open' : 'closed'}
-        </span>
       </td>
     </tr>
+  ) : null
+
+  return (
+    <>
+      {engineRow('LIVE', 'var(--pos)', 'rgba(46,204,113,0.06)', row.live, true)}
+      {engineRow('SHADOW', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
+      {deltaRow}
+    </>
   )
 }
 
