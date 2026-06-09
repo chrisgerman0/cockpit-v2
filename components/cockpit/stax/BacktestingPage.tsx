@@ -291,7 +291,15 @@ export function BacktestingContent() {
         // sub-hour gap between publisher runs; for two-store it supplies the
         // open book + just-closed gap trades shown in the LIST (not the frozen
         // metrics).
-        const rawTrades = mergePublisherAndShadow(pubTrades, shadowTrades, tier)
+        // 2026-06-07 (count-seam fix): the ADMIN backtest view shows the pure
+        // publisher/canonical set (frozen LKG + live-forward tail). The shadow
+        // bridge is for the CUSTOMER path; on admin it grafted duplicate rows
+        // because the route-tail carries no cfg_sid (keyed symbol|day) while
+        // shadow rows are keyed cfg_sid|day → the dedup missed the overlap and
+        // kept both, inflating the list past the metric count. Metrics were
+        // never affected (they derive from metricsClosed/route), but the count
+        // seam was real. Customer path keeps the shadow bridge unchanged.
+        const rawTrades = wantAdmin ? pubTrades : mergePublisherAndShadow(pubTrades, shadowTrades, tier)
         setAllTrades(rawTrades)
         // METRICS source — frozen immutable closed (two-store) → no flicker.
         setTrades(metricsClosed)
@@ -415,7 +423,7 @@ export function BacktestingContent() {
           <span>—</span>
           <span>{trades.length > 0 ? new Date(trades[trades.length - 1].exitTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
           <span>·</span>
-          <span>{trades.length.toLocaleString()} trades</span>
+          <span>{allTrades.length.toLocaleString()} trades</span>
           {updatedAgo ? (() => {
             // Freshness banding. Publisher cron runs hourly + takes ~15 min,
             // so portfolio-stats.json mtime cycles 0-60 min by design. The old
@@ -455,7 +463,7 @@ export function BacktestingContent() {
         <MetricCard label={isPt ? 'Drawdown Máximo' : 'Max Drawdown'}
           value={derivedStats ? `${derivedStats.maxDD.toFixed(2)}%` : '—'} negative />
         <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'}
-          value={derivedStats ? derivedStats.totalTrades.toLocaleString() : '—'} />
+          value={allTrades.length > 0 ? allTrades.length.toLocaleString() : '—'} />
         <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'}
           value={derivedStats ? `${derivedStats.winRate.toFixed(2)}%` : '—'} positive />
         <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'}

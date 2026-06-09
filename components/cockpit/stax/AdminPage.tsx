@@ -602,6 +602,9 @@ function ExecutionPanel({ active }: { active: boolean }) {
   const px = usePanelData<CompResp>(active, fetcher, 60_000, `${statusFilter}|${assetFilter}`)
   const r = px.data
 
+  // (2026-06-08) PnL is now the price-move return % computed per-side from
+  // entry/exit prices — no account-balance lookup needed.
+
   // 16-asset Phase H symbols for filter dropdown
   const PHASE_H_SYMS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT',
     'LINKUSDT','SUIUSDT','AVAXUSDT','ADAUSDT','TRXUSDT','ZECUSDT','TONUSDT','HYPEUSDT','NEARUSDT','OPUSDT']
@@ -709,16 +712,17 @@ function ExecutionPanel({ active }: { active: boolean }) {
               live-vs-shadow at a glance instead of decoding stacked cells.
               minWidth:0 + overflowX keeps it scrollable on narrow viewports. */}
           <div style={{ overflowX: 'auto', minWidth: 0, width: '100%' }}>
-            <table className="adm-parity-table adm-parity-paired" style={{ minWidth: 920 }}>
+            <table className="adm-parity-table adm-parity-paired" style={{ minWidth: 1040 }}>
               <thead>
                 <tr>
                   <th>Trade</th>
                   <th>Engine</th>
                   <th style={{ textAlign: 'right' }}>Entry px</th>
+                  <th style={{ textAlign: 'right' }}>Entry time</th>
                   <th style={{ textAlign: 'right' }}>Exit px</th>
+                  <th style={{ textAlign: 'right' }}>Exit time</th>
                   <th style={{ textAlign: 'right' }}>SL px</th>
-                  <th style={{ textAlign: 'right' }}>PnL</th>
-                  <th style={{ textAlign: 'right' }}>Entry time (UTC)</th>
+                  <th style={{ textAlign: 'right' }}>PnL %</th>
                   <th>Reason</th>
                 </tr>
               </thead>
@@ -771,17 +775,26 @@ function CompRow({ row }: { row: CompRow }) {
   const paired = row.status === 'matched' || row.status === 'discrepancy'
   const nRows = paired ? 3 : 2
 
-  // colour a price-divergence %: ≤0.15% tol = muted, >0.75% severe = red, else gold
+  // SL Δ keeps a neutral magnitude scale (not in Chris's directional spec).
   const pctColor = (pct: number | null | undefined) =>
     pct == null ? 'var(--muted)'
       : Math.abs(pct) > 0.75 ? 'var(--neg)'
       : Math.abs(pct) > 0.15 ? 'var(--gold)'
       : 'var(--muted)'
-  const timeColor = (ms: number | null | undefined) =>
-    ms == null ? 'var(--muted)'
-      : Math.abs(ms) > 60000 ? 'var(--neg)'
-      : Math.abs(ms) > 10000 ? 'var(--gold)'
-      : 'var(--muted)'
+  // 2026-06-08 (Chris) DIRECTION-AWARE Δ colours. dir = +1 long / −1 short.
+  // entry px: live got a BETTER fill (lower long-entry / higher short-entry) → green,
+  //   worse → yellow.  better ⇔ diff·dir < 0  (diff = (live−shadow)/shadow %).
+  const entryPxColor = (pct: number | null | undefined) =>
+    pct == null || Math.abs(pct) < 0.02 ? 'var(--muted)' : (pct * dir < 0 ? 'var(--pos)' : 'var(--gold)')
+  // exit px: better exit (higher long-exit / lower short-exit) → green. better ⇔ diff·dir > 0.
+  const exitPxColor = (pct: number | null | undefined) =>
+    pct == null || Math.abs(pct) < 0.02 ? 'var(--muted)' : (pct * dir > 0 ? 'var(--pos)' : 'var(--gold)')
+  // time: live LATER (ms>0) = worse for live → yellow; earlier → green; tiny → muted.
+  const timeDirColor = (ms: number | null | undefined) =>
+    ms == null || Math.abs(ms) < 5000 ? 'var(--muted)' : (ms > 0 ? 'var(--gold)' : 'var(--pos)')
+  // pnl% Δ: favours live (≥0) → green, else red.
+  const pnlDirColor = (pp: number | null | undefined) =>
+    pp == null ? 'var(--muted)' : (pp >= 0 ? 'var(--pos)' : 'var(--neg)')
   const pctStr = (p: number | null | undefined) => p != null ? `${p >= 0 ? '+' : ''}${p.toFixed(3)}%` : '—'
 
   // per-engine cell renderers
@@ -792,14 +805,27 @@ function CompRow({ row }: { row: CompRow }) {
     if (field === 'exit_price' && s.open) return <span style={{ color: 'var(--gold)', fontSize: 10 }}>open</span>
     return <span className="adm-stat-sub">—</span>
   }
+  // 2026-06-08 (Chris): PnL = the PRICE-MOVE RETURN, % only, no $. (exit−entry)/
+  // entry × direction — sizing-independent, so live and shadow compare on the same
+  // scale and a 0.2% entry gap can't masquerade as a huge $ divergence (the old
+  // pnl/balance bug). Open positions show 'open'.
   const pnlCell = (s: TradeSide | null) => {
     if (!s) return <span className="adm-stat-sub">—</span>
-    if (s.pnl_usd != null) return <span style={{ color: s.pnl_usd > 0 ? 'var(--pos)' : 'var(--neg)' }}>{fmtUsd(s.pnl_usd, true)}</span>
+    if (s.exit_price != null && s.entry_price > 0) {
+      const ret = (s.exit_price - s.entry_price) / s.entry_price * s.direction * 100
+      return (
+        <span style={{ color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+          {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
+        </span>
+      )
+    }
     return <span className="adm-stat-sub">{s.open ? 'open' : '—'}</span>
   }
-  const timeCell = (s: TradeSide | null) => {
-    if (!s || !s.entry_ts_ms) return <span className="adm-stat-sub">—</span>
-    return <>{new Date(s.entry_ts_ms).toISOString().slice(11, 19)}Z</>
+  // entry/exit fill time (UTC HH:MM:SS); `field` selects which timestamp.
+  const timeCell = (s: TradeSide | null, field: 'entry_ts_ms' | 'exit_ts_ms') => {
+    const v = s ? s[field] : null
+    if (!s || v == null) return <span className="adm-stat-sub">{field === 'exit_ts_ms' && s?.open ? 'open' : '—'}</span>
+    return <>{new Date(v).toISOString().slice(11, 19)}Z</>
   }
   const reasonCell = (s: TradeSide | null) =>
     !s ? <span className="adm-stat-sub">—</span>
@@ -831,10 +857,11 @@ function CompRow({ row }: { row: CompRow }) {
         {!s && <span className="adm-stat-sub" style={{ fontSize: 9, marginLeft: 4 }}>no trade</span>}
       </td>
       <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'entry_price')}</td>
+      <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s, 'entry_ts_ms')}</td>
       <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'exit_price')}</td>
+      <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s, 'exit_ts_ms')}</td>
       <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'sl_price')}</td>
       <td className="num" style={{ textAlign: 'right' }}>{pnlCell(s)}</td>
-      <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s)}</td>
       <td>{reasonCell(s)}</td>
     </tr>
   )
@@ -844,17 +871,28 @@ function CompRow({ row }: { row: CompRow }) {
     const a = row.live?.sl_price, b = row.shadow?.sl_price
     return (a != null && b != null && b) ? (a - b) / b * 100 : null
   })()
+  // exit-time Δ (live − shadow), ms. Null while either side is open.
+  const exitTimeDiff = (row.live?.exit_ts_ms != null && row.shadow?.exit_ts_ms != null)
+    ? row.live.exit_ts_ms - row.shadow.exit_ts_ms : null
+  // pnl% Δ from the SAME price-move return shown per engine (live − shadow), in pp.
+  const sideRet = (s: TradeSide | null) =>
+    (s && s.exit_price != null && s.entry_price > 0)
+      ? (s.exit_price - s.entry_price) / s.entry_price * s.direction * 100 : null
+  const lr = sideRet(row.live), sr = sideRet(row.shadow)
+  const pnlPctDiff = (lr != null && sr != null) ? lr - sr : null
   const dCell = (val: React.ReactNode, color: string) => (
     <td className="num" style={{ textAlign: 'right', fontSize: 10, color }}>{val}</td>
   )
+  const secs = (ms: number | null | undefined) => ms != null ? `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(0)}s` : '—'
   const deltaRow = paired && d ? (
     <tr style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '2px solid rgba(255,255,255,0.07)' }}>
       <td style={{ whiteSpace: 'nowrap' }}><span className="adm-stat-sub" style={{ fontSize: 10, fontWeight: 700 }}>Δ live−shadow</span></td>
-      {dCell(pctStr(d.entry_price_diff_pct), pctColor(d.entry_price_diff_pct))}
-      {dCell(pctStr(d.exit_price_diff_pct), pctColor(d.exit_price_diff_pct))}
+      {dCell(pctStr(d.entry_price_diff_pct), entryPxColor(d.entry_price_diff_pct))}
+      {dCell(secs(d.timing_diff_ms), timeDirColor(d.timing_diff_ms))}
+      {dCell(pctStr(d.exit_price_diff_pct), exitPxColor(d.exit_price_diff_pct))}
+      {dCell(secs(exitTimeDiff), timeDirColor(exitTimeDiff))}
       {dCell(pctStr(slDiffPct), pctColor(slDiffPct))}
-      {dCell(d.return_drift_pct != null ? `${d.return_drift_pct >= 0 ? '+' : ''}${d.return_drift_pct.toFixed(2)}pp` : '—', pctColor(d.return_drift_pct))}
-      {dCell(d.timing_diff_ms != null ? `${d.timing_diff_ms >= 0 ? '+' : ''}${(d.timing_diff_ms / 1000).toFixed(0)}s` : '—', timeColor(d.timing_diff_ms))}
+      {dCell(pnlPctDiff != null ? `${pnlPctDiff >= 0 ? '+' : ''}${pnlPctDiff.toFixed(2)}pp` : '—', pnlDirColor(pnlPctDiff))}
       <td>
         {d.eviction_mismatch ? (
           <span style={{ fontSize: 9, color: 'var(--neg)' }}>evict: {d.eviction_mismatch}</span>
