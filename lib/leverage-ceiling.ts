@@ -2,19 +2,18 @@
  * LEVERAGE CEILING — config-time safety guard for the bot settings wizard.
  * 2026-06-02.
  *
- * The custom grid is {2,3,4,5} lanes × {25,50,75,100%} sizing. A combo's
+ * The custom grid is {2,3,4,5,6} lanes × {25,50,75,100%} sizing. A combo's
  * worst-case NOMINAL leverage = n_lanes × base_pct (reached when per-lane
  * notional is below the $25k cap, i.e. capital ≲ $25k/base_pct; above that the
  * cap REDUCES leverage, so this is the conservative worst case).
  *
  * The ceiling rejects a combo when EITHER:
- *   (1) nominal leverage exceeds MAX_SAFE_NOMINAL_LEVERAGE (5×) — beyond the
- *       proven-safe envelope. The deployed Aggressive 5-lane / 100% config sits
- *       exactly at 5× nominal and was stress-validated against Black Monday in
- *       msga-replay/.../phase_c_runs/sizing_stress.py: real peak leverage 2.9×
- *       (sub-linear k=0.75 sizing damps it), worst-case margin 80.7% remaining,
- *       0 liquidation events. 5× nominal is the proven ceiling; above it is
- *       unvalidated and blocked.
+ *   (1) nominal leverage exceeds MAX_SAFE_NOMINAL_LEVERAGE (6×) — beyond the
+ *       proven-safe envelope. Tier-grid v2's Aggressive 6-lane / 100% config sits
+ *       exactly at 6× nominal and was stress-validated (6L stress set, 2026-06-07):
+ *       real peak leverage 4.30× (sub-linear k=0.75 sizing damps it), worst-case
+ *       margin 73.3% remaining, 0 liquidation events. 6× nominal is the proven
+ *       ceiling; above it is unvalidated and blocked.
  *   (2) nominal leverage exceeds the user's Bitget account leverage cap — the
  *       account physically cannot margin the exposure (generalizes the existing
  *       activation floor check to a per-config ceiling).
@@ -24,7 +23,7 @@
  * test_leverage_ceiling.mjs.
  */
 
-export const MAX_SAFE_NOMINAL_LEVERAGE = 5      // deployed Aggressive 5L/100%, 0-liq proven
+export const MAX_SAFE_NOMINAL_LEVERAGE = 6      // Tier-grid v2 Aggressive 6L/100%; 6L stress: 4.30x real peak, 73.3% buffer, 0 liq
 export const PER_LANE_CAP_USD = 25000
 export const MMR = 0.005                         // Bitget USDT-perp maintenance margin rate
 
@@ -35,7 +34,7 @@ export type CeilingReason =
   | 'invalid_input'
 
 export interface CeilingInput {
-  nLanes: number          // 2..5 (or custom)
+  nLanes: number          // 2..6 (or custom)
   basePct: number         // 0.25 | 0.5 | 0.75 | 1.0  (fraction of capital per lane)
   capitalUsd: number      // user's starting capital
   accountLeverage?: number // Bitget account leverage cap (×). Omitted/0 → skip the account check.
@@ -101,7 +100,7 @@ export function evaluateLeverageCeiling(input: CeilingInput): CeilingResult {
 
 /** Build the full {2,3,4,5} × {25,50,75,100%} grid with per-cell safe/unsafe verdicts. */
 export function buildCeilingGrid(capitalUsd: number, accountLeverage = 0) {
-  const laneOpts = [2, 3, 4, 5]
+  const laneOpts = [2, 3, 4, 5, 6]
   const pctOpts = [0.25, 0.5, 0.75, 1.0]
   return laneOpts.map((nLanes) => ({
     nLanes,

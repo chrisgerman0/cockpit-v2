@@ -524,28 +524,29 @@ type BotConfig = {
 }
 
 const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive', number> = {
-  conservative: 2,
+  conservative: 1,
   moderate: 3,
-  aggressive: 5,
+  aggressive: 6,
 }
 
-// Tier ratios — Phase H schema (2026-05-21).
-// Tier = (lanes, leverage). Per-lane notional = the user's starting capital.
+// Tier ratios — Phase H Tier-grid v2 (2026-06-09).
+// Tier = (lanes, leverage, base_pct). Per-lane notional = capital × base_pct.
 // Tier choice controls how many concurrent lanes (FCFS allocator caps at this
-// number) and what leverage each lane runs at. SL is 4% of entry across basket.
+// number), the leverage each lane runs at, and the per-lane sizing fraction.
+// SL is 4% of entry across basket.
 //
-// Phase H invariants (locked 2026-05-20):
-//   conservative: 2 lanes × 2× leverage = 2× capital max notional / 100% margin at full
-//   moderate:     3 lanes × 3× leverage = 3× capital max notional / 100% margin at full
-//   aggressive:   5 lanes × 5× leverage = 5× capital max notional / 100% margin at full
+// Tier-grid v2 invariants (locked 2026-06-09):
+//   conservative: 2 lanes × 1× lev × 50%  = 1× capital max notional
+//   moderate:     4 lanes × 3× lev × 75%  = 3× capital max notional
+//   aggressive:   6 lanes × 6× lev × 100% = 6× capital max notional
 //
-// Because leverage == lanes, full-lane utilisation uses exactly 100% of capital
-// as margin. Per-lane notional always equals capital — letting users dial in
-// a portion of their balance (e.g. $5k on a $10k account) cleanly scales every
-// downstream metric (position size, max loss, max concurrent) proportionally.
+// Nominal leverage = lanes × base_pct (Cons 1×, Mod 3×, Aggr 6×) — 6× is the
+// 6L-stress-validated ceiling (4.30× real peak, 0 liq). Per-lane notional =
+// capital × base_pct, so users can dial in a portion of their balance and every
+// downstream metric scales proportionally.
 //
-// Max single-trade loss per lane = capital × 4% SL. On Moderate with all 3
-// lanes occupied simultaneously, max simultaneous SL = capital × 12%.
+// Max single-trade loss per lane = (capital × base_pct) × 4% SL. On Aggressive
+// with all 6 lanes occupied, max simultaneous SL = capital × 6 × 4% ≈ 24%.
 const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× capital_initial
 
 // Staxs mode reserve target as % of capital_initial, per tier. The reserve
@@ -558,9 +559,9 @@ const RESERVE_PCT_BY_TIER: Record<TierKey, number> = {
 }
 
 const TIER_RATIOS = {
-  conservative: { lanes: 2, leverage: 2, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
-  moderate:     { lanes: 3, leverage: 3, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
-  aggressive:   { lanes: 5, leverage: 5, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
+  conservative: { lanes: 2, leverage: 1, basePct: 0.50, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
+  moderate:     { lanes: 4, leverage: 3, basePct: 0.75, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
+  aggressive:   { lanes: 6, leverage: 6, basePct: 1.00, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
 } as const
 type TierKey = keyof typeof TIER_RATIOS
 
@@ -660,8 +661,8 @@ function BotPanel() {
 //   4. 12-Month Projection (concise — backtest stats per tier)
 //   5. Review & Activate (POSTs to /api/bot-activate)
 //
-// Tier ratios (TIER_RATIOS): Conservative 2 lanes × 2× lev / Moderate 3 lanes ×
-// 3× lev / Aggressive 5 lanes × 5× lev. Per-lane notional fixed at $10,000.
+// Tier ratios (TIER_RATIOS): Conservative 2 lanes × 1× lev × 50% / Moderate 4
+// lanes × 3× lev × 75% / Aggressive 6 lanes × 6× lev × 100% (Tier-grid v2).
 // SL is 4% across all tiers. Bitget leverage cap matches tier leverage.
 
 // Backtest stats per tier — Phase H 16-asset portfolio (BTC, ETH, SOL, BNB,
@@ -683,10 +684,15 @@ function BotPanel() {
 //   normalised to $10k position; avg_loss ≈ 2.1% from 4% SL trail behaviour;
 //   avg_win = PF × avg_loss × (1-WR)/WR).
 // monthsProfitable: monthly_win_rate × total_months (97).
+// TIER-GRID V2 SYNC PENDING (2026-06-09): accountDdPct is updated for the new
+// leverage (maxDdPct × lev = 8.1 × {1,3,6} = {8,24,49}). The totalReturn / annual
+// / totalTrades / maxDd / riskPos projections below are still OLD-grid (2L/3L/5L)
+// and MUST be synced from the D4 phase-h-risk regen (the authoritative new-grid
+// 2/4/6 backtest) before deploy (D6). Not fabricated here — pulled at D4.
 const TIER_BACKTEST = {
-  conservative: { totalReturnPct: 3060, annualPct: 379,  maxDdPct: 8.1, accountDdPct: 16, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.0, profitFactor: 2.50, totalTrades: 1700, monthsProfitable: 84, totalMonths: 97, riskPos: 15 },
+  conservative: { totalReturnPct: 3060, annualPct: 379,  maxDdPct: 8.1, accountDdPct: 8,  avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.0, profitFactor: 2.50, totalTrades: 1700, monthsProfitable: 84, totalMonths: 97, riskPos: 15 },
   moderate:     { totalReturnPct: 4374, annualPct: 541,  maxDdPct: 8.1, accountDdPct: 24, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.1, profitFactor: 2.50, totalTrades: 2521, monthsProfitable: 88, totalMonths: 97, riskPos: 45 },
-  aggressive:   { totalReturnPct: 6140, annualPct: 760,  maxDdPct: 8.1, accountDdPct: 40, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.4, profitFactor: 2.57, totalTrades: 3367, monthsProfitable: 92, totalMonths: 97, riskPos: 75 },
+  aggressive:   { totalReturnPct: 6140, annualPct: 760,  maxDdPct: 8.1, accountDdPct: 49, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.4, profitFactor: 2.57, totalTrades: 3367, monthsProfitable: 92, totalMonths: 97, riskPos: 75 },
 } as const
 
 // ─── Projected equity curve (synthetic, tier-scaled exponential growth) ──
@@ -788,7 +794,7 @@ function BotSettingsWizard({
   // Initial compound flag maps to legacy compound-mode state.
   const [mode, setMode] = useState<ModeKey>(initialCompound ? 'compound' : 'fixed')
   // Picker mode (Gap 2 — custom grid): 'tier' = named Conservative/Moderate/
-  // Aggressive cards; 'custom' = the {2,3,4,5} lanes × {25,50,75,100%} grid.
+  // Aggressive cards; 'custom' = the {2,3,4,5,6} lanes × {25,50,75,100%} grid.
   // When 'custom', a selected cell {nLanes, basePct} drives activation via the
   // config.custom carrier; the leverage ceiling greys out unsafe cells.
   const [pickerMode, setPickerMode] = useState<'tier' | 'custom'>('tier')
@@ -804,21 +810,20 @@ function BotSettingsWizard({
   const ratios = TIER_RATIOS[preset]
   const bt = TIER_BACKTEST[preset]
   const capNum = Math.max(0, Number(capital) || 0)
-  // Position size per lane = the user's starting capital.
-  //   The tier design (Conservative 2L/2×, Moderate 3L/3×, Aggressive 5L/5×)
-  //   uses leverage = lane_count, so at full utilisation the customer's
-  //   total margin used is exactly capital_initial (100%).
+  // Position size per lane = capital × tier base_pct (Tier-grid v2: Cons 50%,
+  //   Mod 75%, Aggr 100%). Nominal leverage = lanes × base_pct (Cons 1×, Mod 3×,
+  //   Aggr 6×).
   //
-  //   posSize per lane × lanes = capital × leverage = max notional exposure.
+  //   posSize per lane × lanes = capital × base_pct × lanes = max notional exposure.
   //
-  // In Fixed and Staxs modes posSize is LOCKED at capital_initial — even if
-  // the account grows or shrinks. Compound mode scales posSize with balance,
-  // capped at COMPOUND_CAP_MULTIPLIER × capital_initial per lane.
-  const posSize = capNum  // displayed as the locked initial; backend uses
-                          // current_balance for compound at execute-signal time
-  const maxNotional = ratios.lanes * capNum
+  // In Fixed and Staxs modes posSize is LOCKED at capital_initial × base_pct —
+  // even if the account grows or shrinks. Compound mode scales posSize with
+  // balance, capped at COMPOUND_CAP_MULTIPLIER × the per-lane base.
+  const posSize = Math.round(capNum * ratios.basePct)  // locked initial per lane;
+                          // backend uses current_balance for compound at execute time
+  const maxNotional = ratios.lanes * posSize
   const maxLoss = posSize * (ratios.sl / 100)
-  const compoundCap = capNum * COMPOUND_CAP_MULTIPLIER
+  const compoundCap = posSize * COMPOUND_CAP_MULTIPLIER
   const reserveTarget = Math.round(capNum * RESERVE_PCT_BY_TIER[preset])
   const overBalance = maxBalance > 0 && capNum > maxBalance
   const allDisclosuresAck = d1 && d2 && d3 && d4
@@ -1121,7 +1126,7 @@ function BotSettingsWizard({
               {isCustom ? (
                 <><strong>How it works:</strong> Each lane uses ${effPerLane.toLocaleString()} notional ({Math.round((customSel?.basePct ?? 0) * 100)}% of your ${capNum.toLocaleString()} capital). {effLanes} lane{effLanes > 1 ? 's' : ''} maximum — at full utilisation that&apos;s ${effMaxNotional.toLocaleString()} of total concurrent exposure ({effLeverage}× nominal leverage). Sub-linear sizing damps real leverage below the nominal figure as your balance grows.</>
               ) : (
-                <><strong>How it works:</strong> Each lane uses ${capNum.toLocaleString()} notional (matches your starting capital). {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.</>
+                <><strong>How it works:</strong> Each lane uses ${posSize.toLocaleString()} notional ({Math.round(ratios.basePct * 100)}% of your starting capital). {ratios.lanes} lane{ratios.lanes > 1 ? 's' : ''} maximum on {ratios.label} tier — at full utilisation that&apos;s ${maxNotional.toLocaleString()} of total concurrent exposure. Leverage is set to {ratios.leverage}× (tier-matched) — used only to free margin, not to amplify position sizes beyond tier capacity.</>
               )}
             </div>
           </div>
@@ -1307,7 +1312,7 @@ function BotSettingsWizard({
                 <ProjStat label="Account Leverage Req." val={`≥ ${effLeverage}×`} sub="set on Bitget BTCUSDT" />
               </div>
               <div className="bw-control-card" style={{ marginTop: 14 }}>
-                <strong>Custom combo.</strong> Per-cell backtest projections aren&apos;t shown for custom lanes × sizing — only the preset tiers (Conservative / Moderate / Aggressive) have full validated backtests. Your selection sits at {effLeverage}× nominal leverage (within the stress-validated 5× ceiling). Sub-linear sizing keeps real peak leverage below the nominal figure as the account grows.
+                <strong>Custom combo.</strong> Per-cell backtest projections aren&apos;t shown for custom lanes × sizing — only the preset tiers (Conservative / Moderate / Aggressive) have full validated backtests. Your selection sits at {effLeverage}× nominal leverage (within the stress-validated 6× ceiling). Sub-linear sizing keeps real peak leverage below the nominal figure as the account grows.
               </div>
             </>
           ) : (
@@ -1431,7 +1436,7 @@ function BotSettingsWizard({
             ) : (
               <div className="bw-review-row" style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 8 }}>
                 <span>Nominal Leverage</span>
-                <span className="num">{effLeverage}× (within 5× safe ceiling)</span>
+                <span className="num">{effLeverage}× (within 6× safe ceiling)</span>
               </div>
             )}
             <div className="bw-review-row"><span>Exchange</span><span>Bitget USDT-M Futures</span></div>
@@ -1490,7 +1495,7 @@ function CustomGrid({
   sel: { nLanes: number; basePct: number } | null
   onSelect: (s: { nLanes: number; basePct: number }) => void
 }) {
-  // accountLeverage = 0 → skip the per-account cap here; the 5× safe ceiling
+  // accountLeverage = 0 → skip the per-account cap here; the 6× safe ceiling
   // still applies, and /api/bot-activate runs the Bitget pre-flight separately.
   const grid = buildCeilingGrid(capitalUsd || 0, 0)
   const pctCols = [0.25, 0.5, 0.75, 1.0]
@@ -1498,7 +1503,7 @@ function CustomGrid({
     <div className="bw-cg-wrap">
       <div className="bw-cg-legend">
         <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-safe" /> Available</span>
-        <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-unsafe" /> Exceeds 5× ceiling</span>
+        <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-unsafe" /> Exceeds 6× ceiling</span>
         <span className="bw-cg-legend-row"><span className="bw-cg-swatch bw-cg-on" /> Selected</span>
       </div>
       <div className="bw-cg-grid" style={{ gridTemplateColumns: `auto repeat(${pctCols.length}, 1fr)` }}>
@@ -1542,7 +1547,7 @@ function CustomGrid({
       </div>
       <div className="bw-cg-help">
         Each cell = how many concurrent lanes × what fraction of your capital each lane bets.
-        Nominal leverage = lanes × sizing; combos above the stress-validated 5× ceiling are disabled.
+        Nominal leverage = lanes × sizing; combos above the stress-validated 6× ceiling are disabled.
         Per-lane $ assumes your current capital (capped at ${(25000).toLocaleString()}/lane).
       </div>
     </div>
