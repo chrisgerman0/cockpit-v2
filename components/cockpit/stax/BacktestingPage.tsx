@@ -97,6 +97,13 @@ function smartCompoundPnl(t: PortfolioTrade, eq: number, initial: number): numbe
   return t.pnl * mult
 }
 
+// 2026-06-12: stable per-row key so the trade LIST can look up each row's
+// compounded (Smart Sizing) size/PnL when the toggle is ON.
+function rowKey(t: PortfolioTrade): string {
+  return `${t.symbol}|${t.entryTs}|${t.exitTs}|${t.dir}`
+}
+type CompoundView = { map: Map<string, { notional: number; pnl: number; capped: boolean }>; finalEq: number; startCap: number }
+
 // Tier names follow the new schema (use-portfolio-trades.tsx): conservative
 // (0.5×) / moderate (0.75×) / aggressive (1.0×). Legacy 'bold' is normalised
 // to 'aggressive' on read by the portfolio-trades hook.
@@ -452,6 +459,29 @@ export function BacktestingContent() {
     }
   }, [trades, stats?.startCapital, compound])
 
+  // 2026-06-12: per-row compounded view for the trade LIST. When the toggle is
+  // ON, each CLOSED row's size/PnL is scaled by its equity-multiplier at its
+  // point in the chronological sequence — the SAME smartCompoundPnl walk the
+  // headline + curve use, so all three tell ONE story. Opens scale at the final
+  // equity (their "point" = now). Keyed by trade identity. null when OFF.
+  const compoundRows = useMemo<CompoundView | null>(() => {
+    if (!compound || !trades.length) return null
+    const startCap = stats?.startCapital || 10000
+    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+    const map = new Map<string, { notional: number; pnl: number; capped: boolean }>()
+    let eq = startCap
+    for (const t of chrono) {
+      const base = t.notional || 0
+      const scaled = base > 0
+        ? Math.min(SMART_COMPOUND_CAP, base * Math.pow(eq / startCap, SMART_COMPOUND_K))
+        : base
+      const pnl = smartCompoundPnl(t, eq, startCap)  // identical to headline + curve
+      map.set(rowKey(t), { notional: scaled, pnl, capped: base > 0 && scaled >= SMART_COMPOUND_CAP })
+      eq += pnl
+    }
+    return { map, finalEq: eq, startCap }
+  }, [trades, compound, stats?.startCapital])
+
   return (
     <div className="stax-page">
       {previewMode && (
@@ -595,7 +625,7 @@ export function BacktestingContent() {
       {view === 'metrics' ? (
         <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} compound={compound} />
       ) : (
-        <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} />
+        <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} compound={compound} compoundRows={compoundRows} />
       )}
     </div>
   )
@@ -1590,7 +1620,7 @@ function isOpenTrade(tr: PortfolioTrade): boolean {
          /^open/i.test(tr.displayReason || '')
 }
 
-function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; showCfgColumn?: boolean }) {
+function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = false, compoundRows = null }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; showCfgColumn?: boolean; compound?: boolean; compoundRows?: CompoundView | null }) {
   const [page, setPage] = useState(0)
   const [coin, setCoin] = useState<CoinFilter>('ALL')
   const [side, setSide] = useState<SideFilter>('ALL')
@@ -1721,7 +1751,19 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
               // occur; normalizeTrade still snaps any >5×base compound-corrupted row upstream.
               // Forcing open rows to flat $10k× was hiding the strategy's real per-trade size.
               const tierMult = tr.tierMult || 0.5
-              const dispNotional = (tr.notional && tr.notional > 0) ? tr.notional : 10000 * tierMult
+              const baseNotional = (tr.notional && tr.notional > 0) ? tr.notional : 10000 * tierMult
+              // 2026-06-12: compound ON → scale this row by its equity-multiplier at
+              // its point in the sequence (closed rows from compoundRows.map; opens at
+              // the final equity). Capped rows pin at $25k. OFF → frozen as published.
+              const cv = compound && compoundRows ? compoundRows.map.get(rowKey(tr)) : undefined
+              let dispNotional = baseNotional
+              let capped = false
+              if (cv) {
+                dispNotional = cv.notional; capped = cv.capped
+              } else if (compound && compoundRows && open) {
+                dispNotional = Math.min(SMART_COMPOUND_CAP, baseNotional * Math.pow(compoundRows.finalEq / compoundRows.startCap, SMART_COMPOUND_K))
+                capped = dispNotional >= SMART_COMPOUND_CAP
+              }
               const dispUnits = tr.entryPx > 0 ? dispNotional / tr.entryPx : 0
               // For OPEN trades, recompute return % and PnL against the live
               // ticker price. The published returnPct in the JSON is frozen at
@@ -1734,7 +1776,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
                 ? ((livePx - tr.entryPx) / tr.entryPx) * 100 * (tr.dir || 1)
                 : null
               const dispReturnPct = liveReturnPct ?? (tr.returnPct ?? 0)
-              const dispPnl = open ? dispNotional * dispReturnPct / 100 : tr.pnl
+              const dispPnl = cv ? cv.pnl : (open ? dispNotional * dispReturnPct / 100 : tr.pnl)
               const isLive = open && liveReturnPct !== null
               return (
                 <tr key={start + i} className={rowClass}>
@@ -1752,6 +1794,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
                   <td><span className={'badge ' + (tr.dir > 0 ? 'badge-long' : 'badge-short')}>{tr.dir > 0 ? 'LONG' : 'SHORT'}</span></td>
                   <td className="num bt-price-cell">
                     ${dispNotional.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {capped ? <span title="Lane notional capped at $25,000 (Smart Sizing)" style={{ marginLeft: 4, fontSize: 9, fontWeight: 600, padding: '1px 4px', borderRadius: 3, background: 'rgba(212,160,23,0.15)', color: '#D4A017', verticalAlign: 'middle', letterSpacing: '0.04em' }}>CAP</span> : null}
                     <span className="sub">{fmtUnits(dispUnits, baseSym)}</span>
                   </td>
                   <td className="num bt-price-cell">
