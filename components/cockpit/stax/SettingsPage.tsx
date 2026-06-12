@@ -676,24 +676,38 @@ function BotPanel() {
 // returns based on the lane-count vs. returns curve (4→5 adds 10%, so
 // 2→3 ≈ 30% missed).
 //
-// totalReturnPct: 97-month FCFS-portfolio total (linear, fixed-bet).
-// annualPct: totalReturnPct / 8.08 years.
-// maxDdPct: peak-to-trough PORTFOLIO drawdown (not yet scaled by leverage).
-//   accountDdPct = maxDdPct × tier_leverage — what the account actually sees.
-// avgWinPct / avgLossPct: derived from PF + WR (per-position percent,
-//   normalised to $10k position; avg_loss ≈ 2.1% from 4% SL trail behaviour;
-//   avg_win = PF × avg_loss × (1-WR)/WR).
-// monthsProfitable: monthly_win_rate × total_months (97).
-// TIER-GRID V2 SYNC PENDING (2026-06-09): accountDdPct is updated for the new
-// leverage (maxDdPct × lev = 8.1 × {1,3,6} = {8,24,49}). The totalReturn / annual
-// / totalTrades / maxDd / riskPos projections below are still OLD-grid (2L/3L/5L)
-// and MUST be synced from the D4 phase-h-risk regen (the authoritative new-grid
-// 2/4/6 backtest) before deploy (D6). Not fabricated here — pulled at D4.
-const TIER_BACKTEST = {
-  conservative: { totalReturnPct: 3060, annualPct: 379,  maxDdPct: 8.1, accountDdPct: 8,  avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.0, profitFactor: 2.50, totalTrades: 1700, monthsProfitable: 84, totalMonths: 97, riskPos: 15 },
-  moderate:     { totalReturnPct: 4374, annualPct: 541,  maxDdPct: 8.1, accountDdPct: 24, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.1, profitFactor: 2.50, totalTrades: 2521, monthsProfitable: 88, totalMonths: 97, riskPos: 45 },
-  aggressive:   { totalReturnPct: 6140, annualPct: 760,  maxDdPct: 8.1, accountDdPct: 49, avgWinPct: 2.7, avgLossPct: 2.1, winRatePct: 66.4, profitFactor: 2.57, totalTrades: 3367, monthsProfitable: 92, totalMonths: 97, riskPos: 75 },
-} as const
+// 2026-06-12: the hardcoded TIER_BACKTEST performance constants are GONE (the
+// "6140%" / TIER_META class of bug). Projected Performance now FETCHES the SAME
+// canonical dataset the Backtesting page serves — phase-h-risk portfolio-stats.json
+// per tier (limit-entry 0.15%/120, risk-sized, 2/4/6 grid) — so page, settings, and
+// simulator can never diverge again. The producer (risk_sizing_canonical) carries
+// every figure (returnPct/PF/maxDD/trades + WR/avgWin/avgLoss/annual/monthsProfitable);
+// accountDdPct = maxDdPct × tier_leverage and the riskPos gauge are derived in-component.
+// NO performance number is hardcoded anywhere here.
+type BtStats = {
+  totalReturnPct: number; annualPct: number; maxDdPct: number; accountDdPct: number
+  avgWinPct: number; avgLossPct: number; winRatePct: number; profitFactor: number
+  totalTrades: number; monthsProfitable: number; totalMonths: number; riskPos: number
+}
+const BT_LOADING: BtStats = { totalReturnPct: 0, annualPct: 0, maxDdPct: 0, accountDdPct: 0,
+  avgWinPct: 0, avgLossPct: 0, winRatePct: 0, profitFactor: 0, totalTrades: 0,
+  monthsProfitable: 0, totalMonths: 0, riskPos: 0 }
+const PHASE_H_RISK_BASE = '/data/strategies/phase-h-risk'
+function statsUrlForTier(tier: TierKey): string {
+  return tier === 'conservative' ? `${PHASE_H_RISK_BASE}/portfolio-stats.json`
+    : `${PHASE_H_RISK_BASE}/tiers/${tier}/portfolio-stats.json`
+}
+function statsToBt(s: any, tier: TierKey): BtStats {
+  const lev = TIER_RATIOS[tier].leverage
+  const accountDd = Math.round((s?.maxDD || 0) * lev)
+  return {
+    totalReturnPct: s?.returnPct ?? 0, annualPct: s?.annualPct ?? 0, maxDdPct: s?.maxDD ?? 0,
+    accountDdPct: accountDd, avgWinPct: s?.avgWinPct ?? 0, avgLossPct: s?.avgLossPct ?? 0,
+    winRatePct: s?.winRatePct ?? 0, profitFactor: s?.profitFactor ?? 0, totalTrades: s?.totalTrades ?? 0,
+    monthsProfitable: s?.monthsProfitable ?? 0, totalMonths: s?.totalMonths ?? 0,
+    riskPos: Math.min(95, Math.max(8, Math.round(accountDd * 1.5))),
+  }
+}
 
 // ─── Projected equity curve (synthetic, tier-scaled exponential growth) ──
 // Generates a smooth-ish curve from $start capital to $start × (1 + totalReturnPct/100)
@@ -808,7 +822,17 @@ function BotSettingsWizard({
   const [activateMsg, setActivateMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const ratios = TIER_RATIOS[preset]
-  const bt = TIER_BACKTEST[preset]
+  // 2026-06-12: bt is FETCHED from phase-h-risk (the same canonical source the
+  // Backtesting page serves), not a hardcoded constant. Re-fetches on tier change.
+  const [bt, setBt] = useState<BtStats>(BT_LOADING)
+  useEffect(() => {
+    let alive = true
+    fetch(statsUrlForTier(preset), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(s => { if (alive) setBt(statsToBt(s, preset)) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [preset])
   const capNum = Math.max(0, Number(capital) || 0)
   // Position size per lane = capital × tier base_pct (Tier-grid v2: Cons 50%,
   //   Mod 75%, Aggr 100%). Nominal leverage = lanes × base_pct (Cons 1×, Mod 3×,

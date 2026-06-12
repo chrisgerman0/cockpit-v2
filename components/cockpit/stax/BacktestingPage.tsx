@@ -63,9 +63,9 @@ type AssetBreakdown = {
 // (0.5×) / moderate (0.75×) / aggressive (1.0×). Legacy 'bold' is normalised
 // to 'aggressive' on read by the portfolio-trades hook.
 const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult: string }> = {
-  conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '2 lanes / 2× lev' },
-  moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '3 lanes / 3× lev' },
-  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '5 lanes / 5× lev' },
+  conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '2 lanes / 1× lev' },
+  moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '4 lanes / 3× lev' },
+  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '6 lanes / 6× lev' },
 }
 
 // 2026-06-01: optional `base` lets the ?preview=1 path point at the 71-cfg
@@ -137,6 +137,10 @@ export function BacktestingContent() {
   const [trades, setTrades] = useState<PortfolioTrade[]>([])
   const [allTrades, setAllTrades] = useState<PortfolioTrade[]>([])
   const [view, setView] = useState<'metrics' | 'trades'>('metrics')
+  // 2026-06-12: compounding toggle (OFF by default = the canonical compound-off
+  // display the producer serves). ON recomputes the headline metrics + equity curve
+  // client-side by reinvesting each trade's flat-base return on the running equity.
+  const [compound, setCompound] = useState(false)
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
   const [updatedAgoMins, setUpdatedAgoMins] = useState<number | null>(null)
@@ -375,7 +379,11 @@ export function BacktestingContent() {
     let grossProfit = 0
     let grossLoss = 0
     for (const t of chrono) {
-      eq += t.pnl
+      // compound ON = reinvest: each trade's flat-base return (pnl/startCap)
+      // compounds on the running equity. OFF = linear fixed-bet (eq += pnl).
+      // WR/PF are trade-level (compound-invariant) → computed on raw pnl.
+      if (compound) eq *= (1 + t.pnl / startCap)
+      else eq += t.pnl
       if (eq > peak) peak = eq
       const dd = peak > 0 ? ((peak - eq) / peak) * 100 : 0
       if (dd > maxDDPct) maxDDPct = dd
@@ -393,7 +401,7 @@ export function BacktestingContent() {
       profitFactor: grossLoss > 0 ? grossProfit / grossLoss : 0,
       startCapital: startCap,
     }
-  }, [trades, stats?.startCapital])
+  }, [trades, stats?.startCapital, compound])
 
   return (
     <div className="stax-page">
@@ -415,8 +423,8 @@ export function BacktestingContent() {
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (2×/3×/5×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (2×/3×/5×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -450,6 +458,19 @@ export function BacktestingContent() {
             )
           })() : null}
         </div>
+      </div>
+
+      {/* 2026-06-12: compounding toggle — OFF by default (the canonical compound-off
+          display the producer serves). ON recomputes headline metrics + curve client-side. */}
+      <div className="bt-controls-row" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          type="button"
+          className={'bt-view-tab' + (compound ? ' active' : '')}
+          onClick={() => setCompound(c => !c)}
+          title="Reinvest profits — compounds each trade's return on the running equity (off = fixed-bet)"
+        >
+          {isPt ? 'Juros Compostos' : 'Compounding'}: {compound ? (isPt ? 'Ligado' : 'On') : (isPt ? 'Desligado' : 'Off')}
+        </button>
       </div>
 
       {/* Top metrics — derived from the normalized trades array (see
@@ -523,7 +544,7 @@ export function BacktestingContent() {
       </div>
 
       {view === 'metrics' ? (
-        <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} />
+        <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} compound={compound} />
       ) : (
         <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} />
       )}
@@ -533,19 +554,20 @@ export function BacktestingContent() {
 
 // ─── Metrics view (all sections) ────────────────────────────────────────────
 
-function MetricsView({ stats, trades, loading, tier, isPt }: {
+function MetricsView({ stats, trades, loading, tier, isPt, compound }: {
   stats: Stats | null
   trades: PortfolioTrade[]
   loading: boolean
   tier: Tier
   isPt: boolean
+  compound: boolean
 }) {
   if (loading) return <div className="card card-pad">Loading…</div>
   if (!trades.length) return <div className="card card-pad">No trade data.</div>
 
   return (
     <>
-      <EquityCurveSection trades={trades} stats={stats} isPt={isPt} />
+      <EquityCurveSection trades={trades} stats={stats} isPt={isPt} compound={compound} />
       <PerAssetBreakdown stats={stats} tier={tier} isPt={isPt} />
       <div className="bt-twin-row">
         <ProfitStructure trades={trades} isPt={isPt} />
@@ -566,7 +588,7 @@ function MetricsView({ stats, trades, loading, tier, isPt }: {
 
 // ─── Equity curve with Log/Linear toggle + BTC B&H comparison ───────────────
 
-function EquityCurveSection({ trades, stats, isPt }: { trades: PortfolioTrade[]; stats: Stats | null; isPt: boolean }) {
+function EquityCurveSection({ trades, stats, isPt, compound }: { trades: PortfolioTrade[]; stats: Stats | null; isPt: boolean; compound: boolean }) {
   const [scale, setScale] = useState<'linear' | 'log'>('linear')
   const [show, setShow] = useState<{ strategy: boolean; bh: boolean }>({ strategy: true, bh: true })
 
@@ -594,7 +616,10 @@ function EquityCurveSection({ trades, stats, isPt }: { trades: PortfolioTrade[];
     const step = Math.max(1, Math.floor(chrono.length / SAMPLE))
     const strategy: EquityPoint[] = [{ ts: chrono[0].entryTs, value: startCap, month: '' }]
     for (let i = 0; i < chrono.length; i++) {
-      eq += chrono[i].pnl
+      // 2026-06-12: compound ON reinvests each trade's flat-base return on the
+      // running equity (matches derivedStats); OFF = linear fixed-bet.
+      if (compound) eq *= (1 + chrono[i].pnl / startCap)
+      else eq += chrono[i].pnl
       if (i % step === 0 || i === chrono.length - 1) {
         strategy.push({ ts: chrono[i].exitTs, value: Math.max(1, Math.round(eq * 100) / 100), month: '' })
       }
@@ -620,7 +645,7 @@ function EquityCurveSection({ trades, stats, isPt }: { trades: PortfolioTrade[];
       }))
     }
     return { strategy, bhPoints }
-  }, [trades, stats?.startCapital])
+  }, [trades, stats?.startCapital, compound])
 
   const hasBh = data.bhPoints.length > 0
 

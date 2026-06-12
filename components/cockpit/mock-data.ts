@@ -62,7 +62,7 @@ export const statCards = [
   { label: 'Bot Status', value: 'Active', caption: 'Watching', icon: Bot, variant: 'positive' as const },
   { label: 'Unrealized PNL', value: '$0', caption: 'No open position', icon: TrendingUp, variant: 'positive' as const },
   { label: 'Realized PNL', value: '$0', caption: 'No trades yet', icon: ShieldCheck, variant: 'default' as const },
-  { label: 'Total Return', value: '+4,438%', caption: 'All time', icon: Clock3, variant: 'accent' as const },
+  { label: 'Total Return', value: '—', caption: 'All time', icon: Clock3, variant: 'accent' as const },
 ]
 
 export const positions: Position[] = [

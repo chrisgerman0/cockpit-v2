@@ -72,8 +72,12 @@ function pathForTier(tier: Tier): string {
   // pipeline was deleted (see archive/v1-satoshi-stacker-deprecated-2026-05-12/
   // HANDOVER.md). Trade ledger remains [] until the shadow engine (Phase B)
   // ships — stats render fine from portfolio-stats.json regardless.
-  if (tier === 'conservative') return '/data/strategies/phase-h/portfolio-trades.json'
-  return `/data/strategies/phase-h/tiers/${tier}/portfolio-trades.json`
+  // 2026-06-12: repointed phase-h → phase-h-risk so the dashboard/simulator/list serve
+  // the SAME canonical risk-sized limit-entry (0.15%/120, 2/4/6) dataset the Backtesting
+  // page + bot settings use — FINAL VERSION everywhere, one source. Base = $10k (matches
+  // risk_sizing INITIAL + the simulator's strategyBase).
+  if (tier === 'conservative') return '/data/strategies/phase-h-risk/portfolio-trades.json'
+  return `/data/strategies/phase-h-risk/tiers/${tier}/portfolio-trades.json`
 }
 
 // Tiny in-memory cache shared across hooks. Cached across the SESSION so

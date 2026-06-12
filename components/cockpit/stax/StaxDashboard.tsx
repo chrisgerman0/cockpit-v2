@@ -157,7 +157,7 @@ export const SAMPLE_STAX_DATA: StaxDashboardData = {
     { label: 'Bot Status', value: <span className="pos-text"><span className="dot-live" />Active</span>, sub: 'Watching', icon: Icons.Robot },
     { label: 'Unrealized PnL', value: '$0', sub: 'No open position', icon: Icons.TrendUp },
     { label: 'Realized PnL', value: '$0', sub: 'No trades yet', icon: Icons.Check },
-    { label: 'Total Return', value: '+4,438%', sub: 'All time', icon: Icons.TrendUp, valueClass: 'pos' },
+    { label: 'Total Return', value: '—', sub: 'All time', icon: Icons.TrendUp, valueClass: 'pos' },
   ],
   positions: [
     { pair: 'BTCUSDT', sym: 'BTC', side: 'LONG', size: '0.2500', entry: '$65,432.10', mark: '$76,318.00', pnl: '+$2,722.98', pnlPct: '+16.88%', pos: true },
