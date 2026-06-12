@@ -54,6 +54,15 @@ export type PortfolioTrade = {
   // "drop from filtered views" so cross-tier bleed is impossible during
   // the transition window.
   tier?: 'conservative' | 'moderate' | 'aggressive'
+  // ADMIN-ONLY (server route /api/admin/portfolio-trades). `_liveTail` flags a
+  // live-forward row appended after the frozen store's latest exit — the market
+  // tail (recently-closed since the last full regen) plus the current open book.
+  // `_riskSized` is whether the route risk-sized it from a persisted entry stop.
+  // Headline metrics EXCLUDE _liveTail rows so the LOCKED backtest number can
+  // never drift on post-lock live-forward activity; the trade LIST still shows
+  // them, flagged "live forward (market)".
+  _liveTail?: boolean
+  _riskSized?: boolean
 }
 
 export type Tier = 'conservative' | 'moderate' | 'aggressive'

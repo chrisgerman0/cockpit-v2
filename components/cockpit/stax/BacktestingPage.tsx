@@ -59,6 +59,44 @@ type AssetBreakdown = {
   scope: string
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 2026-06-12 (a) live-lane display cap. The publisher's per-tier liveref OPEN
+// book can over-fill by one (issue (c), under investigation) — until the source
+// is fixed, never DISPLAY more open positions than the tier holds (2/4/6). Keep
+// the earliest-entered opens (the FCFS lane-holders); drop the newest over-cap
+// rows. Closed rows pass through untouched. (isOpenTrade is module-hoisted below.)
+const LIVE_LANE_CAP: Record<Tier, number> = { conservative: 2, moderate: 4, aggressive: 6 }
+function capOpensForTier(rows: PortfolioTrade[], tier: Tier): PortfolioTrade[] {
+  const cap = LIVE_LANE_CAP[tier]
+  const opens = rows.filter(isOpenTrade)
+  if (opens.length <= cap) return rows
+  const keep = new Set(
+    [...opens].sort((a, b) => (a.entryTs || 0) - (b.entryTs || 0)).slice(0, cap),
+  )
+  return rows.filter(t => !isOpenTrade(t) || keep.has(t))
+}
+
+// 2026-06-12 (b) compounding = the LIVE engine's Smart Sizing, NOT naive equity
+// reinvest. Per trade the lane notional scales SUB-LINEARLY with the running
+// balance — base_notional × (equity/INITIAL)^0.75 — and HARD-CAPS at $25k per
+// lane (the engine's risk_per_lane cap); balance above the cap rides
+// unleveraged, so the equity curve bends toward LINEAR as lanes saturate.
+// base_notional = the frozen compound-OFF per-trade notional (already
+// tier-base_pct-sized + $25k-capped at INITIAL), so at INITIAL equity the
+// compounded pnl EXACTLY equals the compound-off pnl (early curve ≈ compound-off).
+// Validated 2026-06-12 end-equity (vs naive's astronomical blow-up):
+//   Conservative $471,969 (+4,620%) · Moderate $978,694 (+9,687%) · Aggressive $1,344,690 (+13,347%).
+const SMART_COMPOUND_K = 0.75
+const SMART_COMPOUND_CAP = 25000
+function smartCompoundPnl(t: PortfolioTrade, eq: number, initial: number): number {
+  const notl = t.notional || 0
+  if (notl <= 0) return t.pnl  // no notional to scale → fall back to flat pnl
+  // scaled notional = min(CAP, notl × (eq/INITIAL)^k); pnl scales with notional →
+  // pnl × min((eq/INITIAL)^k, CAP/notl). At eq=INITIAL the mult is 1 (notl ≤ CAP).
+  const mult = Math.min(Math.pow(eq / initial, SMART_COMPOUND_K), SMART_COMPOUND_CAP / notl)
+  return t.pnl * mult
+}
+
 // Tier names follow the new schema (use-portfolio-trades.tsx): conservative
 // (0.5×) / moderate (0.75×) / aggressive (1.0×). Legacy 'bold' is normalised
 // to 'aggressive' on read by the portfolio-trades hook.
@@ -288,7 +326,14 @@ export function BacktestingContent() {
         } else {
           const fwdAll = fwdTrades as PortfolioTrade[]
           pubTrades = fwdAll
-          metricsClosed = fwdAll.filter(t => !isEodMarker(t))
+          // 2026-06-12 (a): frozen-only headline. The admin route appends a
+          // live-forward tail (market-entry trades closed since the last full
+          // regen, flagged `_liveTail`) for visibility — but those must NEVER
+          // enter the LOCKED metrics, or the headline drifts off the locked
+          // limit numbers ($94,102 / $225,297 / $380,113). Exclude _liveTail
+          // here; the tail still shows in the LIST below (flagged). preview/
+          // two-store paths carry no _liveTail rows, so this is a no-op there.
+          metricsClosed = fwdAll.filter(t => !isEodMarker(t) && !t._liveTail)
         }
         // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered by
         // tier match before merging (no cross-tier bleed). Shadow bridges the
@@ -304,7 +349,10 @@ export function BacktestingContent() {
         // never affected (they derive from metricsClosed/route), but the count
         // seam was real. Customer path keeps the shadow bridge unchanged.
         const rawTrades = wantAdmin ? pubTrades : mergePublisherAndShadow(pubTrades, shadowTrades, tier)
-        setAllTrades(rawTrades)
+        // 2026-06-12 (a): display-cap the open book at the tier's lane count
+        // (2/4/6) so the LIST never shows more concurrent opens than the tier
+        // can hold (publisher over-fill = issue (c), under investigation).
+        setAllTrades(capOpensForTier(rawTrades, tier))
         // METRICS source — frozen immutable closed (two-store) → no flicker.
         setTrades(metricsClosed)
 
@@ -379,10 +427,11 @@ export function BacktestingContent() {
     let grossProfit = 0
     let grossLoss = 0
     for (const t of chrono) {
-      // compound ON = reinvest: each trade's flat-base return (pnl/startCap)
-      // compounds on the running equity. OFF = linear fixed-bet (eq += pnl).
-      // WR/PF are trade-level (compound-invariant) → computed on raw pnl.
-      if (compound) eq *= (1 + t.pnl / startCap)
+      // compound ON = the engine's Smart Sizing: the lane notional scales
+      // base × (eq/INITIAL)^0.75, capped $25k/lane (see smartCompoundPnl) — NOT
+      // naive equity reinvest (which blows up to $millions–quintillions). OFF =
+      // linear fixed-bet (eq += pnl). WR/PF are trade-level (compound-invariant).
+      if (compound) eq += smartCompoundPnl(t, eq, startCap)
       else eq += t.pnl
       if (eq > peak) peak = eq
       const dd = peak > 0 ? ((peak - eq) / peak) * 100 : 0
@@ -431,7 +480,7 @@ export function BacktestingContent() {
           <span>—</span>
           <span>{trades.length > 0 ? new Date(trades[trades.length - 1].exitTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
           <span>·</span>
-          <span>{allTrades.length.toLocaleString()} trades</span>
+          <span>{trades.length.toLocaleString()} trades</span>
           {updatedAgo ? (() => {
             // Freshness banding. Publisher cron runs hourly + takes ~15 min,
             // so portfolio-stats.json mtime cycles 0-60 min by design. The old
@@ -467,7 +516,7 @@ export function BacktestingContent() {
           type="button"
           className={'bt-view-tab' + (compound ? ' active' : '')}
           onClick={() => setCompound(c => !c)}
-          title="Reinvest profits — compounds each trade's return on the running equity (off = fixed-bet)"
+          title="Compound profits with the engine's Smart Sizing — each lane's notional scales sub-linearly with balance and hard-caps at $25k/lane (off = fixed $10k-base bet)"
         >
           {isPt ? 'Juros Compostos' : 'Compounding'}: {compound ? (isPt ? 'Ligado' : 'On') : (isPt ? 'Desligado' : 'Off')}
         </button>
@@ -484,7 +533,7 @@ export function BacktestingContent() {
         <MetricCard label={isPt ? 'Drawdown Máximo' : 'Max Drawdown'}
           value={derivedStats ? `${derivedStats.maxDD.toFixed(2)}%` : '—'} negative />
         <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'}
-          value={allTrades.length > 0 ? allTrades.length.toLocaleString() : '—'} />
+          value={trades.length > 0 ? trades.length.toLocaleString() : '—'} />
         <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'}
           value={derivedStats ? `${derivedStats.winRate.toFixed(2)}%` : '—'} positive />
         <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'}
@@ -616,9 +665,9 @@ function EquityCurveSection({ trades, stats, isPt, compound }: { trades: Portfol
     const step = Math.max(1, Math.floor(chrono.length / SAMPLE))
     const strategy: EquityPoint[] = [{ ts: chrono[0].entryTs, value: startCap, month: '' }]
     for (let i = 0; i < chrono.length; i++) {
-      // 2026-06-12: compound ON reinvests each trade's flat-base return on the
-      // running equity (matches derivedStats); OFF = linear fixed-bet.
-      if (compound) eq *= (1 + chrono[i].pnl / startCap)
+      // 2026-06-12: compound ON = the engine's Smart Sizing ($25k/lane-capped,
+      // sub-linear in equity — matches derivedStats); OFF = linear fixed-bet.
+      if (compound) eq += smartCompoundPnl(chrono[i], eq, startCap)
       else eq += chrono[i].pnl
       if (i % step === 0 || i === chrono.length - 1) {
         strategy.push({ ts: chrono[i].exitTs, value: Math.max(1, Math.round(eq * 100) / 100), month: '' })
@@ -1728,7 +1777,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false }: { trades:
                   </td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(dispPnl)}</td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{dispReturnPct.toFixed(2)}%</td>
-                  <td className="num" style={{ color: 'var(--muted)' }}>{open ? 'Open · Strategy holding' : (tr.displayReason || tr.reason)}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{open ? 'Open · Strategy holding' : (tr._liveTail ? <span style={{ fontStyle: 'italic' }}>Live forward · market</span> : (tr.displayReason || tr.reason))}</td>
                   {showCfgColumn ? (
                     <td className="num" style={{ color: 'var(--muted)', fontSize: 10, fontFamily: 'monospace' }}>
                       {tr.cfg_sid || '—'}
