@@ -550,6 +550,7 @@ type CompSeverity = 'none' | 'minor' | 'severe'
 type CompRow = {
   key: string
   cfg_sid: string
+  shadow_cfg_sid?: string | null
   asset: string
   symbol: string
   tf: string
@@ -569,6 +570,7 @@ type CompRow = {
     eviction_mismatch: string | null
     time_breach: boolean
     price_breach: boolean
+    cfg_mismatch: boolean
     severity: CompSeverity
     verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
@@ -614,10 +616,10 @@ function ExecutionPanel({ active }: { active: boolean }) {
       <PageHeader
         eyebrow="ADMIN · ENGINE PARITY"
         lead="Live vs"
-        accent="shadow."
+        accent="strategy."
         blurb={
-          'Trade-level reconciliation. LIVE = Bitget real fills. SHADOW = clean simulation. ' +
-          'Both paired by cfg_sid + entry bar. Gap between them = execution friction = product value. ' +
+          'Trade-level reconciliation. LIVE = Bitget real fills (your account). STRATEGY = the published strategy book the Backtesting page serves. ' +
+          'Paired by cfg_sid + entry bar. Gap between them = execution friction = product value. ' +
           'Refreshes every 60s.'
         }
         refreshing={px.loading}
@@ -643,11 +645,11 @@ function ExecutionPanel({ active }: { active: boolean }) {
         <StatCard
           label="Live only"
           value={r?.summary.live_only ?? '—'}
-          sub="shadow missed · 🔴"
+          sub="not in strategy · 🔴"
           tone={r?.summary.live_only ? 'neg' : 'muted'}
         />
         <StatCard
-          label="Shadow only"
+          label="Strategy only"
           value={r?.summary.shadow_only ?? '—'}
           sub="live missed · 🔴"
           tone={r?.summary.shadow_only ? 'neg' : 'muted'}
@@ -679,7 +681,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
             { id: 'matched', label: 'Matched', count: r?.summary.matched ?? null },
             { id: 'discrepancy', label: 'Discrepancy', count: r?.summary.discrepancy ?? null },
             { id: 'live_only', label: 'Live only', count: r?.summary.live_only ?? null },
-            { id: 'shadow_only', label: 'Shadow only', count: r?.summary.shadow_only ?? null },
+            { id: 'shadow_only', label: 'Strategy only', count: r?.summary.shadow_only ?? null },
           ]}
         />
         <select
@@ -697,7 +699,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
 
       {/* Trade comparison table */}
       {!r || r.trades.length === 0 ? (
-        <SectionCard title="TRADE LEDGER · LIVE vs SHADOW">
+        <SectionCard title="TRADE LEDGER · LIVE vs STRATEGY">
           <EmptyBox>
             {px.loading
               ? 'Loading…'
@@ -705,7 +707,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
           </EmptyBox>
         </SectionCard>
       ) : (
-        <SectionCard title={`TRADE LEDGER · LIVE vs SHADOW · ${r.trades.length} entries`}>
+        <SectionCard title={`TRADE LEDGER · LIVE vs STRATEGY · ${r.trades.length} entries`}>
           {/* 2026-06-06 redesign (Chris): one ROW PER ENGINE — a LIVE row
               (green) + a SHADOW row (grey) stacked per trade, then a Δ row with
               the entry/exit/SL/PnL/timing divergences. Lets him eyeball
@@ -760,7 +762,7 @@ function CompRow({ row }: { row: CompRow }) {
     discrepancy: { label: 'DISCREPANCY', color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)',
                    bg: row.severity === 'severe' ? 'rgba(231,76,60,0.06)' : 'rgba(212,160,23,0.06)' },
     live_only:   { label: 'LIVE ONLY',   color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
-    shadow_only: { label: 'SHADOW ONLY', color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
+    shadow_only: { label: 'STRATEGY ONLY', color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
   }
   const sc = statusCfg[row.status] ?? statusCfg.matched
 
@@ -894,7 +896,9 @@ function CompRow({ row }: { row: CompRow }) {
       {dCell(pctStr(slDiffPct), pctColor(slDiffPct))}
       {dCell(pnlPctDiff != null ? `${pnlPctDiff >= 0 ? '+' : ''}${pnlPctDiff.toFixed(2)}pp` : '—', pnlDirColor(pnlPctDiff))}
       <td>
-        {d.eviction_mismatch ? (
+        {d.cfg_mismatch ? (
+          <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--neg)' }}>⚠ CFG MISMATCH — live {(row.cfg_sid.split('_').pop() || '').slice(0, 8)} ≠ shadow {((row.shadow_cfg_sid || '').split('_').pop() || '').slice(0, 8)}</span>
+        ) : d.eviction_mismatch ? (
           <span style={{ fontSize: 9, color: 'var(--neg)' }}>evict: {d.eviction_mismatch}</span>
         ) : (d.time_breach || d.price_breach) ? (
           <span style={{ fontSize: 9, fontWeight: 700, color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)' }}>
@@ -910,7 +914,7 @@ function CompRow({ row }: { row: CompRow }) {
   return (
     <>
       {engineRow('LIVE', 'var(--pos)', 'rgba(46,204,113,0.06)', row.live, true)}
-      {engineRow('SHADOW', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
+      {engineRow('STRATEGY', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
       {deltaRow}
     </>
   )
