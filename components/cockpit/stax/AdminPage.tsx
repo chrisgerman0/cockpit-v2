@@ -559,6 +559,11 @@ type CompRow = {
   severity: CompSeverity
   live: TradeSide | null
   shadow: TradeSide | null
+  // 2026-06-15 triangulation: `shadow_daemon` = the paper-execution twin (live-vs-
+  // shadow = EXECUTION drift); `shadow` is kept as the LIVEREF/published-canonical
+  // reference (live-vs-liveref = convention/fidelity drift). `verdict` names the
+  // outlier. `divergence_ls` is the live-vs-shadow_daemon delta (same shape as `divergence`).
+  shadow_daemon: TradeSide | null
   divergence: {
     entry_price_diff: number | null
     entry_price_diff_pct: number | null
@@ -574,6 +579,22 @@ type CompRow = {
     severity: CompSeverity
     verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
+  divergence_ls?: {
+    entry_price_diff: number | null
+    entry_price_diff_pct: number | null
+    exit_price_diff: number | null
+    exit_price_diff_pct: number | null
+    pnl_diff: number | null
+    return_drift_pct: number | null
+    timing_diff_ms: number | null
+    eviction_mismatch: string | null
+    time_breach: boolean
+    price_breach: boolean
+    cfg_mismatch: boolean
+    severity: CompSeverity
+    verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
+  } | null
+  verdict?: 'aligned' | 'liveref_outlier' | 'exec_drift' | 'one_sided'
 }
 
 type CompResp = {
@@ -586,6 +607,10 @@ type CompResp = {
     live_only: number
     shadow_only: number
     mean_entry_price_divergence_pct: number
+    // 2026-06-15 triangulation verdict counts (3-way live | shadow | liveref)
+    aligned?: number
+    liveref_outlier?: number
+    exec_drift?: number
     tolerances?: { time_ms: number; price_pct: number; severe_time_ms: number; severe_price_pct: number }
   }
   as_of_ms: number
@@ -653,6 +678,25 @@ function ExecutionPanel({ active }: { active: boolean }) {
           value={r?.summary.shadow_only ?? '—'}
           sub="live missed · 🔴"
           tone={r?.summary.shadow_only ? 'neg' : 'muted'}
+        />
+        {/* 2026-06-15 triangulation verdicts (3-way live | shadow | liveref) */}
+        <StatCard
+          label="Aligned"
+          value={r?.summary.aligned ?? '—'}
+          sub="all three agree"
+          tone="pos"
+        />
+        <StatCard
+          label="Liveref outlier"
+          value={r?.summary.liveref_outlier ?? '—'}
+          sub="publisher/convention drift"
+          tone={r?.summary.liveref_outlier ? 'gold' : 'muted'}
+        />
+        <StatCard
+          label="Exec drift"
+          value={r?.summary.exec_drift ?? '—'}
+          sub="live ≠ shadow daemon"
+          tone={r?.summary.exec_drift ? 'neg' : 'muted'}
         />
       </div>
 
@@ -766,6 +810,17 @@ function CompRow({ row }: { row: CompRow }) {
   }
   const sc = statusCfg[row.status] ?? statusCfg.matched
 
+  // 2026-06-15 triangulation verdict badge — names which engine is the outlier.
+  // aligned = all three agree; liveref_outlier = live=shadow≠liveref (publisher/
+  // convention drift); exec_drift = live≠shadow (execution bug); one_sided/undefined = —.
+  const verdictCfg: Record<string, { label: string; color: string }> = {
+    aligned:         { label: '✓ ALIGNED',         color: 'var(--pos)' },
+    liveref_outlier: { label: '⚠ LIVEREF OUTLIER', color: 'var(--gold)' },
+    exec_drift:      { label: '⚠ EXEC DRIFT',      color: 'var(--neg)' },
+    one_sided:       { label: '—',                 color: '#9aa4b2' },
+  }
+  const vc = verdictCfg[row.verdict ?? 'one_sided'] ?? verdictCfg.one_sided
+
   // bar CLOSE (action time) = bar open + tf
   const TF_SEC: Record<string, number> = { '1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,'4h':14400,'6h':21600,'8h':28800,'12h':43200,'1d':86400 }
   const tfMs = (TF_SEC[row.tf] || 0) * 1000
@@ -774,8 +829,10 @@ function CompRow({ row }: { row: CompRow }) {
   const cfgShort = row.cfg_sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
 
   const d = row.divergence
+  const dls = row.divergence_ls
   const paired = row.status === 'matched' || row.status === 'discrepancy'
-  const nRows = paired ? 3 : 2
+  // 3 engine rows (LIVE / SHADOW / LIVEREF) always; + a Δ row per available delta.
+  const nRows = 3 + (paired && d ? 1 : 0) + (dls ? 1 : 0)
 
   // SL Δ keeps a neutral magnitude scale (not in Chris's directional spec).
   const pctColor = (pct: number | null | undefined) =>
@@ -846,6 +903,9 @@ function CompRow({ row }: { row: CompRow }) {
       </div>
       <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort} · {row.tf}</div>
       <div className="adm-stat-sub" style={{ fontSize: 10 }}>{barStr} · {fmtAge(barTs)}</div>
+      <div style={{ marginTop: 4 }}>
+        <span style={{ color: vc.color, fontWeight: 800, fontSize: 9, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{vc.label}</span>
+      </div>
     </td>
   )
 
@@ -868,54 +928,78 @@ function CompRow({ row }: { row: CompRow }) {
     </tr>
   )
 
-  // SL divergence (not carried in `divergence` — computed from each side's current SL)
-  const slDiffPct = (() => {
-    const a = row.live?.sl_price, b = row.shadow?.sl_price
-    return (a != null && b != null && b) ? (a - b) / b * 100 : null
-  })()
-  // exit-time Δ (live − shadow), ms. Null while either side is open.
-  const exitTimeDiff = (row.live?.exit_ts_ms != null && row.shadow?.exit_ts_ms != null)
-    ? row.live.exit_ts_ms - row.shadow.exit_ts_ms : null
-  // pnl% Δ from the SAME price-move return shown per engine (live − shadow), in pp.
-  const sideRet = (s: TradeSide | null) =>
-    (s && s.exit_price != null && s.entry_price > 0)
-      ? (s.exit_price - s.entry_price) / s.entry_price * s.direction * 100 : null
-  const lr = sideRet(row.live), sr = sideRet(row.shadow)
-  const pnlPctDiff = (lr != null && sr != null) ? lr - sr : null
   const dCell = (val: React.ReactNode, color: string) => (
     <td className="num" style={{ textAlign: 'right', fontSize: 10, color }}>{val}</td>
   )
   const secs = (ms: number | null | undefined) => ms != null ? `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(0)}s` : '—'
-  const deltaRow = paired && d ? (
-    <tr style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '2px solid rgba(255,255,255,0.07)' }}>
-      <td style={{ whiteSpace: 'nowrap' }}><span className="adm-stat-sub" style={{ fontSize: 10, fontWeight: 700 }}>Δ live−shadow</span></td>
-      {dCell(pctStr(d.entry_price_diff_pct), entryPxColor(d.entry_price_diff_pct))}
-      {dCell(secs(d.timing_diff_ms), timeDirColor(d.timing_diff_ms))}
-      {dCell(pctStr(d.exit_price_diff_pct), exitPxColor(d.exit_price_diff_pct))}
-      {dCell(secs(exitTimeDiff), timeDirColor(exitTimeDiff))}
-      {dCell(pctStr(slDiffPct), pctColor(slDiffPct))}
-      {dCell(pnlPctDiff != null ? `${pnlPctDiff >= 0 ? '+' : ''}${pnlPctDiff.toFixed(2)}pp` : '—', pnlDirColor(pnlPctDiff))}
-      <td>
-        {d.cfg_mismatch ? (
-          <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--neg)' }}>⚠ CFG MISMATCH — live {(row.cfg_sid.split('_').pop() || '').slice(0, 8)} ≠ shadow {((row.shadow_cfg_sid || '').split('_').pop() || '').slice(0, 8)}</span>
-        ) : d.eviction_mismatch ? (
-          <span style={{ fontSize: 9, color: 'var(--neg)' }}>evict: {d.eviction_mismatch}</span>
-        ) : (d.time_breach || d.price_breach) ? (
-          <span style={{ fontSize: 9, fontWeight: 700, color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)' }}>
-            {[d.time_breach ? 'timing' : null, d.price_breach ? 'price' : null].filter(Boolean).join(' + ')} breach
-          </span>
-        ) : (
-          <span className="adm-stat-sub" style={{ fontSize: 9, color: 'var(--pos)' }}>✓ in tolerance</span>
-        )}
-      </td>
-    </tr>
-  ) : null
+  // SL Δ / exit-time Δ / pnl% Δ are computed from the actual pair being compared
+  // (not carried in the divergence object), so each Δ row reflects its own two sides.
+  const slDiff = (a: TradeSide | null, b: TradeSide | null) => {
+    const x = a?.sl_price, y = b?.sl_price
+    return (x != null && y != null && y) ? (x - y) / y * 100 : null
+  }
+  const exitTimeDiffOf = (a: TradeSide | null, b: TradeSide | null) =>
+    (a?.exit_ts_ms != null && b?.exit_ts_ms != null) ? a.exit_ts_ms - b.exit_ts_ms : null
+  // pnl% Δ from the SAME price-move return shown per engine (a − b), in pp.
+  const sideRet = (s: TradeSide | null) =>
+    (s && s.exit_price != null && s.entry_price > 0)
+      ? (s.exit_price - s.entry_price) / s.entry_price * s.direction * 100 : null
+  const pnlPctDiffOf = (a: TradeSide | null, b: TradeSide | null) => {
+    const ar = sideRet(a), br = sideRet(b)
+    return (ar != null && br != null) ? ar - br : null
+  }
+
+  // Δ row factory — `dv` is the divergence object, `a`/`b` the two compared sides.
+  // `showCfg` enables the live-vs-liveref-only CFG-MISMATCH indicator.
+  const mkDeltaRow = (
+    label: string,
+    dv: CompRow['divergence'] | CompRow['divergence_ls'] | null | undefined,
+    a: TradeSide | null,
+    b: TradeSide | null,
+    showCfg: boolean,
+  ) => {
+    if (!dv) return null
+    const slDiffPct = slDiff(a, b)
+    const exitTimeDiff = exitTimeDiffOf(a, b)
+    const pnlPctDiff = pnlPctDiffOf(a, b)
+    return (
+      <tr style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '2px solid rgba(255,255,255,0.07)' }}>
+        <td style={{ whiteSpace: 'nowrap' }}><span className="adm-stat-sub" style={{ fontSize: 10, fontWeight: 700 }}>{label}</span></td>
+        {dCell(pctStr(dv.entry_price_diff_pct), entryPxColor(dv.entry_price_diff_pct))}
+        {dCell(secs(dv.timing_diff_ms), timeDirColor(dv.timing_diff_ms))}
+        {dCell(pctStr(dv.exit_price_diff_pct), exitPxColor(dv.exit_price_diff_pct))}
+        {dCell(secs(exitTimeDiff), timeDirColor(exitTimeDiff))}
+        {dCell(pctStr(slDiffPct), pctColor(slDiffPct))}
+        {dCell(pnlPctDiff != null ? `${pnlPctDiff >= 0 ? '+' : ''}${pnlPctDiff.toFixed(2)}pp` : '—', pnlDirColor(pnlPctDiff))}
+        <td>
+          {showCfg && dv.cfg_mismatch ? (
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--neg)' }}>⚠ CFG MISMATCH — live {(row.cfg_sid.split('_').pop() || '').slice(0, 8)} ≠ shadow {((row.shadow_cfg_sid || '').split('_').pop() || '').slice(0, 8)}</span>
+          ) : dv.eviction_mismatch ? (
+            <span style={{ fontSize: 9, color: 'var(--neg)' }}>evict: {dv.eviction_mismatch}</span>
+          ) : (dv.time_breach || dv.price_breach) ? (
+            <span style={{ fontSize: 9, fontWeight: 700, color: dv.severity === 'severe' ? 'var(--neg)' : 'var(--gold)' }}>
+              {[dv.time_breach ? 'timing' : null, dv.price_breach ? 'price' : null].filter(Boolean).join(' + ')} breach
+            </span>
+          ) : (
+            <span className="adm-stat-sub" style={{ fontSize: 9, color: 'var(--pos)' }}>✓ in tolerance</span>
+          )}
+        </td>
+      </tr>
+    )
+  }
+
+  // LIVE-vs-LIVEREF (the published-canonical reference, kept on row.shadow).
+  const deltaRowLr = (paired && d) ? mkDeltaRow('Δ live·liveref', d, row.live, row.shadow, true) : null
+  // LIVE-vs-SHADOW_DAEMON (the paper-execution twin) — same cells, sourced from divergence_ls.
+  const deltaRowLs = mkDeltaRow('Δ live·shadow', dls, row.live, row.shadow_daemon, false)
 
   return (
     <>
       {engineRow('LIVE', 'var(--pos)', 'rgba(46,204,113,0.06)', row.live, true)}
-      {engineRow('STRATEGY', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
-      {deltaRow}
+      {engineRow('SHADOW', '#4aa3df', 'rgba(74,163,223,0.06)', row.shadow_daemon, false)}
+      {engineRow('LIVEREF', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
+      {deltaRowLr}
+      {deltaRowLs}
     </>
   )
 }
