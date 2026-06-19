@@ -25,8 +25,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, isEodMarker, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
+import { COIN_FILTERS, type CoinFilter, canonicalAsset } from '@/lib/phase-h-basket'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
 import { type EquityPoint } from './Charts'
@@ -156,7 +157,7 @@ const ASSET_LOGOS: Record<string, string> = {
   ADAUSDT:  '/coin-icons/ada.png',
   TRXUSDT:  '/coin-icons/trx.png',
   ZECUSDT:  '/coin-icons/zec.png',
-  TONUSDT:  '/coin-icons/ton.png',
+  GRAMUSDT: '/coin-icons/ton.png',  // GRAM = rebranded TON (Option B); reuse the TON logo
   HYPEUSDT: '/coin-icons/hype.png',
   NEARUSDT: '/coin-icons/near.png',
   OPUSDT:   '/coin-icons/op.png',
@@ -502,13 +503,20 @@ export function BacktestingContent() {
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + TON + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
           <span>—</span>
-          <span>{trades.length > 0 ? new Date(trades[trades.length - 1].exitTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
+          <span>{(() => {
+            // Use allTrades (closed + live-forward) so the end date stays current
+            // as new trades append. Falls back to pinned trades if allTrades not yet loaded.
+            const src = allTrades.length > 0 ? allTrades : trades
+            if (!src.length) return '—'
+            const maxTs = src.reduce((m, t) => Math.max(m, t.exitTs || 0, t.entryTs || 0), 0)
+            return maxTs > 0 ? new Date(maxTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+          })()}</span>
           <span>·</span>
           <span>{trades.length.toLocaleString()} trades</span>
           {updatedAgo ? (() => {
@@ -1588,10 +1596,10 @@ function ListIcon() {
 
 // ─── Trades table (List of Trades view) ─────────────────────────────────────
 
-type CoinFilter = 'ALL' | 'BTC' | 'ETH' | 'SOL' | 'BNB' | 'XRP' | 'DOGE' | 'LINK' | 'SUI' | 'AVAX' | 'ADA' | 'TRX' | 'ZEC' | 'TON' | 'HYPE'
+// CoinFilter + COIN_FILTERS come from the ONE canonical basket (lib/phase-h-basket):
+// the TON→GRAM rebrand and NEAR/OP propagate here automatically (no local 14-asset list).
 type SideFilter = 'ALL' | 'LONG' | 'SHORT'
 
-const COIN_FILTERS: CoinFilter[] = ['ALL', 'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'LINK', 'SUI', 'AVAX', 'ADA', 'TRX', 'ZEC', 'TON', 'HYPE']
 const SIDE_FILTERS: SideFilter[] = ['ALL', 'LONG', 'SHORT']
 
 function fmtTradeTs(ms: number): string {
@@ -1640,7 +1648,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
 
   const filtered = useMemo(() => {
     return trades.filter(tr => {
-      if (coin !== 'ALL' && !(tr.symbol || '').startsWith(coin)) return false
+      if (coin !== 'ALL' && canonicalAsset(tr.symbol) !== coin) return false  // rebrand-aware: GRAM chip matches old TON-labeled rows
       if (side === 'LONG' && tr.dir <= 0) return false
       if (side === 'SHORT' && tr.dir >= 0) return false
       return true
@@ -1820,7 +1828,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
                   </td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{fmt$(dispPnl)}</td>
                   <td className={'num ' + (dispPnl > 0 ? 'pos-text' : 'neg-text')}>{dispReturnPct.toFixed(2)}%</td>
-                  <td className="num" style={{ color: 'var(--muted)' }}>{open ? 'Open · Strategy holding' : (tr._liveTail ? <span style={{ fontStyle: 'italic' }}>Live forward · market</span> : (tr.displayReason || tr.reason))}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{open ? 'Open · Strategy holding' : prettyExitReason(tr.displayReason || tr.reason)}</td>
                   {showCfgColumn ? (
                     <td className="num" style={{ color: 'var(--muted)', fontSize: 10, fontFamily: 'monospace' }}>
                       {tr.cfg_sid || '—'}
