@@ -334,14 +334,18 @@ export function BacktestingContent() {
         } else {
           const fwdAll = fwdTrades as PortfolioTrade[]
           pubTrades = fwdAll
-          // 2026-06-12 (a): frozen-only headline. The admin route appends a
-          // live-forward tail (market-entry trades closed since the last full
-          // regen, flagged `_liveTail`) for visibility — but those must NEVER
-          // enter the LOCKED metrics, or the headline drifts off the locked
-          // limit numbers ($94,102 / $225,297 / $380,113). Exclude _liveTail
-          // here; the tail still shows in the LIST below (flagged). preview/
-          // two-store paths carry no _liveTail rows, so this is a no-op there.
-          metricsClosed = fwdAll.filter(t => !isEodMarker(t) && !t._liveTail)
+          // 2026-06-27 (Chris, authoritative): LIVE-FORWARD metrics. The admin
+          // route appends a live-forward tail (trades closed since the last full
+          // regen, flagged `_liveTail`, RISK-SIZED natively by the route from the
+          // liveref stop — same sizing methodology as the frozen 3,458 backbone,
+          // so they append cleanly). These are now COUNTED in the metrics — the
+          // headline SHOULD move forward as trades close (no customers yet, the
+          // numbers are a live track record, not a locked marketing figure). The
+          // metrics therefore compute over the SAME closed set the LIST shows.
+          // Open positions are still excluded (isEodMarker / no exitTs). Supersedes
+          // the 2026-06-12 frozen-only headline. preview/two-store carry no
+          // `_liveTail` rows → no-op there.
+          metricsClosed = fwdAll.filter(t => !isEodMarker(t))
         }
         // 2026-05-27 Option D: pass viewed tier so shadow rows get filtered by
         // tier match before merging (no cross-tier bleed). Shadow bridges the
