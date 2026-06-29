@@ -26,6 +26,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { authedFetch } from '@/lib/api'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { Icons } from './Icons'
+import { PHASE_H_SYMBOLS } from '@/lib/phase-h-basket'
 import {
   StrategyResearchPanel,
   BestStaxsPanel,
@@ -555,7 +556,12 @@ type CompRow = {
   symbol: string
   tf: string
   entry_bar_ts: number
-  status: 'matched' | 'discrepancy' | 'live_only' | 'shadow_only'
+  // 2026-06-23 (audit #61): three NEW classes — off_script_exit / off_script_entry are
+  // ALARMING breaches the tab was previously blind to (the WINDOW_EDGE/ETH +
+  // GRAM-freelance classes); off_book is the SANCTIONED off-reference real set
+  // (GRAM/TRX), surfaced but NEUTRAL.
+  status: 'matched' | 'discrepancy' | 'live_only' | 'shadow_only' | 'pending'
+    | 'off_script_exit' | 'off_script_entry' | 'off_book'
   severity: CompSeverity
   live: TradeSide | null
   shadow: TradeSide | null
@@ -594,7 +600,8 @@ type CompRow = {
     severity: CompSeverity
     verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
-  verdict?: 'aligned' | 'liveref_outlier' | 'exec_drift' | 'one_sided'
+  verdict?: 'aligned' | 'liveref_outlier' | 'exec_drift' | 'one_sided' | 'pending' | 'live_missing'
+    | 'off_script_exit' | 'off_script_entry' | 'off_book'
 }
 
 type CompResp = {
@@ -606,6 +613,11 @@ type CompResp = {
     discrepancy_severe: number
     live_only: number
     shadow_only: number
+    pending?: number
+    // 2026-06-23 (audit #61): off-script / off-book class counts.
+    off_script_exit?: number
+    off_script_entry?: number
+    off_book?: number
     mean_entry_price_divergence_pct: number
     // 2026-06-15 triangulation verdict counts (3-way live | shadow | liveref)
     aligned?: number
@@ -617,7 +629,7 @@ type CompResp = {
 }
 
 function ExecutionPanel({ active }: { active: boolean }) {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'discrepancy' | 'live_only' | 'shadow_only'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'discrepancy' | 'live_only' | 'shadow_only' | 'pending' | 'off_script_exit' | 'off_script_entry' | 'off_book'>('all')
   const [assetFilter, setAssetFilter] = useState<string>('all')
 
   const fetcher = useCallback(async () => {
@@ -632,19 +644,19 @@ function ExecutionPanel({ active }: { active: boolean }) {
   // (2026-06-08) PnL is now the price-move return % computed per-side from
   // entry/exit prices — no account-balance lookup needed.
 
-  // 16-asset Phase H symbols for filter dropdown
-  const PHASE_H_SYMS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT',
-    'LINKUSDT','SUIUSDT','AVAXUSDT','ADAUSDT','TRXUSDT','ZECUSDT','TONUSDT','HYPEUSDT','NEARUSDT','OPUSDT']
+  // Filter dropdown = the ONE canonical basket symbols (lib/phase-h-basket).
+  // TON→GRAM rebrand + NEAR/OP propagate automatically.
+  const PHASE_H_SYMS = PHASE_H_SYMBOLS
 
   return (
     <div className="stax-page">
       <PageHeader
-        eyebrow="ADMIN · ENGINE PARITY"
-        lead="Live vs"
-        accent="strategy."
+        eyebrow="ADMIN · ENGINE TRIANGULATION"
+        lead="Live ·"
+        accent="liveref."
         blurb={
-          'Trade-level reconciliation. LIVE = Bitget real fills (your account). STRATEGY = the published strategy book the Backtesting page serves. ' +
-          'Paired by cfg_sid + entry bar. Gap between them = execution friction = product value. ' +
+          'Two-way trade reconciliation. LIVE = Bitget real fills (your account). LIVEREF = the published-canonical strategy book the Backtesting page serves. ' +
+          'Paired by cfg_sid + entry bar; the Δ live·liveref delta surfaces any convention drift between your real fills and the canonical book. ' +
           'Refreshes every 60s.'
         }
         refreshing={px.loading}
@@ -670,14 +682,20 @@ function ExecutionPanel({ active }: { active: boolean }) {
         <StatCard
           label="Live only"
           value={r?.summary.live_only ?? '—'}
-          sub="not in strategy · 🔴"
+          sub="not in liveref · 🔴"
           tone={r?.summary.live_only ? 'neg' : 'muted'}
         />
         <StatCard
-          label="Strategy only"
+          label="Liveref only"
           value={r?.summary.shadow_only ?? '—'}
           sub="live missed · 🔴"
           tone={r?.summary.shadow_only ? 'neg' : 'muted'}
+        />
+        <StatCard
+          label="Pending"
+          value={r?.summary.pending ?? '—'}
+          sub="intra-bar · ref bar open"
+          tone="muted"
         />
         {/* 2026-06-15 triangulation verdicts (3-way live | shadow | liveref) */}
         <StatCard
@@ -697,6 +715,26 @@ function ExecutionPanel({ active }: { active: boolean }) {
           value={r?.summary.exec_drift ?? '—'}
           sub="live ≠ shadow daemon"
           tone={r?.summary.exec_drift ? 'neg' : 'muted'}
+        />
+        {/* 2026-06-23 (audit #61): off-script / off-book classes. off_script_* = breaches the
+            tab was previously blind to; off_book = SANCTIONED off-reference reals (neutral). */}
+        <StatCard
+          label="Off-script exit"
+          value={r?.summary.off_script_exit ?? '—'}
+          sub="live closed · liveref holds · 🔴"
+          tone={r?.summary.off_script_exit ? 'neg' : 'muted'}
+        />
+        <StatCard
+          label="Off-script entry"
+          value={r?.summary.off_script_entry ?? '—'}
+          sub="live opened · not in liveref · 🔴"
+          tone={r?.summary.off_script_entry ? 'neg' : 'muted'}
+        />
+        <StatCard
+          label="Off-book"
+          value={r?.summary.off_book ?? '—'}
+          sub="sanctioned real · GRAM/TRX"
+          tone="muted"
         />
       </div>
 
@@ -725,7 +763,11 @@ function ExecutionPanel({ active }: { active: boolean }) {
             { id: 'matched', label: 'Matched', count: r?.summary.matched ?? null },
             { id: 'discrepancy', label: 'Discrepancy', count: r?.summary.discrepancy ?? null },
             { id: 'live_only', label: 'Live only', count: r?.summary.live_only ?? null },
-            { id: 'shadow_only', label: 'Strategy only', count: r?.summary.shadow_only ?? null },
+            { id: 'shadow_only', label: 'Liveref only', count: r?.summary.shadow_only ?? null },
+            { id: 'pending', label: 'Pending', count: r?.summary.pending ?? null },
+            { id: 'off_script_exit', label: 'Off-script exit', count: r?.summary.off_script_exit ?? null },
+            { id: 'off_script_entry', label: 'Off-script entry', count: r?.summary.off_script_entry ?? null },
+            { id: 'off_book', label: 'Off-book', count: r?.summary.off_book ?? null },
           ]}
         />
         <select
@@ -743,7 +785,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
 
       {/* Trade comparison table */}
       {!r || r.trades.length === 0 ? (
-        <SectionCard title="TRADE LEDGER · LIVE vs STRATEGY">
+        <SectionCard title="TRADE LEDGER · LIVE | LIVEREF">
           <EmptyBox>
             {px.loading
               ? 'Loading…'
@@ -751,7 +793,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
           </EmptyBox>
         </SectionCard>
       ) : (
-        <SectionCard title={`TRADE LEDGER · LIVE vs STRATEGY · ${r.trades.length} entries`}>
+        <SectionCard title={`TRADE LEDGER · LIVE | LIVEREF · ${r.trades.length} entries`}>
           {/* 2026-06-06 redesign (Chris): one ROW PER ENGINE — a LIVE row
               (green) + a SHADOW row (grey) stacked per trade, then a Δ row with
               the entry/exit/SL/PnL/timing divergences. Lets him eyeball
@@ -806,7 +848,12 @@ function CompRow({ row }: { row: CompRow }) {
     discrepancy: { label: 'DISCREPANCY', color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)',
                    bg: row.severity === 'severe' ? 'rgba(231,76,60,0.06)' : 'rgba(212,160,23,0.06)' },
     live_only:   { label: 'LIVE ONLY',   color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
-    shadow_only: { label: 'STRATEGY ONLY', color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
+    shadow_only: { label: 'LIVEREF ONLY', color: 'var(--neg)',  bg: 'rgba(231,76,60,0.07)' },
+    pending:     { label: 'PENDING',     color: '#8a94a6',     bg: 'rgba(138,148,166,0.05)' },
+    // 2026-06-23 (audit #61): off-script breaches (red, alarming) + off-book (neutral grey).
+    off_script_exit:  { label: 'OFF-SCRIPT EXIT',  color: 'var(--neg)', bg: 'rgba(231,76,60,0.10)' },
+    off_script_entry: { label: 'OFF-SCRIPT ENTRY', color: 'var(--neg)', bg: 'rgba(231,76,60,0.10)' },
+    off_book:         { label: 'OFF-BOOK',         color: '#8a94a6',    bg: 'rgba(138,148,166,0.05)' },
   }
   const sc = statusCfg[row.status] ?? statusCfg.matched
 
@@ -817,6 +864,13 @@ function CompRow({ row }: { row: CompRow }) {
     aligned:         { label: '✓ ALIGNED',         color: 'var(--pos)' },
     liveref_outlier: { label: '⚠ LIVEREF OUTLIER', color: 'var(--gold)' },
     exec_drift:      { label: '⚠ EXEC DRIFT',      color: 'var(--neg)' },
+    pending:         { label: '◷ PENDING',         color: '#8a94a6' },
+    live_missing:    { label: '⚠ LIVE MISSING',    color: 'var(--gold)' },
+    // 2026-06-23 (audit #61): off-script breaches name the direction (closed-too-soon vs
+    // opened-uninstructed); off-book is sanctioned, neutral.
+    off_script_exit:  { label: '⛔ OFF-SCRIPT EXIT',  color: 'var(--neg)' },
+    off_script_entry: { label: '⛔ OFF-SCRIPT ENTRY', color: 'var(--neg)' },
+    off_book:         { label: '◆ OFF-BOOK',          color: '#8a94a6' },
     one_sided:       { label: '—',                 color: '#9aa4b2' },
   }
   const vc = verdictCfg[row.verdict ?? 'one_sided'] ?? verdictCfg.one_sided
@@ -826,13 +880,28 @@ function CompRow({ row }: { row: CompRow }) {
   const tfMs = (TF_SEC[row.tf] || 0) * 1000
   const barTs = row.entry_bar_ts + tfMs
   const barStr = barTs ? new Date(barTs).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—'
-  const cfgShort = row.cfg_sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
+  // 2026-06-16 (GRAM/TON remap): the cfg_sid embeds the PRE-remap asset token (V3G_TON_* trades
+  // GRAM 1:1 post-Option-B), so deriving the label from the sid shows the stale "TON". Show the
+  // RESOLVED current asset (row.asset, from the route's per-position metaFromKey) instead; fall
+  // back to the sid token only when the asset can't be resolved (reference-only rows).
+  const sidToken = (sid: string) => sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
+  const cfgShort = row.asset || sidToken(row.cfg_sid)
+  // 2026-06-16 cfg PER ENGINE — the per-engine label tracks the same resolved asset; a cfg
+  // mismatch (live ≠ liveref FCFS lane attribution) is still flagged by cfgClash (⚠) below and
+  // the Δ-row CFG MISMATCH text (which carries the distinguishing hashes), so the asset label
+  // no longer needs to embed the stale sid token.
+  const cfgShortOf = (sid: string | null | undefined) =>
+    sid ? (row.asset || sidToken(sid)) : null
 
   const d = row.divergence
-  const dls = row.divergence_ls
-  const paired = row.status === 'matched' || row.status === 'discrepancy'
-  // 3 engine rows (LIVE / SHADOW / LIVEREF) always; + a Δ row per available delta.
-  const nRows = 3 + (paired && d ? 1 : 0) + (dls ? 1 : 0)
+  // 2026-06-29: SHADOW (paper-twin) column REMOVED — clean LIVE ⟷ LIVEREF comparison.
+  // 2026-06-23 (audit #61): off_script_exit carries BOTH sides (live closed + liveref
+  // still-open), so its Δ live·liveref row renders too — the operator sees the entry/exit
+  // deltas of the position live closed off-script. The other new classes are one-sided.
+  const hasLrDelta = !!(row.live && row.shadow && d)
+  const paired = row.status === 'matched' || row.status === 'discrepancy' || row.status === 'off_script_exit'
+  // 2 engine rows (LIVE / LIVEREF) always; + the Δ live·liveref row when available.
+  const nRows = 2 + (paired && hasLrDelta ? 1 : 0)
 
   // SL Δ keeps a neutral magnitude scale (not in Chris's directional spec).
   const pctColor = (pct: number | null | undefined) =>
@@ -894,7 +963,7 @@ function CompRow({ row }: { row: CompRow }) {
   const tradeCell = (
     <td rowSpan={nRows} style={{ background: sc.bg, borderLeft: `3px solid ${sc.color}`, verticalAlign: 'top' }}>
       <span style={{ color: sc.color, fontWeight: 800, fontSize: 11, whiteSpace: 'nowrap', letterSpacing: 0.3 }}>{sc.label}</span>
-      {row.status === 'discrepancy' && (
+      {(row.status === 'discrepancy' || row.status === 'off_script_exit' || row.status === 'off_script_entry') && row.severity !== 'none' && (
         <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: row.severity === 'severe' ? 'var(--neg)' : 'var(--gold)', textTransform: 'uppercase' }}>{row.severity}</span>
       )}
       <div style={{ marginTop: 3 }}>
@@ -909,14 +978,24 @@ function CompRow({ row }: { row: CompRow }) {
     </td>
   )
 
-  // one engine data row (LIVE green / SHADOW grey)
-  const engineRow = (label: string, color: string, bg: string, s: TradeSide | null, isFirst: boolean) => (
+  // one engine data row (LIVE green / SHADOW blue / LIVEREF grey) + its cfg_sid
+  const engineRow = (label: string, color: string, bg: string, s: TradeSide | null, isFirst: boolean, cfgSid?: string | null) => {
+    const cfgTxt = cfgShortOf(cfgSid)
+    const cfgClash = !!cfgSid && cfgSid !== row.cfg_sid
+    return (
     <tr style={{ background: bg }}>
       {isFirst && tradeCell}
       <td style={{ whiteSpace: 'nowrap' }}>
-        <span style={{ color, fontWeight: 700, fontSize: 11 }}>● {label}</span>
-        {s?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}
-        {!s && <span className="adm-stat-sub" style={{ fontSize: 9, marginLeft: 4 }}>no trade</span>}
+        <div>
+          <span style={{ color, fontWeight: 700, fontSize: 11 }}>● {label}</span>
+          {s?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}
+          {!s && <span className="adm-stat-sub" style={{ fontSize: 9, marginLeft: 4 }}>no trade</span>}
+        </div>
+        {cfgTxt && (
+          <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: cfgClash ? 'var(--neg)' : '#7d8aa0', marginTop: 1 }}>
+            {cfgTxt}{cfgClash ? ' ⚠' : ''}
+          </div>
+        )}
       </td>
       <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'entry_price')}</td>
       <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s, 'entry_ts_ms')}</td>
@@ -926,7 +1005,8 @@ function CompRow({ row }: { row: CompRow }) {
       <td className="num" style={{ textAlign: 'right' }}>{pnlCell(s)}</td>
       <td>{reasonCell(s)}</td>
     </tr>
-  )
+    )
+  }
 
   const dCell = (val: React.ReactNode, color: string) => (
     <td className="num" style={{ textAlign: 'right', fontSize: 10, color }}>{val}</td>
@@ -989,17 +1069,13 @@ function CompRow({ row }: { row: CompRow }) {
   }
 
   // LIVE-vs-LIVEREF (the published-canonical reference, kept on row.shadow).
-  const deltaRowLr = (paired && d) ? mkDeltaRow('Δ live·liveref', d, row.live, row.shadow, true) : null
-  // LIVE-vs-SHADOW_DAEMON (the paper-execution twin) — same cells, sourced from divergence_ls.
-  const deltaRowLs = mkDeltaRow('Δ live·shadow', dls, row.live, row.shadow_daemon, false)
+  const deltaRowLr = (paired && hasLrDelta) ? mkDeltaRow('Δ live·liveref', d, row.live, row.shadow, true) : null
 
   return (
     <>
-      {engineRow('LIVE', 'var(--pos)', 'rgba(46,204,113,0.06)', row.live, true)}
-      {engineRow('SHADOW', '#4aa3df', 'rgba(74,163,223,0.06)', row.shadow_daemon, false)}
-      {engineRow('LIVEREF', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false)}
+      {engineRow('LIVE', 'var(--pos)', 'rgba(46,204,113,0.06)', row.live, true, row.cfg_sid)}
+      {engineRow('LIVEREF', '#9aa4b2', 'rgba(255,255,255,0.028)', row.shadow, false, row.shadow_cfg_sid ?? row.cfg_sid)}
       {deltaRowLr}
-      {deltaRowLs}
     </>
   )
 }
