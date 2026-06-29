@@ -971,6 +971,7 @@ function CompRow({ row }: { row: CompRow }) {
         <span style={{ color: sideColor, fontSize: 10, fontWeight: 700, marginLeft: 6, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{side}</span>
       </div>
       <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort} · {row.tf}</div>
+      <div className="adm-stat-sub" style={{ fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{row.cfg_sid}</div>
       <div className="adm-stat-sub" style={{ fontSize: 10 }}>{barStr} · {fmtAge(barTs)}</div>
       <div style={{ marginTop: 4 }}>
         <span style={{ color: vc.color, fontWeight: 800, fontSize: 9, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{vc.label}</span>
