@@ -949,11 +949,22 @@ function CompRow({ row }: { row: CompRow }) {
     }
     return <span className="adm-stat-sub">{s.open ? 'open' : '—'}</span>
   }
-  // entry/exit fill time (UTC HH:MM:SS); `field` selects which timestamp.
+  // Candle CLOSE time (UTC HH:MM:SS). Signals confirm at the bar CLOSE, so entries and
+  // signal-based exits (TP_RSI / StrongAlert / OppositeSignal) display the bar close
+  // (open + TF) — e.g. a 2h signal on the 04:00 bar is placed at the 06:00 close, not 04:00.
+  // Trail/SL exits fire INTRA-bar (an exchange stop mid-bar) → keep their actual fill time.
+  const SIGNAL_EXIT_RE = /strongalert|tp_rsi|rsi|opposite/i
   const timeCell = (s: TradeSide | null, field: 'entry_ts_ms' | 'exit_ts_ms') => {
     const v = s ? s[field] : null
     if (!s || v == null) return <span className="adm-stat-sub">{field === 'exit_ts_ms' && s?.open ? 'open' : '—'}</span>
-    return <>{new Date(v).toISOString().slice(11, 19)}Z</>
+    const tfMs = (TF_SEC[row.tf] || 0) * 1000
+    let shown = v
+    if (field === 'entry_ts_ms') {
+      if (s.entry_bar_ts && tfMs) shown = s.entry_bar_ts + tfMs               // entry confirms at bar CLOSE
+    } else if (tfMs && SIGNAL_EXIT_RE.test(s.exit_reason ?? '')) {
+      shown = Math.floor(v / tfMs) * tfMs + tfMs                              // signal exit booked at bar CLOSE
+    }                                                                         // else Trail/SL → intra-bar fill time
+    return <>{new Date(shown).toISOString().slice(11, 19)}Z</>
   }
   const reasonCell = (s: TradeSide | null) =>
     !s ? <span className="adm-stat-sub">—</span>
