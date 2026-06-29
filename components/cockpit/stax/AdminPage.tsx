@@ -805,6 +805,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
                 <tr>
                   <th>Trade</th>
                   <th>Engine</th>
+                  <th>Cfg</th>
                   <th style={{ textAlign: 'right' }}>Entry px</th>
                   <th style={{ textAlign: 'right' }}>Entry time</th>
                   <th style={{ textAlign: 'right' }}>Exit px</th>
@@ -981,8 +982,7 @@ function CompRow({ row }: { row: CompRow }) {
         <span className="num" style={{ fontWeight: 700 }}>{sym}</span>
         <span style={{ color: sideColor, fontSize: 10, fontWeight: 700, marginLeft: 6, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{side}</span>
       </div>
-      <div className="adm-stat-sub" style={{ fontSize: 10 }}>{cfgShort} · {row.tf}</div>
-      <div className="adm-stat-sub" style={{ fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{row.cfg_sid}</div>
+      <div className="adm-stat-sub" style={{ fontSize: 10 }}>{row.tf}</div>
       <div className="adm-stat-sub" style={{ fontSize: 10 }}>{barStr} · {fmtAge(barTs)}</div>
       <div style={{ marginTop: 4 }}>
         <span style={{ color: vc.color, fontWeight: 800, fontSize: 9, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{vc.label}</span>
@@ -1003,11 +1003,9 @@ function CompRow({ row }: { row: CompRow }) {
           {s?.open && <span style={{ fontSize: 9, color: 'var(--gold)', marginLeft: 4 }}>open</span>}
           {!s && <span className="adm-stat-sub" style={{ fontSize: 9, marginLeft: 4 }}>no trade</span>}
         </div>
-        {cfgTxt && (
-          <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: cfgClash ? 'var(--neg)' : '#7d8aa0', marginTop: 1 }}>
-            {cfgTxt}{cfgClash ? ' ⚠' : ''}
-          </div>
-        )}
+      </td>
+      <td style={{ fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: cfgClash ? 'var(--neg)' : '#7d8aa0', whiteSpace: 'nowrap' }}>
+        {s ? (cfgTxt || '—') : '—'}{cfgClash ? ' ⚠' : ''}
       </td>
       <td className="num" style={{ textAlign: 'right' }}>{pxCell(s, 'entry_price')}</td>
       <td className="num" style={{ textAlign: 'right', fontSize: 11 }}>{timeCell(s, 'entry_ts_ms')}</td>
@@ -1057,6 +1055,7 @@ function CompRow({ row }: { row: CompRow }) {
     return (
       <tr style={{ background: 'rgba(255,255,255,0.015)', borderBottom: '2px solid rgba(255,255,255,0.07)' }}>
         <td style={{ whiteSpace: 'nowrap' }}><span className="adm-stat-sub" style={{ fontSize: 10, fontWeight: 700 }}>{label}</span></td>
+        <td />{/* Cfg column spacer */}
         {dCell(pctStr(dv.entry_price_diff_pct), entryPxColor(dv.entry_price_diff_pct))}
         {dCell(secs(dv.timing_diff_ms), timeDirColor(dv.timing_diff_ms))}
         {dCell(pctStr(dv.exit_price_diff_pct), exitPxColor(dv.exit_price_diff_pct))}
