@@ -561,7 +561,7 @@ type CompRow = {
   // GRAM-freelance classes); off_book is the SANCTIONED off-reference real set
   // (GRAM/TRX), surfaced but NEUTRAL.
   status: 'matched' | 'discrepancy' | 'live_only' | 'shadow_only' | 'pending'
-    | 'off_script_exit' | 'off_script_entry' | 'off_book'
+    | 'off_script_exit' | 'off_script_entry' | 'off_book' | 'pending_ref'
   severity: CompSeverity
   live: TradeSide | null
   shadow: TradeSide | null
@@ -601,13 +601,17 @@ type CompRow = {
     verdict: 'clean' | 'minor' | 'significant' | 'no_pair'
   } | null
   verdict?: 'aligned' | 'liveref_outlier' | 'exec_drift' | 'one_sided' | 'pending' | 'live_missing'
-    | 'off_script_exit' | 'off_script_entry' | 'off_book'
+    | 'off_script_exit' | 'off_script_entry' | 'off_book' | 'pending_ref'
 }
 
 type CompResp = {
   trades: CompRow[]
   summary: {
     total: number
+    // A.2-E (2026-06-30): tab self-test — completeness + determinism. degraded=true → the tab
+    // dropped a current trade or rendered a non-deterministic set; show a DEGRADED banner, never
+    // a false-clean (a silently-wrong tab is what started this whole arc).
+    self_test?: { completeness: boolean; determinism: boolean; degraded: boolean; reasons: string[] }
     matched: number
     discrepancy: number
     discrepancy_severe: number
@@ -618,6 +622,8 @@ type CompResp = {
     off_script_exit?: number
     off_script_entry?: number
     off_book?: number
+    // 2026-07-03 (Chris): PENDING-REF — fresh live entry awaiting the liveref publish.
+    pending_ref?: number
     mean_entry_price_divergence_pct: number
     // 2026-06-15 triangulation verdict counts (3-way live | shadow | liveref)
     aligned?: number
@@ -629,7 +635,7 @@ type CompResp = {
 }
 
 function ExecutionPanel({ active }: { active: boolean }) {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'discrepancy' | 'live_only' | 'shadow_only' | 'pending' | 'off_script_exit' | 'off_script_entry' | 'off_book'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'matched' | 'discrepancy' | 'live_only' | 'shadow_only' | 'pending' | 'off_script_exit' | 'off_script_entry' | 'off_book' | 'pending_ref'>('all')
   const [assetFilter, setAssetFilter] = useState<string>('all')
 
   const fetcher = useCallback(async () => {
@@ -663,6 +669,20 @@ function ExecutionPanel({ active }: { active: boolean }) {
         onRefresh={px.refresh}
       />
       <ErrorBox msg={px.error} />
+
+      {/* A.2-E: tab self-test DEGRADED banner — fail loud, never show a false-clean. */}
+      {r?.summary.self_test?.degraded && (
+        <div style={{
+          margin: '8px 0', padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(255,77,79,0.12)', border: '1px solid var(--neg)',
+          color: 'var(--neg)', fontSize: 12, fontWeight: 700,
+        }}>
+          ⚠ EXEC TAB DEGRADED — this view may be incomplete or inconsistent. Do not trust as clean.
+          {r.summary.self_test.reasons?.length ? (
+            <div style={{ fontWeight: 400, marginTop: 4 }}>{r.summary.self_test.reasons.join(' · ')}</div>
+          ) : null}
+        </div>
+      )}
 
       {/* Summary row — matched / discrepancy / one-sided at a glance */}
       <div className="row row-stats">
@@ -768,6 +788,7 @@ function ExecutionPanel({ active }: { active: boolean }) {
             { id: 'off_script_exit', label: 'Off-script exit', count: r?.summary.off_script_exit ?? null },
             { id: 'off_script_entry', label: 'Off-script entry', count: r?.summary.off_script_entry ?? null },
             { id: 'off_book', label: 'Off-book', count: r?.summary.off_book ?? null },
+            { id: 'pending_ref', label: 'Pending-ref', count: r?.summary.pending_ref ?? null },
           ]}
         />
         <select
@@ -855,6 +876,9 @@ function CompRow({ row }: { row: CompRow }) {
     off_script_exit:  { label: 'OFF-SCRIPT EXIT',  color: 'var(--neg)', bg: 'rgba(231,76,60,0.10)' },
     off_script_entry: { label: 'OFF-SCRIPT ENTRY', color: 'var(--neg)', bg: 'rgba(231,76,60,0.10)' },
     off_book:         { label: 'OFF-BOOK',         color: '#8a94a6',    bg: 'rgba(138,148,166,0.05)' },
+    // 2026-07-03 (Chris): fresh live entry awaiting the liveref publish — neutral
+    // transient, matures into off_book/off_script_entry after the publish grace.
+    pending_ref:      { label: 'PENDING-REF',      color: '#8a94a6',    bg: 'rgba(138,148,166,0.05)' },
   }
   const sc = statusCfg[row.status] ?? statusCfg.matched
 
@@ -872,6 +896,7 @@ function CompRow({ row }: { row: CompRow }) {
     off_script_exit:  { label: '⛔ OFF-SCRIPT EXIT',  color: 'var(--neg)' },
     off_script_entry: { label: '⛔ OFF-SCRIPT ENTRY', color: 'var(--neg)' },
     off_book:         { label: '◆ OFF-BOOK',          color: '#8a94a6' },
+    pending_ref:      { label: '◷ AWAITING-LIVEREF',   color: '#8a94a6' },
     one_sided:       { label: '—',                 color: '#9aa4b2' },
   }
   const vc = verdictCfg[row.verdict ?? 'one_sided'] ?? verdictCfg.one_sided
@@ -886,13 +911,20 @@ function CompRow({ row }: { row: CompRow }) {
   // RESOLVED current asset (row.asset, from the route's per-position metaFromKey) instead; fall
   // back to the sid token only when the asset can't be resolved (reference-only rows).
   const sidToken = (sid: string) => sid.replace(/^V3G_/, '').replace(/_[0-9a-f]+$/, '')
-  const cfgShort = row.asset || sidToken(row.cfg_sid)
-  // 2026-06-16 cfg PER ENGINE — the per-engine label tracks the same resolved asset; a cfg
-  // mismatch (live ≠ liveref FCFS lane attribution) is still flagged by cfgClash (⚠) below and
-  // the Δ-row CFG MISMATCH text (which carries the distinguishing hashes), so the asset label
-  // no longer needs to embed the stale sid token.
-  const cfgShortOf = (sid: string | null | undefined) =>
-    sid ? (row.asset || sidToken(sid)) : null
+  // A.2-C (2026-06-30): show the REAL cfg_sid per leg, not just the asset. The old label collapsed
+  // every cfg on an asset into one token (so BNB long V3G_BNB_1452a92772 and the old BNB short read
+  // identically). Show <resolved-asset>_<hash> — asset-corrected (no stale TON token from the GRAM
+  // remap) PLUS the distinguishing hash so multiple cfgs on one asset are disambiguated. Full
+  // cfg_sid is on the cell title (hover).
+  const sidHash = (sid: string) => (sid.match(/_([0-9a-f]+)$/)?.[1] || '')
+  const cfgLabelOf = (sid: string | null | undefined) => {
+    if (!sid) return null
+    const asset = row.asset || sidToken(sid)
+    const h = sidHash(sid)
+    return h ? `${asset}_${h}` : asset
+  }
+  const cfgShort = cfgLabelOf(row.cfg_sid) || ''
+  const cfgShortOf = cfgLabelOf
 
   const d = row.divergence
   // 2026-06-29: SHADOW (paper-twin) column REMOVED — clean LIVE ⟷ LIVEREF comparison.
@@ -961,7 +993,13 @@ function CompRow({ row }: { row: CompRow }) {
     const tfMs = (TF_SEC[row.tf] || 0) * 1000
     let shown = v
     if (field === 'entry_ts_ms') {
-      if (s.entry_bar_ts && tfMs) shown = s.entry_bar_ts + tfMs               // entry confirms at bar CLOSE
+      // A.2-D (2026-06-30): label BOTH legs by the ROW's canonical entry bar, not each leg's own
+      // entry_bar_ts. The same paired trade must read the same close-time on live + liveref — a
+      // limit→market-fallthrough fill stamps a later leg-bar than the signal bar (the OP 08:00-vs-
+      // 16:00 split), which only LOOKED time-divergent. Close-time by design; real fill-time gap is
+      // carried by timing_diff_ms, not the label. Fall back to the leg's own bar if the row's is absent.
+      const barTsForLabel = row.entry_bar_ts || s.entry_bar_ts
+      if (barTsForLabel && tfMs) shown = barTsForLabel + tfMs                  // entry confirms at bar CLOSE
     } else if (tfMs && SIGNAL_EXIT_RE.test(s.exit_reason ?? '')) {
       shown = Math.floor(v / tfMs) * tfMs + tfMs                              // signal exit booked at bar CLOSE
     }                                                                         // else Trail/SL → intra-bar fill time
