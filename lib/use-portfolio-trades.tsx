@@ -53,7 +53,7 @@ export type PortfolioTrade = {
   // schema bump lack this field; the merge layer treats unknown tier as
   // "drop from filtered views" so cross-tier bleed is impossible during
   // the transition window.
-  tier?: 'conservative' | 'moderate' | 'aggressive'
+  tier?: 'conservative' | 'moderate' | 'aggressive' | 'kamikaze'
   // ADMIN-ONLY (server route /api/admin/portfolio-trades). `_liveTail` flags a
   // live-forward row appended after the frozen store's latest exit — the market
   // tail (recently-closed since the last full regen) plus the current open book.
@@ -65,14 +65,14 @@ export type PortfolioTrade = {
   _riskSized?: boolean
 }
 
-export type Tier = 'conservative' | 'moderate' | 'aggressive'
+export type Tier = 'conservative' | 'moderate' | 'aggressive' | 'kamikaze'
 // Legacy DB values may still carry 'bold' — normalize before any tier read.
 export type LegacyTier = Tier | 'bold'
 
 export function normalizeTier(raw: string | undefined | null): Tier {
   const v = (raw || '').toLowerCase()
   if (v === 'bold') return 'aggressive'   // both at 1.0× — same effective sizing
-  if (v === 'conservative' || v === 'moderate' || v === 'aggressive') return v
+  if (v === 'conservative' || v === 'moderate' || v === 'aggressive' || v === 'kamikaze') return v
   return 'conservative'
 }
 
@@ -119,6 +119,35 @@ export function isEodMarker(t: PortfolioTrade): boolean {
 }
 
 /**
+ * Canonical exit-reason label for the backtest List of Trades. Maps every raw
+ * engine reason code — backtest store (trail / strongalert / sl / evicted / rsi /
+ * oppositesignal) AND live-forward ledger (SL / Trail / TP_StrongAlert /
+ * WINDOW_EDGE / evicted_for:… / CLOSED_EXTERNALLY) — to ONE consistent
+ * customer-facing label, so the column reads uniformly regardless of which source
+ * a row came from. Live-forward rows are NO LONGER annotated "live forward ·
+ * market" — they show their real exit reason like every other row. Already-
+ * prettified strings (the shadow route's displayReason) pass back through
+ * unchanged; unknown codes degrade to as-is (no data loss).
+ */
+export function prettyExitReason(raw: string | null | undefined): string {
+  if (!raw) return '—'
+  const r = String(raw).toLowerCase().trim()
+  if (r.startsWith('evict')) return 'Eviction'
+  if (r === 'sl' || r === 'sl_intra_bar' || r === 'stop' || r === 'stop_loss' || r === 'stop loss') return 'Stop Loss'
+  if (r === 'trail' || r === 'trail_intra_bar' || r === 'trailing' || r === 'trailing_tp' || r === 'trailing tp') return 'Trailing TP'
+  if (r === 'strongalert' || r === 'tp_strongalert' || r === 'strong alert') return 'Strong alert'
+  if (r === 'rsi') return 'RSI exit'
+  if (r === 'oppositesignal' || r === 'opposite_signal' || r === 'reversal') return 'Reversal'
+  if (r === 'be' || r === 'breakeven') return 'Breakeven'
+  if (r === 'market' || r === 'market_fallthrough') return 'Market'
+  if (r === 'window_edge') return 'Window close'
+  if (r === 'closed_externally') return 'Closed externally'
+  if (r === 'eod' || r === 'eod_close' || r === 'eod_pyr' || r === 'eod_pyr50' || r === 'scalp_eod' || r === 'eod close') return 'EOD close'
+  if (r === 'open') return 'Open'
+  return raw
+}
+
+/**
  * Canonical per-trade notional for the publicly-displayed equity simulation:
  * a fixed $10,000 starting account × the tier sizing multiplier (0.5 / 0.75 /
  * 1.0). Used to normalize any trade whose notional has been corrupted by the
@@ -128,6 +157,7 @@ const TIER_BASE_NOTIONAL: Record<Tier, number> = {
   conservative: 5000,
   moderate:     7500,
   aggressive:   10000,
+  kamikaze:     12500,
 }
 
 /**
@@ -197,7 +227,7 @@ export async function fetchPortfolioTrades(
  * don't await.
  */
 export function prewarmAllTiers(): void {
-  const tiers: Tier[] = ['conservative', 'moderate', 'aggressive']
+  const tiers: Tier[] = ['conservative', 'moderate', 'aggressive', 'kamikaze']
   for (const t of tiers) {
     const cached = cache.get(t)
     if (cached && Date.now() - cached.fetchedAt < CACHE_MS) continue
@@ -486,7 +516,7 @@ export function mergePublisherAndShadow(
   //      so the union can never exceed n_lanes or double-count an asset. This is
   //      the lane-cap invariant the original wholesale-replace was protecting,
   //      now preserved WITHOUT hiding any backtest open.
-  const TIER_LANES: Record<string, number> = { conservative: 2, moderate: 3, aggressive: 5 }
+  const TIER_LANES: Record<string, number> = { conservative: 2, moderate: 3, aggressive: 5, kamikaze: 7 }
   const laneCap = viewedTier ? (TIER_LANES[viewedTier] ?? Infinity) : Infinity
   const shdOpenBySymbol = new Map<string, PortfolioTrade>()
   for (const t of shdOpens) shdOpenBySymbol.set(t.symbol, t)

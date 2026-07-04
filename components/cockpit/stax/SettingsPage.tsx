@@ -18,6 +18,7 @@ import { NotifIcon } from './NotifIcon'
 import { useT } from '@/lib/i18n'
 import { browserClient } from '@/lib/supabase-browser'
 import { authedFetch } from '@/lib/api'
+import { PHASE_H_BASKET } from '@/lib/phase-h-basket'
 import { patchWizardState, useWizardState } from '@/lib/use-wizard-state'
 import { OnboardingTourController, TOUR1_STEPS, TOUR2_STEPS } from './OnboardingTour'
 import { buildCeilingGrid } from '../../../lib/leverage-ceiling'
@@ -523,10 +524,11 @@ type BotConfig = {
   updatedAt?: string
 }
 
-const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive', number> = {
+const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive' | 'kamikaze', number> = {
   conservative: 1,
   moderate: 3,
   aggressive: 6,
+  kamikaze: 9,
 }
 
 // Tier ratios — Phase H Tier-grid v2 (2026-06-09).
@@ -556,17 +558,20 @@ const RESERVE_PCT_BY_TIER: Record<TierKey, number> = {
   conservative: 0.15,
   moderate:     0.20,
   aggressive:   0.30,
+  kamikaze:     0.30,
 }
 
 const TIER_RATIOS = {
   conservative: { lanes: 2, leverage: 1, basePct: 0.50, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
   moderate:     { lanes: 4, leverage: 3, basePct: 0.75, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
   aggressive:   { lanes: 6, leverage: 6, basePct: 1.00, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
+  kamikaze:     { lanes: 7, leverage: 9, basePct: 1.25, sl: 4, label: 'Kamikaze',     blurb: 'Disclosed tail risk — read before selecting.',   recommended: false },
 } as const
 type TierKey = keyof typeof TIER_RATIOS
 
-// Phase H 16-asset basket (locked 2026-05-20; NEAR+OP added 2026-06-01). All tiers trade the same basket.
-const ALPHA_BASKET = ['ADA','AVAX','BNB','BTC','DOGE','ETH','HYPE','LINK','SOL','SUI','TON','TRX','XRP','ZEC'] as const
+// Phase H basket = the ONE canonical list (lib/phase-h-basket), sorted for display.
+// TON→GRAM rebrand + NEAR/OP propagate here automatically. All tiers trade the same basket.
+const ALPHA_BASKET = [...PHASE_H_BASKET].sort()
 
 // Mode = profit handling. Mutually exclusive: at most one of compound / staxs.
 type ModeKey = 'fixed' | 'compound' | 'staxs'
@@ -575,7 +580,7 @@ type ModeKey = 'fixed' | 'compound' | 'staxs'
 function normalizeTierId(raw: string | undefined | null): TierKey {
   const v = (raw || '').toLowerCase()
   if (v === 'bold') return 'aggressive'
-  if (v === 'conservative' || v === 'moderate' || v === 'aggressive') return v
+  if (v === 'conservative' || v === 'moderate' || v === 'aggressive' || v === 'kamikaze') return v
   return 'conservative'
 }
 
@@ -606,6 +611,7 @@ function BotPanel() {
     conservative: t('bot.tierConservative'),
     moderate:     t('bot.tierModerate'),
     aggressive:   t('bot.tierAggressive'),
+    kamikaze:     t('bot.tierKamikaze'),
   } as Record<TierKey, string>)[tier] || t('bot.tierConservative')
 
   if (view === 'wizard') {
@@ -818,6 +824,7 @@ function BotSettingsWizard({
   const [d2, setD2] = useState(false)  // leverage risk
   const [d3, setD3] = useState(false)  // trade authorisation
   const [d4, setD4] = useState(false)  // performance fee structure
+  const [d5, setD5] = useState(false)  // 2026-07-04 KAMIKAZE tail-risk ack (only required when kamikaze selected)
   const [activating, setActivating] = useState(false)
   const [activateMsg, setActivateMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -850,7 +857,7 @@ function BotSettingsWizard({
   const compoundCap = posSize * COMPOUND_CAP_MULTIPLIER
   const reserveTarget = Math.round(capNum * RESERVE_PCT_BY_TIER[preset])
   const overBalance = maxBalance > 0 && capNum > maxBalance
-  const allDisclosuresAck = d1 && d2 && d3 && d4
+  const allDisclosuresAck = d1 && d2 && d3 && d4 && (preset !== 'kamikaze' || d5)
 
   // ── Custom grid (Gap 2) effective sizing ──
   // In custom mode the selected cell {nLanes, basePct} overrides the named
@@ -977,7 +984,7 @@ function BotSettingsWizard({
           <div className="bw-step-title">Choose Your Trading Tier</div>
           <div className="bw-step-sub">Your tier sets how many positions can run concurrently and the leverage applied. Same systematic strategy across all tiers — only concurrency and risk exposure change.</div>
           <div className="bw-step-meta">
-            Staxs trades a 14-cryptocurrency basket using proprietary systematic strategies. Tier choice scales position concurrency, not which assets trade.
+            Staxs trades an 18-cryptocurrency basket using proprietary systematic strategies. Tier choice scales position concurrency, not which assets trade.
           </div>
 
           <button
@@ -986,7 +993,7 @@ function BotSettingsWizard({
             onClick={() => setShowBasket(s => !s)}
             style={{ marginBottom: 12 }}
           >
-            {showBasket ? '▲ Hide' : '▼ View'} asset basket (14 cryptocurrencies)
+            {showBasket ? '▲ Hide' : '▼ View'} asset basket (18 cryptocurrencies)
           </button>
           {showBasket ? (
             <div className="bw-basket-list" style={{ background: 'var(--bg-soft, rgba(0,0,0,0.04))', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 16, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.6, textAlign: 'center' }}>
@@ -1018,7 +1025,7 @@ function BotSettingsWizard({
 
           {pickerMode === 'tier' && (
           <div className="bw-tier-grid">
-            {(['conservative', 'moderate', 'aggressive'] as const).map(p => {
+            {(['conservative', 'moderate', 'aggressive', 'kamikaze'] as const).map(p => {
               const r = TIER_RATIOS[p]
               const sel = preset === p
               return (
@@ -1032,7 +1039,8 @@ function BotSettingsWizard({
                   <div className="bw-tier-ico">
                     {p === 'conservative' ? <SVG><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></SVG>
                       : p === 'moderate' ? <SVG><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></SVG>
-                      : <SVG><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></SVG>}
+                      : p === 'aggressive' ? <SVG><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></SVG>
+                      : <SVG><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M12 2a8 8 0 0 0-8 8c0 3 2 5 3 6v3a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3c1-1 3-3 3-6a8 8 0 0 0-8-8z"/><line x1="10" y1="18" x2="10" y2="21"/><line x1="14" y1="18" x2="14" y2="21"/></SVG>}
                   </div>
                   <div className="bw-tier-name">{r.label}</div>
                   <div className="bw-tier-mult">{r.lanes} lanes · {r.leverage}× leverage</div>
@@ -1486,6 +1494,19 @@ function BotSettingsWizard({
               <input type="checkbox" checked={d4} onChange={e => setD4(e.target.checked)} style={{ marginTop: 3 }} />
               <span>I understand the 20% performance fee is applied to net profit only — no fees on losses.</span>
             </label>
+            {/* 2026-07-04 KAMIKAZE tail-risk panel + mandatory ack — shown ONLY when the Kamikaze tier is selected. */}
+            {preset === 'kamikaze' ? (
+              <div style={{ marginTop: 10, padding: 10, background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.30)', borderRadius: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--neg, #ff4d4f)', marginBottom: 6 }}>⚠ Kamikaze — Disclosed Tail Risk</div>
+                <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text)' }}>
+                  KAMIKAZE (7 lanes / 1.25×) — worst observed 7-year case is a ~61–68% drawdown week (full books occur roughly weekly on volatility events). A beyond-record simultaneous ≥2× gap-through event would be fatal below ~$50k. Minimum account is set by order mechanics (~$1k), NOT by a safety threshold — no account size makes this tier safe from its tail. Position sizing risks ~6.25% of configured capital per trade.
+                </div>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '8px 0 2px', fontSize: 13, fontWeight: 600 }}>
+                  <input type="checkbox" checked={d5} onChange={e => setD5(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span>I understand the Kamikaze tail risk — a beyond-record gap event can be fatal at any account size.</span>
+                </label>
+              </div>
+            ) : null}
           </div>
 
           {activateMsg ? (

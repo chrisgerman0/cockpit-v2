@@ -60,6 +60,7 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'bot.tierConservative':   { en: 'Conservative',  pt: 'Conservador' },
   'bot.tierModerate':       { en: 'Moderate',      pt: 'Moderado' },
   'bot.tierAggressive':     { en: 'Aggressive',    pt: 'Agressivo' },
+  'bot.tierKamikaze':       { en: 'Kamikaze',      pt: 'Kamikaze' },
   // Legacy alias — still emitted for any pre-schema DB rows that didn't migrate.
   'bot.tierBold':           { en: 'Aggressive',    pt: 'Agressivo' },
   'bot.leverage':           { en: 'Leverage',      pt: 'Alavancagem' },

@@ -8,7 +8,7 @@ import type { StaxDashboardData, Position, Trade, CoinSym, TickerAsset, StatCard
 type _CoinSymInternal = CoinSym
 import { authedFetch, browserClient } from './api'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
-import { fetchPortfolioTrades, normalizeTier, type PortfolioTrade, type Tier } from './use-portfolio-trades'
+import { fetchPortfolioTrades, fetchClosedTrades, normalizeTier, type PortfolioTrade, type Tier } from './use-portfolio-trades'
 
 const V1_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT'] as const
 
@@ -18,10 +18,11 @@ const TIER_LABEL: Record<Tier, string> = {
   conservative: 'Conservative tier · 0.5× of balance',
   moderate:     'Moderate tier · 0.75× of balance',
   aggressive:   'Aggressive tier · 1.0× of balance',
+  kamikaze:     'Kamikaze tier · 1.25× of balance',
 }
 
 const TIER_LEV_CAP: Record<Tier, number> = {
-  conservative: 4, moderate: 7, aggressive: 10,
+  conservative: 4, moderate: 7, aggressive: 10, kamikaze: 14,
 }
 
 // Account-wide leverage gauge upper bound = theoretical peak leverage when
@@ -31,7 +32,7 @@ const TIER_LEV_CAP: Record<Tier, number> = {
 //   Moderate     0.75× × 7 × 1.5 = 7.9  → cap 8
 //   Aggressive   1.0×  × 7 × 1.5 = 10.5 → cap 12
 const TIER_GAUGE_MAX: Record<Tier, number> = {
-  conservative: 6, moderate: 8, aggressive: 12,
+  conservative: 6, moderate: 8, aggressive: 12, kamikaze: 16,
 }
 
 type RawTrade = {
@@ -62,7 +63,7 @@ function symToCoin(sym: string): CoinSym {
   // CoinSym (StaxDashboard.tsx) + COIN_ICON_SRC + the publisher's ASSETS list.
   const KNOWN: ReadonlyArray<CoinSym> = [
     'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
-    'ADA', 'AVAX', 'BNB', 'HYPE', 'TON', 'TRX', 'ZEC',
+    'ADA', 'AVAX', 'BNB', 'HYPE', 'GRAM', 'TRX', 'ZEC',
     'NEAR', 'OP',
   ]
   return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
@@ -485,6 +486,12 @@ export function useStaxDashboardData(): StaxLoadState {
         // return). These mirror what the Backtesting page shows so the dashboard
         // surfaces the strategy's track record, not the user's personal slice.
         const portfolio = await fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[])
+        // Recent Trades list (new-user backtest fallback) sources the FORWARD
+        // closed history (liveref closed-trades.json) so it shows the strategy's
+        // RECENT closes — the frozen `portfolio` set ends at the locked backtest
+        // window (~2026-05-29), which made Recent Trades read as stale May rows.
+        // Headline metrics (return/win-rate/streak/equity) stay on frozen `portfolio`.
+        const fwdClosed = await fetchClosedTrades(tier).catch(() => [] as PortfolioTrade[])
         if (cancelled) return
 
         // Realised pnl + return % — USER's account, not the backtest.
@@ -654,7 +661,7 @@ export function useStaxDashboardData(): StaxLoadState {
             entryTs: fmtTradeTs(entryTsMs),
             exitTs: fmtTradeTs(exitTsMs),
           }
-        }) : [...portfolio]
+        }) : [...(fwdClosed.length > 0 ? fwdClosed : portfolio)]
           // Recent Trades widget = CLOSED trades only. Use the same
           // open-trade detector that powers the Open Positions fallback
           // so both sides agree on what "open" means. Without this,

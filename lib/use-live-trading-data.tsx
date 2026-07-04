@@ -359,7 +359,7 @@ export function useLiveTradingData(): LiveLoadState {
         // 0.5×, Moderate 0.75×, Aggressive 1.0× — matches the daemon's tier-
         // sizing canonical (2026-05-10 schema). Pyramided positions are
         // roughly 2× exposure.
-        const TIER_MULT: Record<Tier, number> = { conservative: 0.5, moderate: 0.75, aggressive: 1.0 }
+        const TIER_MULT: Record<Tier, number> = { conservative: 0.5, moderate: 0.75, aggressive: 1.0, kamikaze: 1.25 }
         const tierMult = TIER_MULT[tierForBacktest] ?? 0.5
         const baseNotional = (Number(cfg.activation_balance) || 10000) * tierMult
 

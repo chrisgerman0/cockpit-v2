@@ -66,7 +66,7 @@ type AssetBreakdown = {
 // is fixed, never DISPLAY more open positions than the tier holds (2/4/6). Keep
 // the earliest-entered opens (the FCFS lane-holders); drop the newest over-cap
 // rows. Closed rows pass through untouched. (isOpenTrade is module-hoisted below.)
-const LIVE_LANE_CAP: Record<Tier, number> = { conservative: 2, moderate: 4, aggressive: 6 }
+const LIVE_LANE_CAP: Record<Tier, number> = { conservative: 2, moderate: 4, aggressive: 6, kamikaze: 7 }
 function capOpensForTier(rows: PortfolioTrade[], tier: Tier): PortfolioTrade[] {
   const cap = LIVE_LANE_CAP[tier]
   const opens = rows.filter(isOpenTrade)
@@ -112,6 +112,7 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
   conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '2 lanes / 1× lev' },
   moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '4 lanes / 3× lev' },
   aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '6 lanes / 6× lev' },
+  kamikaze:     { en: 'Kamikaze',     pt: 'Kamikaze',    notional: '$10,000', mult: '7 lanes / 8.75x lev' },
 }
 
 // 2026-06-01: optional `base` lets the ?preview=1 path point at the 71-cfg
@@ -219,6 +220,7 @@ export function BacktestingContent() {
           raw === 'conservative' ? 'conservative' :
           raw === 'moderate' ? 'moderate' :
           (raw === 'aggressive' || raw === 'bold') ? 'aggressive' :
+          raw === 'kamikaze' ? 'kamikaze' :
           null
         if (!cancelled && mapped) {
           setActiveTier(mapped)
@@ -501,14 +503,14 @@ export function BacktestingContent() {
       )}
       {/* Header */}
       <div className="bt-header">
-        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 16-ASSET BASKET'}</div>
+        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET'}</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP (16 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP + SEI + ONDO. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×/8.75×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP + SEI + ONDO (18 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×/8.75×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -585,7 +587,7 @@ export function BacktestingContent() {
       {/* Tier picker — highlights the user's live-config tier */}
       <div className="bt-tier-row">
         <div className="bt-tier-pills">
-          {(['conservative', 'moderate', 'aggressive'] as Tier[]).map(tk => {
+          {(['conservative', 'moderate', 'aggressive', 'kamikaze'] as Tier[]).map(tk => {
             const isActiveTier = activeTier === tk
             return (
               <button
@@ -611,10 +613,20 @@ export function BacktestingContent() {
           ) : null}
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
           {' '}{TIER_LABELS[tier].mult} ·
-          {' '}{isPt ? 'Cesta de 16 ativos' : '16-asset basket'} ·
+          {' '}{isPt ? 'Cesta de 18 ativos' : '18-asset basket'} ·
           {' '}{trades.length > 0 ? `${(((trades[trades.length - 1].exitTs - trades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
         </div>
       </div>
+
+      {/* KAMIKAZE tail-risk disclosure — renders ONLY when the Kamikaze tier is
+          selected. Verbatim disclosure copy (do not paraphrase). Reuses the
+          wizard's red-tinted warning box styling (bw-compound-warn). */}
+      {tier === 'kamikaze' ? (
+        <div className="bw-compound-warn" style={{ maxWidth: '100%', margin: '0 0 12px' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>KAMIKAZE (7 lanes / 1.25x) — DISCLOSED TAIL RISK: worst observed 7-year case is a ~61-68% drawdown week (full books occur roughly weekly on volatility events). A beyond-record simultaneous &gt;=2x gap-through event would be fatal below ~$50k. Minimum account is set by order mechanics (~$1k), NOT by a safety threshold — no account size makes this tier safe from its tail. Position sizing risks ~6.25% of configured capital per trade.</span>
+        </div>
+      ) : null}
 
       {/* View tabs */}
       <div className="bt-view-tabs">
