@@ -43,8 +43,8 @@ function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
 export type TradeSide = 'LONG' | 'SHORT'
 export type CoinSym =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
-  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP'
+  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
+  | 'NEAR' | 'OP' | 'SEI' | 'ONDO'
 
 export type Position = {
   pair: string
@@ -1163,11 +1163,13 @@ const COIN_ICON_SRC: Record<CoinSym, string> = {
   AVAX: '/coin-icons/avax.png',
   BNB:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg',
   HYPE: '/coin-icons/hype.png',
-  TON:  '/coin-icons/ton.png',
+  GRAM: '/coin-icons/ton.png',
   TRX:  '/coin-icons/trx.png',
   ZEC:  '/coin-icons/zec.png',
   NEAR: '/coin-icons/near.png',
   OP:   '/coin-icons/op.png',
+  SEI:  '/coin-icons/sei.png',
+  ONDO: '/coin-icons/ondo.png',
 }
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {

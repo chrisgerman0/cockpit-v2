@@ -64,7 +64,7 @@ function symToCoin(sym: string): CoinSym {
   const KNOWN: ReadonlyArray<CoinSym> = [
     'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
     'ADA', 'AVAX', 'BNB', 'HYPE', 'GRAM', 'TRX', 'ZEC',
-    'NEAR', 'OP',
+    'NEAR', 'OP', 'SEI', 'ONDO',
   ]
   return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
 }

@@ -10,15 +10,15 @@ import { useEffect, useState } from 'react'
 // (rest poll returns null; ws subscribe is a no-op).
 const V1_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT',
-  'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'TONUSDT', 'TRXUSDT', 'ZECUSDT',
-  'NEARUSDT', 'OPUSDT',
+  'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'GRAMUSDT', 'TRXUSDT', 'ZECUSDT',  // 2026-06-17 TON→GRAM
+  'NEARUSDT', 'OPUSDT', 'SEIUSDT', 'ONDOUSDT',  // 2026-07-04 final-basket expansion → 18 assets
 ] as const
 type V1Symbol = typeof V1_SYMBOLS[number]
 
 export type PublicTickerShort =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
-  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'TON' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP'
+  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
+  | 'NEAR' | 'OP' | 'SEI' | 'ONDO'
 
 export type PublicTicker = {
   symbol: V1Symbol
@@ -31,8 +31,9 @@ const SHORT: Record<V1Symbol, PublicTicker['short']> = {
   BTCUSDT:  'BTC',  ETHUSDT:  'ETH',  SOLUSDT: 'SOL',  XRPUSDT: 'XRP',  SUIUSDT: 'SUI',
   DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
   ADAUSDT:  'ADA',  AVAXUSDT: 'AVAX', BNBUSDT: 'BNB',  HYPEUSDT: 'HYPE',
-  TONUSDT:  'TON',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
+  GRAMUSDT: 'GRAM',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
   NEARUSDT: 'NEAR', OPUSDT:   'OP',
+  SEIUSDT:  'SEI',  ONDOUSDT: 'ONDO',
 }
 
 // ─── Singleton WebSocket store ──────────────────────────────────────────────
