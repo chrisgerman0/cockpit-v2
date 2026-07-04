@@ -162,6 +162,8 @@ const ASSET_LOGOS: Record<string, string> = {
   HYPEUSDT: '/coin-icons/hype.png',
   NEARUSDT: '/coin-icons/near.png',
   OPUSDT:   '/coin-icons/op.png',
+  SEIUSDT:  '/coin-icons/sei.png',
+  ONDOUSDT: '/coin-icons/ondo.png',
 }
 
 export function BacktestingContent() {
