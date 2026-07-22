@@ -44,7 +44,7 @@ export type TradeSide = 'LONG' | 'SHORT'
 export type CoinSym =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
   | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP' | 'SEI' | 'ONDO'
+  | 'NEAR' | 'OP' | 'SEI' | 'ONDO' | 'HBAR'
 
 export type Position = {
   pair: string
@@ -124,6 +124,15 @@ export type StaxDashboardData = {
   // would you be now?" Each strategy trade's pnl is scaled by
   // (balanceUsd / strategyBase) to reflect proportional sizing.
   portfolioTrades?: Array<{ exitTs: number; pnl: number }>
+  // 2026-07-06: equity-curve inputs, separate from portfolioTrades (which is the
+  // frozen backtest ending at the ~2026-05-29 pin, used for headline metrics).
+  //   equityTrades = the FORWARD closed set (extends to TODAY) so every range
+  //     [today−N, today] ends now, not at the backtest pin.
+  //   equityBase = the curve's STARTING balance — the connected user's wizard
+  //     initial capital (activation_balance) or $10k for a new/preview user —
+  //     NOT the current account balance (which made the curve start at "now").
+  equityTrades?: Array<{ exitTs: number; pnl: number }>
+  equityBase?: number
   strategyBase?: number              // strategy account base ($10k by default)
   equityCurve?: EquityPoint[]        // legacy fallback when portfolioTrades not provided
   equityMonthLabels?: string[]       // legacy fallback
@@ -1006,8 +1015,15 @@ function Hero({ data }: { data: StaxDashboardData }) {
   const pct = Math.min(1, Math.max(0, data.btcGoal / target))
 
   const sim = useMemo(() => {
-    if (data.portfolioTrades && data.portfolioTrades.length > 0) {
-      return simulateRange(data.portfolioTrades, data.balanceUsd, data.strategyBase || 10000, range)
+    // 2026-07-06: curve = FORWARD closed trades (equityTrades, → today) starting from
+    // equityBase (wizard initial-capital for connected / $10k for new) — NOT the frozen
+    // backtest set and NOT the current balance. Falls back to the old inputs if a caller
+    // (mock) doesn't supply the new ones.
+    const curveTrades = (data.equityTrades && data.equityTrades.length > 0)
+      ? data.equityTrades : data.portfolioTrades
+    const curveBase = (data.equityBase && data.equityBase > 0) ? data.equityBase : data.balanceUsd
+    if (curveTrades && curveTrades.length > 0) {
+      return simulateRange(curveTrades, curveBase, data.strategyBase || 10000, range)
     }
     // Fallback: use precomputed equityCurve if a caller (mock data) provides it.
     return {
@@ -1015,7 +1031,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
       labels: data.equityMonthLabels || [],
       summary: data.equityRangeLabel,
     }
-  }, [data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, range])
+  }, [data.equityTrades, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, range])
 
   return (
     <div className="row row-hero">
@@ -1170,6 +1186,7 @@ const COIN_ICON_SRC: Record<CoinSym, string> = {
   OP:   '/coin-icons/op.png',
   SEI:  '/coin-icons/sei.png',
   ONDO: '/coin-icons/ondo.png',
+  HBAR: '/coin-icons/hbar.svg',
 }
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {

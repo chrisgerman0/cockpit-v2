@@ -64,7 +64,7 @@ function symToCoin(sym: string): CoinSym {
   const KNOWN: ReadonlyArray<CoinSym> = [
     'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
     'ADA', 'AVAX', 'BNB', 'HYPE', 'GRAM', 'TRX', 'ZEC',
-    'NEAR', 'OP', 'SEI', 'ONDO',
+    'NEAR', 'OP', 'SEI', 'ONDO', 'HBAR',   // 2026-07-06: HBAR was missing → symToCoin('HBARUSDT') fell to the 'BTC' icon fallback. 19-asset Phase I.
   ]
   return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
 }
@@ -755,6 +755,14 @@ export function useStaxDashboardData(): StaxLoadState {
           isPreview: noKeys,
           // Raw portfolio + base — Hero simulates the curve per range.
           portfolioTrades: portfolio.map(t => ({ exitTs: t.exitTs, pnl: t.pnl })),
+          // 2026-07-06 equity-curve fix. equityTrades = FORWARD closed set (fwdClosed,
+          // extends to TODAY 2026-07-06) so every range window [today−N, today] ends now
+          // instead of at the frozen backtest pin (~2026-05-29 → the curve froze at May).
+          // equityBase = the curve's STARTING balance: the connected user's wizard initial
+          // capital (activation_balance) or $10k for a new/preview user — NOT the current
+          // account balance (which made the curve start at "now" instead of at inception).
+          equityTrades: fwdClosed.map(t => ({ exitTs: t.exitTs, pnl: t.pnl })),
+          equityBase: userBaseline,
           strategyBase: startCapital,
           equityRangeLabel,
           stats,
