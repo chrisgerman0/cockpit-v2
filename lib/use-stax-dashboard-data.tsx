@@ -451,7 +451,12 @@ export function useStaxDashboardData(): StaxLoadState {
           authedFetch<BotConfigResp>('/api/bot-activate').catch(() => null),
           authedFetch<BalanceResp>('/api/balance').catch((e: Error) => ({ error: e.message } as BalanceResp)),
           // Bitget-sourced (see use-live-trading-data.tsx for rationale).
-          authedFetch<{ trades: RawTrade[] }>('/api/trades-live?limit=50').catch(() => ({ trades: [] as RawTrade[] })),
+          // limit=500 (not 50): /api/trades-live divides the limit across the 19
+          // V1 symbols (route.ts getPositionHistory ⌈limit/19⌉ per symbol), so
+          // limit=50 caps each symbol at 3 closed rows → busy symbols get truncated,
+          // undercounting realized PnL / return / closed-count vs the Live Trading
+          // page (which uses 500). Match it so both read the SAME full closed set.
+          authedFetch<{ trades: RawTrade[] }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[] })),
         ])
         if (cancelled) return
 
