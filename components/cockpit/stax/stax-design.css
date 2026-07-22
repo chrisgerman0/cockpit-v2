@@ -581,7 +581,7 @@ html.light .stax-app .menu-item:hover { background: rgba(0,0,0,0.04); }
 .stax-app .menu-signout:hover { background: rgba(255,77,79,0.08); color: var(--neg); }
 
 /* content grid */
-.stax-app .content { padding: 10px 14px 0; display: grid; gap: 8px; }
+.stax-app .content { padding: 10px 14px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; } /* 2026-07-06: minmax(0,1fr) so no wide child (metrics row / chip pills) can force the column past the viewport → clip */
 .stax-app .row { display: grid; gap: 8px; }
 .stax-app .row-hero { grid-template-columns: 1fr 1.85fr; }
 .stax-app .row-hero > .hero-left { display: grid; grid-template-rows: auto; gap: 14px; }
@@ -1249,7 +1249,7 @@ html.light .stax-app .toggle-row { background: rgba(0,0,0,0.02); }
 
 .stax-app .bt-metrics-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 @media (max-width: 980px) { .stax-app .bt-metrics-row { grid-template-columns: repeat(2, 1fr); } }
@@ -1277,7 +1277,8 @@ html.light .stax-app .toggle-row { background: rgba(0,0,0,0.02); }
    inner) matches the sidebar nav items and Log/Linear chart toggle so the
    page reads as one family of controls. */
 .stax-app .bt-tier-pills {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;        /* 2026-07-06: 19 asset chips wrap to multiple rows instead of overflowing the viewport */
   background: rgba(14, 14, 19, 0.55);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -1285,6 +1286,7 @@ html.light .stax-app .toggle-row { background: rgba(0,0,0,0.02); }
   border-radius: 8px;
   padding: 4px;
   gap: 2px;
+  min-width: 0;
 }
 .stax-app.light .bt-tier-pills,
 html.light .stax-app .bt-tier-pills {
@@ -1451,7 +1453,7 @@ html.light .stax-app .bt-tier-active-indicator { color: rgba(155, 110, 0, 1); }
 /* Tier ladder grid (5 cards) */
 .stax-app .broker-tier-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 @media (max-width: 980px) { .stax-app .broker-tier-grid { grid-template-columns: repeat(3, 1fr); } }
