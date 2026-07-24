@@ -11,13 +11,14 @@
  * 2026-06-01: added NEAR + OP for the assembled 71-cfg B+D system (16 assets).
  *   Order matches the publisher's ASSETS = ASSETS_14 + ['NEAR','OP'].
  * 2026-07-04: added SEI + ONDO → 18-asset basket (KAMIKAZE-tier expansion).
+ * 2026-07-05: added HBAR → 19-asset Phase I basket.
  */
 
 export const PHASE_H_BASKET = [
   'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'LINK',
   'SUI', 'AVAX', 'ADA', 'TRX', 'ZEC', 'GRAM', 'HYPE',  // 2026-06-17: TON→GRAM rebrand (Option B). One canonical list; propagates to PHASE_H_SYMBOLS/symToShort/COIN_FILTERS/logos.
   'NEAR', 'OP',
-  'SEI', 'ONDO',
+  'SEI', 'ONDO', 'HBAR',   // 2026-07-05: HBAR → 19-asset Phase I basket (mirror of staxs-landing)
 ] as const
 
 export type PhaseHAsset = typeof PHASE_H_BASKET[number]
@@ -47,6 +48,7 @@ export const ASSET_LOGOS: Record<PhaseHSymbol, string> = {
   OPUSDT:   '/coin-icons/op.png',
   SEIUSDT:  '/coin-icons/sei.png',
   ONDOUSDT: '/coin-icons/ondo.png',
+  HBARUSDT: '/coin-icons/hbar.svg',   // 2026-07-05: drop hbar.png into public/coin-icons/ (UI shows symbol-only until then)
 }
 
 export type CoinFilter = 'ALL' | PhaseHAsset

@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, LIVEREF_BASE, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { COIN_FILTERS, type CoinFilter, canonicalAsset } from '@/lib/phase-h-basket'
 import { useIsAdmin } from '@/lib/use-is-admin'
@@ -164,6 +164,7 @@ const ASSET_LOGOS: Record<string, string> = {
   OPUSDT:   '/coin-icons/op.png',
   SEIUSDT:  '/coin-icons/sei.png',
   ONDOUSDT: '/coin-icons/ondo.png',
+  HBARUSDT: '/coin-icons/hbar.svg', // hand-crafted Hedera H mark — cryptocurrency-icons pkg has no HBAR (404)
 }
 
 export function BacktestingContent() {
@@ -308,7 +309,13 @@ export function BacktestingContent() {
         const [statsResp, fwdTrades, shadowFeed] = await Promise.all([
           fetch(statsPath(tier, dataBase), { cache: 'no-store' }),
           useTwoStore
-            ? fetchForwardOpens(tier, dataBase).catch(() => [] as PortfolioTrade[])
+            // 2026-07-06 REGRESSION FIX: read the OPEN book from the forward-updated liveref
+            // store (held-through-now opens, present for every tier, refreshed each publisher
+            // cycle) — NOT dataBase (phase-h-risk), which is closed-only (0 opens since 06-05).
+            // Closed backbone + metrics still come from phase-h-risk (dataBase) via immutableClosed;
+            // only the live open rows switch source. This restores opens showing ~minutes after
+            // signal on ANY tier, instead of depending on the aggressive-only shadow bridge.
+            ? fetchForwardOpens(tier, LIVEREF_BASE).catch(() => [] as PortfolioTrade[])
             : previewMode
               ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
                   .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))

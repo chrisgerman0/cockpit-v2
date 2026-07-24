@@ -261,7 +261,13 @@ export function isTierCached(tier: Tier): boolean {
 //     This is the ONLY polling layer.
 //
 // Shadow bridges the sub-hour gap between publisher runs (merged in the page).
-const LIVEREF_BASE = '/data/strategies/phase-h-liveref'
+// 2026-07-06: exported so the Backtesting page reads the customer OPEN book from the
+// forward-updated liveref store (held-through-now, refreshed every publisher cycle,
+// present for EVERY tier) rather than the closed-only phase-h-risk store — the phase-h-risk
+// portfolio-trades has carried NO opens since it went closed-only (2026-06-05), so opens had
+// been relying solely on the tier-locked shadow bridge (aggressive only → invisible on any
+// other tier view). Liveref carries the current opens for all tiers, restoring live opens.
+export const LIVEREF_BASE = '/data/strategies/phase-h-liveref'
 
 /** Open-position row: eod mark-to-market placeholders + explicit 'open'. */
 export function isOpenRow(t: PortfolioTrade): boolean {

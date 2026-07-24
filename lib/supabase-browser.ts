@@ -36,8 +36,24 @@ export function browserClient(): SupabaseClient {
   return _client
 }
 
+// RESILIENCE (2026-07-06): Supabase Auth (GoTrue /auth/v1/*) can hang — the
+// token-refresh network call inside getSession() then never resolves, which
+// froze callers that `await getAccessToken()` outside a try/finally (the
+// Backtesting "Loading…" that never cleared during the GoTrue incident). Cap
+// it: on timeout resolve to null so the caller degrades to the public/preview
+// path instead of hanging forever. Auth blips become a soft state, not a dead page.
+const AUTH_TIMEOUT_MS = 5000
+
 export async function getAccessToken(): Promise<string | null> {
   const sb = browserClient()
-  const { data } = await sb.auth.getSession()
-  return data.session?.access_token ?? null
+  try {
+    const { data } = await Promise.race([
+      sb.auth.getSession(),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('auth-timeout')), AUTH_TIMEOUT_MS)),
+    ]) as Awaited<ReturnType<typeof sb.auth.getSession>>
+    return data.session?.access_token ?? null
+  } catch {
+    return null  // GoTrue slow/unreachable — treat as no token (public path), never hang.
+  }
 }

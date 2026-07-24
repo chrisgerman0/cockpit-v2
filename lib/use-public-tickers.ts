@@ -11,14 +11,14 @@ import { useEffect, useState } from 'react'
 const V1_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT',
   'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'GRAMUSDT', 'TRXUSDT', 'ZECUSDT',  // 2026-06-17 TON→GRAM
-  'NEARUSDT', 'OPUSDT', 'SEIUSDT', 'ONDOUSDT',  // 2026-07-04 final-basket expansion → 18 assets
+  'NEARUSDT', 'OPUSDT', 'SEIUSDT', 'ONDOUSDT', 'HBARUSDT',  // 2026-07-05 Phase I → 19 assets
 ] as const
 type V1Symbol = typeof V1_SYMBOLS[number]
 
 export type PublicTickerShort =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
   | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP' | 'SEI' | 'ONDO'
+  | 'NEAR' | 'OP' | 'SEI' | 'ONDO' | 'HBAR'
 
 export type PublicTicker = {
   symbol: V1Symbol
@@ -33,7 +33,7 @@ const SHORT: Record<V1Symbol, PublicTicker['short']> = {
   ADAUSDT:  'ADA',  AVAXUSDT: 'AVAX', BNBUSDT: 'BNB',  HYPEUSDT: 'HYPE',
   GRAMUSDT: 'GRAM',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
   NEARUSDT: 'NEAR', OPUSDT:   'OP',
-  SEIUSDT:  'SEI',  ONDOUSDT: 'ONDO',
+  SEIUSDT:  'SEI',  ONDOUSDT: 'ONDO', HBARUSDT: 'HBAR',
 }
 
 // ─── Singleton WebSocket store ──────────────────────────────────────────────
