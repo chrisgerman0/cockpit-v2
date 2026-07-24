@@ -1,5 +1,6 @@
 import { StaxAppShell } from '@/components/cockpit/stax/StaxDashboard'
 import { AuthHandoff } from '@/components/AuthHandoff'
+import { LiveEngineStatusBanner } from '@/components/cockpit/stax/LiveEngineStatusBanner'
 
 /**
  * App shell — Stax design (sidebar + topbar + bottom ticker). Wraps every
@@ -27,6 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // getSession(). See components/AuthHandoff.tsx for full rationale.
   return (
     <AuthHandoff>
+      <LiveEngineStatusBanner />
       <StaxAppShell>{children}</StaxAppShell>
     </AuthHandoff>
   )
