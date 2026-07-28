@@ -249,6 +249,14 @@ export function BacktestingContent() {
   // twitch). It refreshes only on tier switch + tab-focus (to absorb the
   // publisher's hourly appends), never on the churning interval.
   const closedBackboneRef = useRef<Partial<Record<Tier, PortfolioTrade[]>>>({})
+  // 2026-07-28: last-seen publisher mtime (stats Last-Modified) per tier. The frozen
+  // backbone above refreshes only on tier-switch/tab-focus — which MISSED an in-place
+  // re-lock (the eviction look-ahead fix reprices existing closed trades WITHOUT changing
+  // their count) while the tab stayed focused: the stats-mtime pill showed fresh ("29m ago")
+  // over a stale cached backbone (the Aggressive card stuck at an old $ value). When this
+  // mtime changes vs last poll, the closed set was rewritten → drop the cache + reload so
+  // metrics re-derive from fresh data. Only fires when data actually changed → no twitch.
+  const lastPubMtimeRef = useRef<Partial<Record<Tier, number>>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -397,6 +405,19 @@ export function BacktestingContent() {
           const mins = Math.floor(ageMs / 60000)
           setUpdatedAgo(mins < 1 ? '< 1m' : mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`)
           setUpdatedAgoMins(mins)
+        }
+        // SELF-HEAL the frozen closed backbone when the publisher rewrote the closed set
+        // (hourly append OR an in-place re-lock). refetchClosed/tab-focus alone missed a
+        // re-lock while focused. Detect via the stats mtime (already read above); when it
+        // changes vs last poll, drop the cache + reload so metrics re-derive from fresh.
+        if (useTwoStore && pubMtimeMs > 0) {
+          const prevMtime = lastPubMtimeRef.current[tier]
+          lastPubMtimeRef.current[tier] = pubMtimeMs
+          if (prevMtime && pubMtimeMs !== prevMtime && !cancelled) {
+            delete closedBackboneRef.current[tier]   // force a fresh backbone fetch
+            load(true)                                // reload; re-derives from fresh closed set
+            return                                    // this stale pass is superseded
+          }
         }
       } finally {
         if (!cancelled) setLoading(false)
