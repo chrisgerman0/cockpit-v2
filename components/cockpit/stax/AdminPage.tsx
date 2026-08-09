@@ -26,9 +26,11 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { authedFetch } from '@/lib/api'
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { Icons } from './Icons'
+import LaneControlPanel from './LaneControlPanel'
 import { PHASE_H_SYMBOLS } from '@/lib/phase-h-basket'
 import {
   StrategyResearchPanel,
+  DiscoveryPanel,
   BestStaxsPanel,
   // SatoshiStackerSpecPanel / StrategyOptimizationsPanel / ExecutionArchitecturePanel
   // are still exported but no longer wired into the StrategyPanel tabs. Dead-end
@@ -56,7 +58,7 @@ const ExternalLink = (p: IconProps) => <I {...p}><path d="M14 4h6v6M20 4l-9 9M19
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
 type TabId =
-  | 'overview' | 'execution' | 'health' | 'alerts' | 'users'
+  | 'overview' | 'execution' | 'lanes' | 'alerts' | 'users'
   | 'brokers' | 'broker-invoices' | 'broker-payouts' | 'wallets'
   | 'revenue' | 'strategy' | 'social'
 
@@ -68,7 +70,7 @@ const TABS: TabDef[] = [
   // files no longer updating. Phase H equivalent lives in Live Trading +
   // Backtest pages. See SYSTEM_HANDOVER.md §5 Rule 26.
   { id: 'execution',        label: 'Execution',  group: 'Operations', icon: Icons.Signal },
-  { id: 'health',           label: 'Health',     group: 'Operations', icon: Heart },
+  { id: 'lanes',            label: 'Lane Control', group: 'Operations', icon: Heart },
   { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
   { id: 'users',            label: 'Users',      group: 'Operations', icon: People },
   { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
@@ -108,6 +110,18 @@ function fmtPct(n: number | null | undefined, dp = 2, signed = true): string {
   const sign = signed ? (n >= 0 ? '+' : '') : ''
   return sign + n.toFixed(dp) + '%'
 }
+// 2026-08-05: relock_history carries hand-written date strings — '2026-06-09 (D3 staged)'
+// and '20260728T140238Z' are both in PHASE_H_BASELINE.json and both give Invalid Date.
+// new Date(bad).toISOString() throws RangeError, which killed the WHOLE Strategy tab
+// (React unmounts the tree on a render throw). Never let a display format throw: fall
+// back to the raw string so the operator still sees what was recorded.
+function safeUtc(v?: string | number | null, len = 19): string {
+  if (v === null || v === undefined || v === '') return '—'
+  const t = new Date(v as string | number).getTime()
+  if (!Number.isFinite(t)) return String(v)
+  return new Date(t).toISOString().slice(0, len).replace('T', ' ') + 'Z'
+}
+
 function fmtAge(iso?: string | number | null): string {
   if (!iso) return '—'
   const t = typeof iso === 'string' ? new Date(iso).getTime() : iso
@@ -369,8 +383,11 @@ export function AdminContent() {
           <div style={{ display: tab === 'execution' ? 'block' : 'none' }}>
             <ExecutionPanel active={tab === 'execution'} />
           </div>
-          <div style={{ display: tab === 'health' ? 'block' : 'none' }}>
-            <SystemHealthPanel active={tab === 'health'} />
+          <div style={{ display: tab === 'lanes' ? 'block' : 'none' }}>
+            {/* 2026-08-09: Health removed — broken and unexplained. Lane Control answers the one
+                question that matters: does LIVE have the same number of AVAILABLE LANES as
+                canonical? That decides whether live can take the trades canonical takes. */}
+            <LaneControlPanel active={tab === 'lanes'} />
           </div>
           <div style={{ display: tab === 'alerts' ? 'block' : 'none' }}>
             <AlertsPanel active={tab === 'alerts'} />
@@ -439,7 +456,7 @@ function OverviewPanel({ active }: { active: boolean }) {
         eyebrow="ADMIN · OVERVIEW"
         lead="Business"
         accent="snapshot."
-        blurb="Pipeline counts + signups. Engine/cache/publisher state lives on Health. Position state on Live Trading. Strategy backtest on Backtest. Refreshes 30s."
+        blurb="Pipeline counts + signups. Lane parity — whether live has the same free lanes as canonical — is on Lane Control. Position state on Live Trading. Strategy backtest on Backtest. Refreshes 30s."
         refreshing={ov.loading}
         onRefresh={ov.refresh}
       />
@@ -460,7 +477,7 @@ function OverviewPanel({ active }: { active: boolean }) {
       {/* Drill-down chips → other admin tabs / customer pages */}
       <SectionCard title="DRILL-DOWN">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a href="/v2/admin?tab=health" className="badge" style={{ textDecoration: 'none' }}>System Health →</a>
+          <a href="/v2/admin?tab=lanes" className="badge" style={{ textDecoration: 'none' }}>Lane Control →</a>
           <a href="/v2/admin?tab=execution" className="badge" style={{ textDecoration: 'none' }}>Engine Parity →</a>
           <a href="/v2/admin?tab=alerts" className="badge" style={{ textDecoration: 'none' }}>Alerts →</a>
           <a href="/v2/admin?tab=users" className="badge" style={{ textDecoration: 'none' }}>Users →</a>
@@ -1275,7 +1292,7 @@ function SystemHealthPanel({ active }: { active: boolean }) {
               <div className="adm-banner" style={{ marginTop: 12 }}>
                 <span className="bt-eyebrow" style={{ marginBottom: 0 }}>RELOCK HISTORY · {r.publisher.relock_history.length} entries</span>
                 <span className="adm-banner-text" style={{ fontSize: 11 }}>
-                  Latest: {new Date(r.publisher.relock_history[r.publisher.relock_history.length - 1].date).toISOString().slice(0, 19).replace('T', ' ')}Z
+                  Latest: {safeUtc(r.publisher.relock_history[r.publisher.relock_history.length - 1].date)}
                 </span>
               </div>
             )}
@@ -1965,29 +1982,33 @@ function WalletsPanel({ active }: { active: boolean }) {
 // 9. Strategy panel — sub-tabs for Research / Spec / Optimizations / Architecture
 // ────────────────────────────────────────────────────────────────────────────
 
-type StratSub = 'swingmate' | 'bob' | 'staxs'
+type StratSub = 'discovery' | 'swingmate' | 'bob' | 'staxs'
 
 function StrategyPanel({ active }: { active: boolean }) {
   // SwingMate ⚡ = single-cfg leaderboard (cross-asset post Phase G, 200k+ swept).
   // BoB = qualifying-edge single cfgs. Best Staxs 🥞 = stack leaderboard (Phase F/2/4).
-  const [sub, setSub] = useState<StratSub>('swingmate')
+  const [sub, setSub] = useState<StratSub>('discovery')
   return (
     <div className="stax-page">
       <PageHeader
         eyebrow="ADMIN · STRATEGY"
         lead="Strategy mining —"
         accent="SwingMate ⚡ + Best of The Best + Best Staxs."
-        blurb="SwingMate ⚡: top-10k cross-asset single-cfg sweep (BTC + 7 alts, ~200k swept). BoB: top-500 qualifying-edge cfgs (WR≥60 AND PF≥1.5) OR (Total≥50% AND beats HODL). Best Staxs 🥞: top-100 stacks across Phase F + Phase 2 (partial-TP) + Phase 4 (super-stack)."
+        blurb="CFG Discovery 💎: new-archetype sweep survivors — every row cleared the standalone gate (TF floor + per-year consistency + PF ≥ book median + IS/OOS + plateau); sortable and filterable. SwingMate ⚡: top-10k cross-asset single-cfg sweep (BTC + 7 alts, ~200k swept). BoB: top-500 qualifying-edge cfgs (WR≥60 AND PF≥1.5) OR (Total≥50% AND beats HODL). Best Staxs 🥞: top-100 stacks across Phase F + Phase 2 (partial-TP) + Phase 4 (super-stack)."
       />
       <SubPills
         value={sub}
         onChange={setSub}
         items={[
+          { id: 'discovery', label: 'CFG Discovery 💎' },
           { id: 'swingmate', label: 'SwingMate ⚡' },
           { id: 'bob', label: 'Best of The Best 🏆' },
           { id: 'staxs', label: 'Best Staxs 🥞' },
         ]}
       />
+      <div style={{ display: sub === 'discovery' ? 'block' : 'none' }}>
+        <DiscoveryPanel active={active && sub === 'discovery'} />
+      </div>
       <div style={{ display: sub === 'swingmate' ? 'block' : 'none' }}>
         <StrategyResearchPanel active={active && sub === 'swingmate'} source="swingmate" displayName="SwingMate ⚡" />
       </div>
@@ -2026,7 +2047,7 @@ function RelockHistorySection({ active }: { active: boolean }) {
               <div key={i} className="adm-kv" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4, paddingTop: 8, paddingBottom: 8, borderBottom: i < rh.data!.relock_history.length - 1 ? '1px solid var(--border)' : 'none' }}>
                 <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <span className="num" style={{ fontSize: 11, fontWeight: 700 }}>
-                    {new Date(r.date).toISOString().slice(0, 19).replace('T', ' ')}Z
+                    {safeUtc(r.date)}
                   </span>
                   <span style={{ color: 'var(--muted)', fontSize: 10 }}>{fmtAge(r.date)}</span>
                 </div>
