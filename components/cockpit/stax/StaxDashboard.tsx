@@ -875,9 +875,25 @@ const MOBILE_NAV_ITEMS = [
   { id: 'settings',  tKey: 'nav.settings',   shortEn: 'Settings',  shortPt: 'Ajustes',    icon: Icons.Gear,      href: '/settings' },
 ] as const
 
+// 2026-08-09: the bottom nav is the ONLY navigation at <=768px (the sidebar is replaced), and
+// it had no Admin entry — so /admin was unreachable on a phone even for an admin. The route and
+// its guard were always fine; nothing linked to it. Admins swap Broker for Admin rather than
+// growing to a 6th item, which would break the fixed 5-column bottom-nav layout.
+const MOBILE_ADMIN_ITEM = {
+  id: 'admin', tKey: 'nav.admin', shortEn: 'Admin', shortPt: 'Admin',
+  icon: Icons.Shield, href: '/admin',
+} as const
+
 function MobileBottomNav() {
   const pathname = usePathname()
   const t = useT()
+  const { isAdmin } = useIsAdmin()
+  // Admins: Broker -> Admin. Non-admins see the stock five, unchanged.
+  const navItems = useMemo(
+    () => (isAdmin === true
+      ? MOBILE_NAV_ITEMS.map(it => (it.id === 'broker' ? MOBILE_ADMIN_ITEM : it))
+      : MOBILE_NAV_ITEMS) as readonly (typeof MOBILE_NAV_ITEMS[number] | typeof MOBILE_ADMIN_ITEM)[],
+    [isAdmin])
   // Read lang directly so we can pick the short label variant (different
   // from the full nav label, which is what t() returns).
   const lang = typeof window !== 'undefined' && localStorage.getItem('stax-lang') === 'PT' ? 'PT' : 'ENG'
@@ -888,14 +904,14 @@ function MobileBottomNav() {
     setClientPath(stripped)
   }, [pathname])
   const effectivePath = clientPath ?? pathname ?? '/'
-  const activeId = MOBILE_NAV_ITEMS.find(it => {
+  const activeId = navItems.find(it => {
     if (it.href === '/') return effectivePath === '/' || effectivePath === ''
     return effectivePath === it.href || effectivePath.startsWith(it.href + '/')
   })?.id ?? 'dashboard'
 
   return (
     <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-      {MOBILE_NAV_ITEMS.map(it => {
+      {navItems.map(it => {
         const Ico = it.icon
         return (
           <Link
