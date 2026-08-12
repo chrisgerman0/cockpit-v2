@@ -23,7 +23,7 @@
  * /data/strategies/satoshi-stacker/(tiers/<tier>/)portfolio-trades.json.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
 import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, LIVEREF_BASE, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
@@ -1051,6 +1051,10 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
 
 function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: Tier; isPt: boolean }) {
   const rows = stats?.breakdown ? Object.entries(stats.breakdown) : []
+  // collapsed by default — one open asset at a time, so the page never becomes a wall of rows
+  // on mobile. Reset when the tier changes: the cfg set is tier-scoped like the parent table.
+  const [expandedAsset, setExpandedAsset] = useState<string | null>(null)
+  useEffect(() => { setExpandedAsset(null) }, [tier])
   return (
     <div className="card card-pad">
       <div className="bt-card-head">
@@ -1073,23 +1077,69 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
             </tr>
           </thead>
           <tbody>
-            {rows.map(([asset, row]) => (
-              <tr key={asset}>
-                <td>
-                  <div className="pair-cell">
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', overflow: 'hidden', background: '#0e0e13', display: 'inline-block' }}>
-                      <img src={ASSET_LOGOS[asset] || ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </span>
-                    <span className="num">{asset.replace('USDT', '/USDT')}</span>
-                  </div>
-                </td>
-                <td><span className="bt-scope-tag">{row.scope || 'Systematic'}</span></td>
-                <td className="num" style={{ textAlign: 'right' }}>{row.totalTrades.toLocaleString()}</td>
-                <td className={'num pos-text'} style={{ textAlign: 'right' }}>+{row.returnPct.toFixed(2)}%</td>
-                <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{row.winRate.toFixed(1)}%</td>
-                <td className="num" style={{ textAlign: 'right' }}>{row.profitFactor.toFixed(2)}</td>
-              </tr>
-            ))}
+            {rows.map(([asset, row]) => {
+              // 2026-08-11 PER-CFG DRILL-DOWN. The asset row is an average over several cfgs,
+              // which is not enough to judge a live trade's odds — you need the cfg that fired.
+              // Children come from the SAME published payload as the parent (the publisher emits
+              // breakdown[asset].cfgs from the same `taken` list), so they sum to the parent by
+              // construction rather than by a second computation here.
+              const cfgs = (Object.entries((row as any).cfgs || {}) as [string, any][])
+                .sort((a, b) => (b[1].totalTrades || 0) - (a[1].totalTrades || 0))
+              const open = expandedAsset === asset
+              return (
+                <Fragment key={asset}>
+                  <tr
+                    onClick={() => cfgs.length && setExpandedAsset(open ? null : asset)}
+                    style={{ cursor: cfgs.length ? 'pointer' : 'default' }}
+                    title={cfgs.length ? `${cfgs.length} cfgs — click to ${open ? 'collapse' : 'expand'}` : undefined}
+                  >
+                    <td>
+                      <div className="pair-cell">
+                        {cfgs.length > 0 && (
+                          <span className="num" style={{ opacity: 0.55, width: 10, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
+                        )}
+                        <span style={{ width: 18, height: 18, borderRadius: '50%', overflow: 'hidden', background: '#0e0e13', display: 'inline-block' }}>
+                          <img src={ASSET_LOGOS[asset] || ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        </span>
+                        <span className="num">{asset.replace('USDT', '/USDT')}</span>
+                      </div>
+                    </td>
+                    <td><span className="bt-scope-tag">{row.scope || 'Systematic'}</span></td>
+                    <td className="num" style={{ textAlign: 'right' }}>{row.totalTrades.toLocaleString()}</td>
+                    <td className={'num pos-text'} style={{ textAlign: 'right' }}>+{row.returnPct.toFixed(2)}%</td>
+                    <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{row.winRate.toFixed(1)}%</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{row.profitFactor.toFixed(2)}</td>
+                  </tr>
+                  {open && cfgs.map(([sid, c]) => (
+                    <tr key={sid} className="bt-cfg-row">
+                      <td style={{ paddingLeft: 26 }}>
+                        <span className="num" style={{ fontSize: '0.8em', opacity: 0.9, wordBreak: 'break-all' }}>{sid}</span>
+                      </td>
+                      <td>
+                        <span className="num" style={{ fontSize: '0.76em', opacity: 0.75 }}>
+                          {[c.archetype, c.tf, c.direction === 1 ? 'long' : c.direction === -1 ? 'short' : 'both']
+                            .filter(Boolean).join(' · ')}
+                        </span>
+                      </td>
+                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em' }}>{(c.totalTrades ?? 0).toLocaleString()}</td>
+                      <td className={'num ' + ((c.returnPct ?? 0) >= 0 ? 'pos-text' : 'neg-text')} style={{ textAlign: 'right', fontSize: '0.85em' }}>
+                        {(c.returnPct ?? 0) >= 0 ? '+' : ''}{(c.returnPct ?? 0).toFixed(2)}%
+                      </td>
+                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em', color: 'var(--gold)' }}>{(c.winRate ?? 0).toFixed(1)}%</td>
+                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em' }}>{(c.profitFactor ?? 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {open && cfgs.length > 0 && (
+                    <tr className="bt-cfg-row">
+                      <td colSpan={6} style={{ paddingLeft: 26, fontSize: '0.72em', opacity: 0.6 }}>
+                        {cfgs.length} cfgs · {cfgs.reduce((s, [, c]) => s + (c.totalTrades || 0), 0).toLocaleString()} trades — sums to the {asset.replace('USDT', '')} row above.
+                        {' '}Portfolio-seated performance (after lane competition), not standalone CFG Discovery numbers.
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
