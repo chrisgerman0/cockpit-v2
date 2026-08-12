@@ -1068,7 +1068,7 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
         <table>
           <thead>
             <tr>
-              <th>{isPt ? 'PAR' : 'PAIR'}</th>
+              <th>{isPt ? 'PAR' : 'PAIR'}<span style={{ opacity: 0.45, fontWeight: 400, marginLeft: 6 }}>{isPt ? '(clique p/ cfgs)' : '(click for cfgs)'}</span></th>
               <th>{isPt ? 'ESCOPO' : 'SCOPE'}</th>
               <th style={{ textAlign: 'right' }}>{isPt ? 'TRADES' : 'TRADES'}</th>
               <th style={{ textAlign: 'right' }}>{isPt ? 'RETORNO' : 'RETURN'}</th>
@@ -1095,9 +1095,21 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                   >
                     <td>
                       <div className="pair-cell">
-                        {cfgs.length > 0 && (
-                          <span className="num" style={{ opacity: 0.55, width: 10, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
-                        )}
+                        {/* 2026-08-12 AFFORDANCE: the chevron used to be conditional on cfgs.length,
+                            so when the surface carried no cfgs there was no cue at all AND no way to
+                            tell "nothing to expand" from "feature missing". Always render the slot:
+                            an active chevron when there are cfgs, a dimmed dot when there are not. */}
+                        <span
+                          className="num"
+                          aria-hidden
+                          style={{
+                            width: 12, display: 'inline-block', textAlign: 'center',
+                            opacity: cfgs.length ? 0.85 : 0.18,
+                            color: cfgs.length ? 'var(--gold)' : undefined,
+                            transition: 'transform 120ms ease',
+                            transform: open ? 'rotate(90deg)' : 'none',
+                          }}
+                        >{cfgs.length ? '▸' : '·'}</span>
                         <span style={{ width: 18, height: 18, borderRadius: '50%', overflow: 'hidden', background: '#0e0e13', display: 'inline-block' }}>
                           <img src={ASSET_LOGOS[asset] || ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </span>
