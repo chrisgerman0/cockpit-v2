@@ -1049,10 +1049,33 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
 
 // ─── Per-asset breakdown ────────────────────────────────────────────────────
 
+type SaRow = { sid: string; sa_trades: number; sa_winRate: number; sa_profitFactor: number
+              sa_netUsd: number; seatRate: number; lost: number }
+
 function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: Tier; isPt: boolean }) {
   const rows = stats?.breakdown ? Object.entries(stats.breakdown) : []
   // collapsed by default — one open asset at a time, so the page never becomes a wall of rows
   // on mobile. Reset when the tier changes: the cfg set is tier-scoped like the parent table.
+  // 2026-08-13 STANDALONE COLUMNS (bible §CFG-QUALITY). Seated measures the BOOK after lane
+  // competition; quality is STANDALONE — every signal the cfg fires. Without both, a cfg being
+  // CROWDED OUT reads identically to one that is simply bad. V3G_DOGE_05825abff4 is exactly that:
+  // seated PF 0.88 on this page, standalone PF 2.536 on +$6,132, seating 38.2% of its signals.
+  // Joined CLIENT-SIDE — risk_sizing_canonical regenerates the risk surface on every re-lock and
+  // would silently drop a merged field.
+  const [sa, setSa] = useState<Record<string, SaRow>>({})
+  useEffect(() => {
+    let cancelled = false
+    fetch('/data/cfg-quality-leaderboard.json', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d?.rows) return
+        const m: Record<string, SaRow> = {}
+        for (const r of d.rows as SaRow[]) m[r.sid] = r
+        setSa(m)
+      })
+      .catch(() => {})   // absent file => SA cells render "—"; never breaks the page
+    return () => { cancelled = true }
+  }, [])
   const [expandedAsset, setExpandedAsset] = useState<string | null>(null)
   useEffect(() => { setExpandedAsset(null) }, [tier])
   return (
@@ -1074,6 +1097,13 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
               <th style={{ textAlign: 'right' }}>{isPt ? 'RETORNO' : 'RETURN'}</th>
               <th style={{ textAlign: 'right' }}>{isPt ? 'TX. ACERTO' : 'WIN RATE'}</th>
               <th style={{ textAlign: 'right' }}>{isPt ? 'FATOR LUCRO' : 'PROFIT FACTOR'}</th>
+                <th style={{ textAlign: 'right', borderLeft: '2px solid rgba(212,175,55,0.35)' }}
+                    title="STANDALONE — every signal this cfg fires, no lane competition. THE quality measure.">SA n</th>
+                <th style={{ textAlign: 'right' }} title="STANDALONE win rate">SA WR</th>
+                <th style={{ textAlign: 'right' }} title="STANDALONE profit factor — this is what judges the cfg">SA PF</th>
+                <th style={{ textAlign: 'right' }} title="STANDALONE net $, locked risk-sized">SA NET</th>
+                <th style={{ textAlign: 'right' }} title="share of its signals that won a lane">SEAT</th>
+                <th style={{ textAlign: 'right' }} title="standalone minus seated — what lane competition cost">GAP</th>
             </tr>
           </thead>
           <tbody>
@@ -1121,6 +1151,8 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                     <td className={'num pos-text'} style={{ textAlign: 'right' }}>+{row.returnPct.toFixed(2)}%</td>
                     <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{row.winRate.toFixed(1)}%</td>
                     <td className="num" style={{ textAlign: 'right' }}>{row.profitFactor.toFixed(2)}</td>
+                      <td colSpan={6} style={{ textAlign: 'right', opacity: 0.3, fontSize: '0.72em',
+                                               borderLeft: '2px solid rgba(212,175,55,0.35)' }}>{isPt ? 'por cfg' : 'per-cfg only'}</td>
                   </tr>
                   {open && cfgs.map(([sid, c]) => (
                     <tr key={sid} className="bt-cfg-row">
@@ -1139,13 +1171,28 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                       </td>
                       <td className="num" style={{ textAlign: 'right', fontSize: '0.85em', color: 'var(--gold)' }}>{(c.winRate ?? 0).toFixed(1)}%</td>
                       <td className="num" style={{ textAlign: 'right', fontSize: '0.85em' }}>{(c.profitFactor ?? 0).toFixed(2)}</td>
+                        {(() => {
+                          const q = sa[sid]
+                          const cell = (v: React.ReactNode, extra: React.CSSProperties = {}) => (
+                            <td className="num" style={{ textAlign: 'right', fontSize: '0.85em', ...extra }}>{v}</td>
+                          )
+                          if (!q) return <td colSpan={6} style={{ textAlign: 'right', opacity: 0.3, fontSize: '0.72em', borderLeft: '2px solid rgba(212,175,55,0.35)' }}>—</td>
+                          return (<>
+                            {cell(q.sa_trades, { borderLeft: '2px solid rgba(212,175,55,0.35)' })}
+                            {cell(`${q.sa_winRate.toFixed(1)}%`)}
+                            {cell(q.sa_profitFactor.toFixed(2), { color: q.sa_profitFactor >= 1 ? 'var(--gold)' : '#ef4444', fontWeight: 600 })}
+                            {cell(`${q.sa_netUsd >= 0 ? '+' : ''}$${Math.round(q.sa_netUsd).toLocaleString()}`)}
+                            {cell(`${q.seatRate.toFixed(0)}%`, { color: q.seatRate < 50 ? '#f59e0b' : undefined })}
+                            {cell(`$${Math.round(q.lost).toLocaleString()}`, { opacity: 0.85 })}
+                          </>)
+                        })()}
                     </tr>
                   ))}
                   {open && cfgs.length > 0 && (
                     <tr className="bt-cfg-row">
-                      <td colSpan={6} style={{ paddingLeft: 26, fontSize: '0.72em', opacity: 0.6 }}>
-                        {cfgs.length} cfgs · {cfgs.reduce((s, [, c]) => s + (c.totalTrades || 0), 0).toLocaleString()} trades — sums to the {asset.replace('USDT', '')} row above.
-                        {' '}Portfolio-seated performance (after lane competition), not standalone CFG Discovery numbers.
+                      <td colSpan={12} style={{ paddingLeft: 26, fontSize: '0.72em', opacity: 0.6 }}>
+                        <strong>Left of the divider — SEATED</strong> (locked risk-sized, after lane competition): {cfgs.length} cfgs · {cfgs.reduce((s, [, c]) => s + (c.totalTrades || 0), 0).toLocaleString()} trades, and these <strong>sum to the {asset.replace('USDT', '')} row above</strong> by construction.
+                        <br /><strong>Right of the divider — STANDALONE</strong> (locked risk-sized, every signal the cfg fires, no lane competition). These <strong>do NOT sum to the parent and are not meant to</strong> — they count trades the book never seated. Standalone judges the CFG; seated measures the BOOK. <strong>GAP</strong> is what lane competition cost.
                       </td>
                     </tr>
                   )}
