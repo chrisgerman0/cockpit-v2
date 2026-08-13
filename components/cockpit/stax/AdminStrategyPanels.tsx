@@ -12,7 +12,7 @@
  */
 
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { authedFetch } from '@/lib/api'
 
 // ─── Local helpers ────────────────────────────────────────────────────────
@@ -369,7 +369,7 @@ function mapLeaderboardRow(r: Record<string, unknown>, rank: number): Top25Row {
   const sourceConvention = (r._source_convention === 'pos' || r._source_convention === 'tv')
     ? r._source_convention : null
   return {
-    rank, id: idRaw.replace(/^(PREVIEW_\d+_|WIN_)/, ''),
+    rank, id: String(idRaw ?? '').replace(/^(PREVIEW_\d+_|WIN_)/, ''),
     kind, wr, pf, rrr, n, pnl, totalPct, maxDD, hwr, hpf, hMaxDD: 0, nh,
     hTotalPct,
     tag, gates: String(r.wf_status ?? ''),
@@ -400,8 +400,42 @@ const STRATEGY_META: Record<StrategySource, { title: string; subtitle: string; t
   bob:  { title: 'Best of The Best 🏆',        subtitle: '', tldr: '' },
 }
 
+/**
+ * How old is the data actually is, derived from the payload's own updatedAt.
+ *
+ * 2026-08-13: every one of these tabs asserted live-updating data while serving months-old
+ * snapshots — BoB said "live sweep ranking / auto-refreshes every 30s" on a file last written
+ * 2026-05-26, with its aggregator not running. Six of seven sources were 40-90 days stale and two
+ * were empty. Decisions get made on these numbers, so a false freshness claim is a production bug.
+ *
+ * Derived, never hardcoded: when a producer runs again the banner disappears on its own. Nothing
+ * here needs maintaining, which is the whole point.
+ */
+function dataFreshness(updatedAt: string): { days: number; stale: boolean; asOf: string } | null {
+  if (!updatedAt) return null
+  const t = new Date(updatedAt)
+  if (Number.isNaN(t.getTime())) return null
+  const days = Math.floor((Date.now() - t.getTime()) / 86_400_000)
+  return { days, stale: days > 7, asOf: t.toISOString().slice(0, 10) }
+}
+
+function StaleBanner({ updatedAt, what }: { updatedAt: string; what: string }) {
+  const f = dataFreshness(updatedAt)
+  if (!f || !f.stale) return null
+  return (
+    <div style={{
+      border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.10)', color: '#f59e0b',
+      borderRadius: 8, padding: '8px 12px', margin: '8px 0', fontSize: 13, lineHeight: 1.5,
+    }}>
+      <strong>SNAPSHOT — not live.</strong> {what} was last written <strong>{f.asOf}</strong> ({f.days} days
+      ago) and its producer is not currently running. These numbers are a point-in-time snapshot, not a
+      live ranking — do not read them as current.
+    </div>
+  )
+}
+
 export function StrategyResearchPanel({
-  active: _active,
+  active,
   source = 'msga',
   displayName,
 }: {
@@ -509,10 +543,15 @@ export function StrategyResearchPanel({
         if (!cancelled) setLoading(false)
       }
     }
+    if (!active) { setLoading(false); return () => { cancelled = true } }
     load()
-    const t = setInterval(load, 30_000)
+    // 2026-08-05: gate on `active`. These panels stay MOUNTED behind display:none, so
+    // without this both swingmate (9.7MB) and bob poll every 30s in the background —
+    // that is what made the Strategy tab feel broken. 30s -> 120s too; the source file
+    // is a batch artefact that changes at most a few times a day.
+    const t = setInterval(load, 120_000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [])
+  }, [active, source])
 
   return (
     <div className="adm-doc">
@@ -543,9 +582,16 @@ export function StrategyResearchPanel({
           {transitionBanner.message}
         </div>
       )}
-      <H2>Top 500 — live sweep ranking ($10k account)</H2>
+      <H2>
+        Top 500 — {dataFreshness(updatedAt)?.stale
+          ? `sweep snapshot as of ${dataFreshness(updatedAt)!.asOf}`
+          : 'live sweep ranking'} ($10k account)
+      </H2>
+      <StaleBanner updatedAt={updatedAt} what={`The ${source} sweep leaderboard`} />
       <p className="adm-p adm-p-muted">
-        Live top-500 from the <Code>{source}</Code> sweep, refreshed every 30s, paginated 100 per page. {updatedAt && <>Last updated: <Code>{new Date(updatedAt).toLocaleString()}</Code>.</>} <strong>Click a column to sort. Shift-click to add a tiebreaker</strong> (then a third, fourth, etc). Currently sorting by <Code>{sortDescription}</Code>. All numbers from a $10k starting balance, compounded. Fees 5bps RT, slippage 6bps each side.
+        Top-500 from the <Code>{source}</Code> sweep{dataFreshness(updatedAt)?.stale
+          ? <> (<strong>snapshot</strong> — the page polls every 30s but this source is not being rewritten)</>
+          : <>, refreshed every 30s</>}, paginated 100 per page. {updatedAt && <>Last updated: <Code>{new Date(updatedAt).toLocaleString()}</Code>.</>} <strong>Click a column to sort. Shift-click to add a tiebreaker</strong> (then a third, fourth, etc). Currently sorting by <Code>{sortDescription}</Code>. All numbers from a $10k starting balance, <strong>compounded</strong>, fees 5bps RT and slippage 6bps each side — a DIFFERENT basis from the locked strategy surface, which is compound OFF. Do not compare the two directly.
       </p>
       <div className="card card-pad" style={{ overflowX: 'auto' }}>
         <table className="adm-table" style={{ fontSize: '12px' }}>
@@ -667,7 +713,7 @@ export function StrategyResearchPanel({
         </span>
       </div>
       <p className="adm-stat-sub" style={{ marginTop: 8 }}>
-        Top 500 auto-refreshes every 30s, paginated 100 per page. <strong>Default sort is Total % (Option B)</strong> — normalises across sizing modes (fixed-notional, %-equity, risk-based, vol-adjusted) so configs with different sizing approaches are directly comparable. The <Code>#</Code> column preserves the original rank from the pusher. <strong>HODL_BTC_BUY_HOLD</strong> is pinned as the <strong style={{ color: '#4ade80' }}>+658%</strong> baseline to beat. <strong>WIN_*</strong> rows are robust winners (every replication of this exact cfg passed all gates). <strong>PREVIEW_*</strong> rows are top sweep configs from the standard filter (n≥100 + PF≥1.3) <em>or</em> the quality bypass (n≥50 + PF≥2.0, surfaces low-freq high-edge configs).
+        Top 500 paginated 100 per page (the page polls every 30s; whether the SOURCE is being rewritten is shown above). <strong>Default sort is Total % (Option B)</strong> — normalises across sizing modes (fixed-notional, %-equity, risk-based, vol-adjusted) so configs with different sizing approaches are directly comparable. The <Code>#</Code> column preserves the original rank from the pusher. <strong>HODL_BTC_BUY_HOLD</strong> is pinned as the <strong style={{ color: '#4ade80' }}>+658%</strong> baseline to beat. <strong>WIN_*</strong> rows are robust winners (every replication of this exact cfg passed all gates). <strong>PREVIEW_*</strong> rows are top sweep configs from the standard filter (n≥100 + PF≥1.3) <em>or</em> the quality bypass (n≥50 + PF≥2.0, surfaces low-freq high-edge configs).
       </p>
       <p className="adm-stat-sub" style={{ marginTop: 4 }}>
         <strong>Dedup is by cfg-hash, not label.</strong> Two records with the same label but different un-encoded dimensions (exit_rollover, opp_dot, ladder_mode, kamikaze_layers/pct, counter_*) are correctly treated as <em>different strategies</em>. <Code>Reps</Code> = how many runs of this exact cfg landed in the sweep · <Code>Stab</Code> = stability bucket (<span style={{ color: '#4ade80' }}>stable</span> ≤0.25 · <span style={{ color: '#fbbf24' }}>medium</span> ≤0.75 · <span style={{ color: '#f87171' }}>high-variance</span> &gt;0.75) · <Code>cov</Code> = coefficient of variation of PnL across reps. Higher = parameter-sensitive (curve-fit risk). <Code>·L</Code> = legacy record from before cfg-logging was added; treat with caution.
@@ -1168,7 +1214,7 @@ type StackSortKey = 'rank' | 'phase' | 'size' | 'archetype_mix' | 'asset_coverag
   'wr_position' | 'wr_tv' | 'pf_position' | 'pf_tv' |
   'monthly_win_rate_pct' | 'longest_underwater_days'
 
-export function BestStaxsPanel({ active: _active }: { active: boolean }) {
+export function BestStaxsPanel({ active }: { active: boolean }) {
   const [rows, setRows] = useState<StackRow[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [updatedAt, setUpdatedAt] = useState<string>('')
@@ -1198,10 +1244,11 @@ export function BestStaxsPanel({ active: _active }: { active: boolean }) {
         if (!cancelled) setLoading(false)
       }
     }
+    if (!active) { setLoading(false); return () => { cancelled = true } }
     load()
-    const t = setInterval(load, 60_000)
+    const t = setInterval(load, 120_000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [])
+  }, [active])
 
   const archetypeOptions = Array.from(new Set(rows.flatMap(r => r.archetypes ?? []))).sort()
   const sizeOptions = Array.from(new Set(rows.map(r => r.size))).sort((a, b) => a - b)
@@ -1233,7 +1280,7 @@ export function BestStaxsPanel({ active: _active }: { active: boolean }) {
       <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Best Staxs 🥞 — top {rows.length} stacks</h2>
         <span style={{ color: 'var(--ink-mute)', fontSize: 12 }}>
-          {total > 0 ? `${total} unique stacks scored` : ''} · updated {updatedAt ? new Date(updatedAt).toLocaleTimeString() : '—'}
+          {total > 0 ? `${total} unique stacks scored` : ''} · updated {updatedAt ? new Date(updatedAt).toLocaleString() : '—'}{dataFreshness(updatedAt)?.stale ? ` — ${dataFreshness(updatedAt)!.days}d old, SNAPSHOT` : ''}
         </span>
       </div>
 
@@ -1323,6 +1370,269 @@ export function BestStaxsPanel({ active: _active }: { active: boolean }) {
         Source: <code>/api/admin/msga-leaderboard?strategy=staxs</code> ← <code>staxs-leaderboard.json</code> (Phase F + Phase 2 + Phase 4 stacks, updated every 60s).
         Dual WR/PF (position vs TV) populated when partial-TP cfgs are in stack. Monthly+% / UW days computed for top stacks only.
       </p>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-08-05 · CFG DISCOVERY leaderboard
+// New-archetype sweep output. Every row has already cleared the standalone gate
+// (TF floor + per-year consistency + PF >= incumbent median + IS/OOS + plateau);
+// this panel is for slicing what survived — sort any column, filter on WR/PF/etc.
+// ────────────────────────────────────────────────────────────────────────────
+
+type DiscRow = {
+  rank: number; id: string; asset: string; tf: string; archetype: string; direction: string
+  n: number; tpy: number | null; pf: number; wr: number; net: number; mdd: number
+  is_pf: number; is_n: number; oos_pf: number; oos_n: number
+  yrs_solid: number; yrs_pos: number; yrs_pf2: number; worst_yr_pf: number | null
+  plateau: number | null; nbhd: number | null
+  x_len?: number; x_mult?: number; x_len2?: number; x_mult2?: number; x_mode?: string
+  x_prim?: string; x_conf?: string; x_tgate?: string; x_htf?: number
+  sl_type?: string; trail_mode?: string; breakeven_at_R?: string
+  per_year?: Record<string, [number, number, number]>
+}
+type DiscKey = 'rank'|'asset'|'tf'|'archetype'|'direction'|'n'|'tpy'|'pf'|'wr'|'net'|'mdd'
+  |'is_pf'|'oos_pf'|'yrs_solid'|'yrs_pos'|'worst_yr_pf'|'plateau'
+
+const DISC_COLS: Array<{ k: DiscKey; label: string; num: boolean; title?: string }> = [
+  { k: 'rank',        label: '#',        num: true  },
+  { k: 'asset',       label: 'Asset',    num: false },
+  { k: 'tf',          label: 'TF',       num: false },
+  { k: 'archetype',   label: 'Archetype',num: false },
+  { k: 'direction',   label: 'Dir',      num: false },
+  { k: 'n',           label: 'n',        num: true,  title: 'total trades over the pinned ~7y window' },
+  { k: 'tpy',         label: 't/yr',     num: true,  title: 'trades per year' },
+  { k: 'pf',          label: 'PF',       num: true,  title: 'profit factor, standalone' },
+  { k: 'wr',          label: 'WR %',     num: true,  title: 'win rate' },
+  { k: 'net',         label: 'Net $',    num: true,  title: 'flat-notional net P&L' },
+  { k: 'mdd',         label: 'maxDD %',  num: true },
+  { k: 'is_pf',       label: 'IS PF',    num: true,  title: 'in-sample (first 70% of bars)' },
+  { k: 'oos_pf',      label: 'OOS PF',   num: true,  title: 'out-of-sample (last 30%)' },
+  { k: 'yrs_pos',     label: 'yrs+',     num: true,  title: 'years profitable (of years with >=10 trades)' },
+  { k: 'yrs_solid',   label: 'yrs',      num: true,  title: 'years carrying >=10 trades' },
+  { k: 'worst_yr_pf', label: 'worst yr', num: true,  title: 'lowest single-year PF' },
+  { k: 'plateau',     label: 'plateau %',num: true,  title: 'share of the parameter neighbourhood also at PF>=1.5' },
+]
+
+export function DiscoveryPanel({ active }: { active: boolean }) {
+  const [rows, setRows] = useState<DiscRow[]>([])
+  const [updatedAt, setUpdatedAt] = useState('')
+  const [gate, setGate] = useState<{ rules?: string[] } | null>(null)
+  const [basis, setBasis] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [sort, setSort] = useState<{ key: DiscKey; dir: 'asc' | 'desc' }>({ key: 'pf', dir: 'desc' })
+  // filters
+  const [fAsset, setFAsset] = useState('all')
+  const [fTf, setFTf] = useState('all')
+  const [fArch, setFArch] = useState('all')
+  const [fDir, setFDir] = useState('all')
+  const [wrMin, setWrMin] = useState('')
+  const [wrMax, setWrMax] = useState('')
+  const [pfMin, setPfMin] = useState('')
+  const [nMin, setNMin] = useState('')
+  const [oosMin, setOosMin] = useState('')
+
+  // Only poll while the tab is actually on screen — the legacy panels fetch
+  // regardless of visibility, which is what made this page feel broken.
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const d = await authedFetch<{ rows?: DiscRow[]; updatedAt?: string; gate?: { rules?: string[] }; basis?: string }>(
+          '/api/admin/msga-leaderboard?strategy=discovery', { cache: 'no-store' })
+        if (cancelled) return
+        setRows(d.rows ?? []); setUpdatedAt(String(d.updatedAt ?? ''))
+        setGate(d.gate ?? null); setBasis(String(d.basis ?? ''))
+      } catch (e) {
+        if (typeof window !== 'undefined') console.warn('[discovery] fetch failed:', e)
+      } finally { if (!cancelled) setLoading(false) }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [active])
+
+  const uniq = (f: (r: DiscRow) => string) => Array.from(new Set(rows.map(f))).sort()
+  const num = (s: string) => (s.trim() === '' ? null : Number(s))
+
+  const filtered = rows.filter(r => {
+    if (fAsset !== 'all' && r.asset !== fAsset) return false
+    if (fTf !== 'all' && r.tf !== fTf) return false
+    if (fArch !== 'all' && r.archetype !== fArch) return false
+    if (fDir !== 'all' && r.direction !== fDir) return false
+    const a = num(wrMin), b = num(wrMax), c = num(pfMin), d = num(nMin), e = num(oosMin)
+    if (a !== null && r.wr < a) return false
+    if (b !== null && r.wr > b) return false
+    if (c !== null && r.pf < c) return false
+    if (d !== null && r.n < d) return false
+    if (e !== null && r.oos_pf < e) return false
+    return true
+  })
+  const sorted = [...filtered].sort((x, y) => {
+    const av = x[sort.key] as unknown, bv = y[sort.key] as unknown
+    let cmp = 0
+    if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
+    else if (av === null || av === undefined) cmp = -1
+    else if (bv === null || bv === undefined) cmp = 1
+    else cmp = String(av).localeCompare(String(bv))
+    return sort.dir === 'asc' ? cmp : -cmp
+  })
+  const onSort = (k: DiscKey) =>
+    setSort(s => (s.key === k ? { key: k, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: 'desc' }))
+  const arrow = (k: DiscKey) => (sort.key !== k ? '' : sort.dir === 'asc' ? ' ↑' : ' ↓')
+  const clearAll = () => { setFAsset('all'); setFTf('all'); setFArch('all'); setFDir('all')
+    setWrMin(''); setWrMax(''); setPfMin(''); setNMin(''); setOosMin('') }
+
+  const numCell = (v: number | null | undefined, dp = 2) =>
+    v === null || v === undefined ? '—' : v.toFixed(dp)
+
+  return (
+    <div className="stax-page">
+      <div className="bt-header" style={{ marginBottom: 12 }}>
+        <div className="bt-eyebrow">ADMIN · STRATEGY · CFG DISCOVERY</div>
+        <h1 className="bt-title">New-archetype sweep <span className="bt-title-gold">survivors.</span></h1>
+        <p className="bt-blurb">
+          Every row here has already cleared the standalone gate. Sort any column; filter to slice.
+          Click a row for its verbatim parameters and per-year breakdown. {basis}
+        </p>
+      </div>
+
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>
+          {sorted.length} of {rows.length} candidates
+        </h2>
+        <span style={{ color: 'var(--ink-mute)', fontSize: 12 }}>
+          updated {updatedAt ? new Date(updatedAt).toLocaleString() : '—'}{dataFreshness(updatedAt)?.stale ? ` — ${dataFreshness(updatedAt)!.days}d old, SNAPSHOT` : ''}
+        </span>
+      </div>
+
+      {/* Filters */}
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          {([['Asset', fAsset, setFAsset, uniq(r => r.asset)],
+             ['TF', fTf, setFTf, uniq(r => r.tf)],
+             ['Archetype', fArch, setFArch, uniq(r => r.archetype)],
+             ['Direction', fDir, setFDir, uniq(r => r.direction)]] as const).map(([lab, val, set, opts]) => (
+            <label key={lab} style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+              {lab}<br />
+              <select value={val} onChange={e => (set as (v: string) => void)(e.target.value)}
+                      style={{ fontSize: 12, padding: '3px 6px', marginTop: 3, minWidth: 110 }}>
+                <option value="all">All</option>
+                {(opts as string[]).map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+          ))}
+          {([['WR ≥ %', wrMin, setWrMin], ['WR ≤ %', wrMax, setWrMax], ['PF ≥', pfMin, setPfMin],
+             ['n ≥', nMin, setNMin], ['OOS PF ≥', oosMin, setOosMin]] as const).map(([lab, val, set]) => (
+            <label key={lab} style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+              {lab}<br />
+              <input value={val} onChange={e => (set as (v: string) => void)(e.target.value)}
+                     inputMode="decimal" placeholder="—"
+                     style={{ fontSize: 12, padding: '3px 6px', marginTop: 3, width: 72 }} />
+            </label>
+          ))}
+          <button onClick={clearAll} style={{ fontSize: 12, padding: '5px 12px', cursor: 'pointer' }}>Clear</button>
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>Quick:</span>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setWrMax('55'); setSort({ key: 'pf', dir: 'desc' }) }}>
+            WR &lt; 55% · by PF
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setWrMin('60'); setSort({ key: 'pf', dir: 'desc' }) }}>
+            WR ≥ 60% · by PF
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setPfMin('2.5'); setOosMin('1.5'); setSort({ key: 'oos_pf', dir: 'desc' }) }}>
+            PF ≥ 2.5 &amp; OOS ≥ 1.5
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setSort({ key: 'plateau', dir: 'desc' }) }}>
+            Widest plateau
+          </button>
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table className="adm-table" style={{ fontSize: 12, width: '100%' }}>
+          <thead>
+            <tr>
+              {DISC_COLS.map(c => (
+                <th key={c.k} title={c.title} onClick={() => onSort(c.k)}
+                    style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: c.num ? 'right' : 'left' }}>
+                  {c.label}{arrow(c.k)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={DISC_COLS.length}>Loading…</td></tr>}
+            {!loading && sorted.length === 0 &&
+              <tr><td colSpan={DISC_COLS.length}>No rows match these filters.</td></tr>}
+            {sorted.map(r => (
+              <Fragment key={r.id}>
+                <tr onClick={() => setExpanded(expanded === r.id ? null : r.id)} style={{ cursor: 'pointer' }}>
+                  <td style={{ textAlign: 'right' }}>{r.rank ?? '—'}</td>
+                  <td>{r.asset}</td>
+                  <td>{r.tf}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{r.archetype}</td>
+                  <td>{String(r.direction ?? '').replace('_only', '') || '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{r.n ?? '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.tpy, 1)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{numCell(r.pf)}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.wr, 1)}</td>
+                  <td style={{ textAlign: 'right' }}>{typeof r.net === 'number' ? r.net.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.mdd, 1)}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.is_pf)}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.oos_pf)}</td>
+                  <td style={{ textAlign: 'right' }}>{r.yrs_pos ?? '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{r.yrs_solid ?? '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{numCell(r.worst_yr_pf)}</td>
+                  <td style={{ textAlign: 'right' }}>{typeof r.plateau === 'number' ? `${r.plateau.toFixed(0)}%` : '—'}</td>
+                </tr>
+                {expanded === r.id && (
+                  <tr>
+                    <td colSpan={DISC_COLS.length} style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div style={{ padding: '8px 4px', fontFamily: 'monospace', fontSize: 11, lineHeight: 1.7 }}>
+                        <div><strong>verbatim cfg</strong></div>
+                        <div>entry_archetype={r.archetype} tf={r.tf} direction={r.direction}</div>
+                        <div>x_len={r.x_len} x_mult={r.x_mult} x_len2={r.x_len2} x_mult2={r.x_mult2} x_mode={r.x_mode}</div>
+                        {r.x_prim && <div>x_prim={r.x_prim} x_conf={r.x_conf} x_tgate={r.x_tgate} x_htf={r.x_htf}</div>}
+                        <div>sl_type={r.sl_type} trail_mode={r.trail_mode} breakeven_at_R={r.breakeven_at_R}</div>
+                        <div>slippage_bps=2.0 commission_taker_pct=0.06</div>
+                        {r.per_year && (
+                          <div style={{ marginTop: 8 }}>
+                            <strong>per-year [n · PF · net]</strong>
+                            <div>{Object.entries(r.per_year).sort().map(([y, v]) =>
+                              `${y}: ${v[0]} · ${Number(v[1]).toFixed(2)} · ${Number(v[2]).toFixed(0)}`).join('   ')}</div>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 6, color: 'var(--ink-mute)' }}>
+                          plateau {r.plateau ?? 'n/a'}% of {r.nbhd ?? '?'} neighbours ·
+                          IS n={r.is_n} / OOS n={r.oos_n}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {gate?.rules && (
+        <div className="card card-pad" style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>The gate every row above has passed</div>
+          <ol style={{ fontSize: 12, color: 'var(--ink-mute)', margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+            {gate.rules.map((x, i) => <li key={i}>{x}</li>)}
+          </ol>
+        </div>
+      )}
     </div>
   )
 }
