@@ -31,6 +31,7 @@ import { PHASE_H_SYMBOLS } from '@/lib/phase-h-basket'
 import {
   StrategyResearchPanel,
   DiscoveryPanel,
+  CfgQualityPanel,
   BestStaxsPanel,
   // SatoshiStackerSpecPanel / StrategyOptimizationsPanel / ExecutionArchitecturePanel
   // are still exported but no longer wired into the StrategyPanel tabs. Dead-end
@@ -1982,12 +1983,12 @@ function WalletsPanel({ active }: { active: boolean }) {
 // 9. Strategy panel — sub-tabs for Research / Spec / Optimizations / Architecture
 // ────────────────────────────────────────────────────────────────────────────
 
-type StratSub = 'discovery' | 'swingmate' | 'bob' | 'staxs'
+type StratSub = 'cfgquality' | 'discovery' | 'swingmate' | 'bob' | 'staxs'
 
 function StrategyPanel({ active }: { active: boolean }) {
   // SwingMate ⚡ = single-cfg leaderboard (cross-asset post Phase G, 200k+ swept).
   // BoB = qualifying-edge single cfgs. Best Staxs 🥞 = stack leaderboard (Phase F/2/4).
-  const [sub, setSub] = useState<StratSub>('discovery')
+  const [sub, setSub] = useState<StratSub>('cfgquality')
   return (
     <div className="stax-page">
       <PageHeader
@@ -2000,12 +2001,16 @@ function StrategyPanel({ active }: { active: boolean }) {
         value={sub}
         onChange={setSub}
         items={[
+          { id: 'cfgquality', label: 'CFG Quality 🎯' },
           { id: 'discovery', label: 'CFG Discovery 💎' },
           { id: 'swingmate', label: 'SwingMate ⚡' },
           { id: 'bob', label: 'Best of The Best 🏆' },
           { id: 'staxs', label: 'Best Staxs 🥞' },
         ]}
       />
+      <div style={{ display: sub === 'cfgquality' ? 'block' : 'none' }}>
+        <CfgQualityPanel active={active && sub === 'cfgquality'} />
+      </div>
       <div style={{ display: sub === 'discovery' ? 'block' : 'none' }}>
         <DiscoveryPanel active={active && sub === 'discovery'} />
       </div>

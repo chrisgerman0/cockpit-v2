@@ -1636,3 +1636,223 @@ export function DiscoveryPanel({ active }: { active: boolean }) {
     </div>
   )
 }
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// CFG QUALITY — the 70-cfg basket, STANDALONE beside SEATED.
+//
+// Bible §CFG-QUALITY: a cfg's quality is judged STANDALONE — every signal it fires, with no FCFS
+// lane competition. The metrics of whichever arbitrary subset happened to win a lane do not measure
+// the cfg. So this table shows both, side by side, and the GAP between them is the finding:
+//   strong standalone + big gap  -> being crowded out; a LANE problem, not a cfg problem
+//   weak standalone              -> mis-admitted; an admission failure
+//
+// Bible §BASIS: both sides are scored on the LOCKED risk-sized basis through the identical
+// risk_sizing_canonical formula, so the difference is seating and nothing else. The header states
+// the basis; every column says which side it belongs to.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+type CqRow = {
+  sid: string; asset: string; tf: string; archetype: string; direction: string
+  sa_trades: number; sa_winRate: number; sa_profitFactor: number; sa_netUsd: number
+  seated_trades: number; seated_netUsd: number; seatRate: number; lost: number; gapPct: number
+}
+type CqKey = keyof CqRow
+
+export function CfgQualityPanel({ active }: { active: boolean }) {
+  const [rows, setRows] = useState<CqRow[]>([])
+  const [basis, setBasis] = useState('')
+  const [updatedAt, setUpdatedAt] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [sort, setSort] = useState<{ key: CqKey; dir: 'asc' | 'desc' }>({ key: 'lost', dir: 'desc' })
+  const [fAsset, setFAsset] = useState('all')
+  const [fTf, setFTf] = useState('all')
+  const [fArch, setFArch] = useState('all')
+  const [fDir, setFDir] = useState('all')
+  const [wrMin, setWrMin] = useState('')
+  const [wrMax, setWrMax] = useState('')
+  const [pfMin, setPfMin] = useState('')
+  const [nMin, setNMin] = useState('')
+  const [seatMax, setSeatMax] = useState('')
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const d = await authedFetch<{ rows?: CqRow[]; updatedAt?: string; basis?: string }>(
+          '/api/admin/msga-leaderboard?strategy=cfgquality', { cache: 'no-store' })
+        if (cancelled) return
+        setRows(d.rows ?? []); setBasis(String(d.basis ?? '')); setUpdatedAt(String(d.updatedAt ?? ''))
+      } catch (e) {
+        if (typeof window !== 'undefined') console.warn('[cfg-quality] fetch failed:', e)
+      } finally { if (!cancelled) setLoading(false) }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [active])
+
+  const uniq = (f: (r: CqRow) => string) => Array.from(new Set(rows.map(f).filter(Boolean))).sort()
+  const num = (s: string) => (s.trim() === '' ? null : Number(s))
+  const clearAll = () => {
+    setFAsset('all'); setFTf('all'); setFArch('all'); setFDir('all')
+    setWrMin(''); setWrMax(''); setPfMin(''); setNMin(''); setSeatMax('')
+  }
+
+  const filtered = rows.filter(r => {
+    if (fAsset !== 'all' && r.asset !== fAsset) return false
+    if (fTf !== 'all' && r.tf !== fTf) return false
+    if (fArch !== 'all' && r.archetype !== fArch) return false
+    if (fDir !== 'all' && r.direction !== fDir) return false
+    const a = num(wrMin), b = num(wrMax), c = num(pfMin), d = num(nMin), e = num(seatMax)
+    if (a !== null && r.sa_winRate < a) return false
+    if (b !== null && r.sa_winRate > b) return false
+    if (c !== null && r.sa_profitFactor < c) return false
+    if (d !== null && r.sa_trades < d) return false
+    if (e !== null && r.seatRate > e) return false
+    return true
+  })
+  const sorted = [...filtered].sort((x, y) => {
+    const av = x[sort.key], bv = y[sort.key]
+    const n = typeof av === 'number' && typeof bv === 'number'
+      ? av - bv : String(av).localeCompare(String(bv))
+    return sort.dir === 'asc' ? n : -n
+  })
+  const onSort = (k: CqKey) =>
+    setSort(s => (s.key === k ? { key: k, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: 'desc' }))
+  const arrow = (k: CqKey) => (sort.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '')
+  const totSa = filtered.reduce((s, r) => s + (r.sa_netUsd || 0), 0)
+  const totSe = filtered.reduce((s, r) => s + (r.seated_netUsd || 0), 0)
+
+  if (!active) return null
+  const H = ({ k, children, title }: { k: CqKey; children: React.ReactNode; title?: string }) => (
+    <th onClick={() => onSort(k)} title={title}
+        style={{ cursor: 'pointer', userSelect: 'none', textAlign: 'right', fontWeight: 700 }}>
+      {children}{arrow(k)}
+    </th>
+  )
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
+          CFG Quality 🎯 — {sorted.length} of {rows.length} basket cfgs
+        </h2>
+        <span style={{ color: 'var(--ink-mute)', fontSize: 12 }}>
+          updated {updatedAt ? new Date(updatedAt).toLocaleString() : '—'}
+          {dataFreshness(updatedAt)?.stale ? ` — ${dataFreshness(updatedAt)!.days}d old, SNAPSHOT` : ''}
+        </span>
+      </div>
+
+      <div className="card card-pad" style={{ marginTop: 8, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
+        <strong>Quality is STANDALONE.</strong> The <Code>SA</Code> columns are every signal the cfg fires with no lane
+        competition — that is the admission gate. The <Code>SEAT</Code> columns are only the trades that won a lane;
+        they measure the <em>book</em>, not the cfg. <strong>GAP</strong> is what seating costs.
+        <br />
+        <strong>Basis:</strong> {basis || 'locked risk-sized'} — both sides scored through the identical locked formula,
+        so the difference is seating and nothing else.
+        <br />
+        Filtered totals: standalone <strong>${totSa.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong> ·
+        seated <strong>${totSe.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong> ·
+        lost to seating <strong style={{ color: '#f59e0b' }}>
+          ${(totSa - totSe).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        </strong>{totSa > 0 ? ` (${((totSa - totSe) / totSa * 100).toFixed(1)}%)` : ''}
+      </div>
+
+      {/* Filters — same control set as CFG Discovery */}
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          {([['Asset', fAsset, setFAsset, uniq(r => r.asset)],
+             ['TF', fTf, setFTf, uniq(r => r.tf)],
+             ['Archetype', fArch, setFArch, uniq(r => r.archetype)],
+             ['Direction', fDir, setFDir, uniq(r => r.direction)]] as const).map(([lab, val, set, opts]) => (
+            <label key={lab} style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+              {lab}<br />
+              <select value={val} onChange={e => (set as (v: string) => void)(e.target.value)}
+                      style={{ fontSize: 12, padding: '3px 6px', marginTop: 3, minWidth: 110 }}>
+                <option value="all">All</option>
+                {(opts as string[]).map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+          ))}
+          {([['SA WR ≥ %', wrMin, setWrMin], ['SA WR ≤ %', wrMax, setWrMax], ['SA PF ≥', pfMin, setPfMin],
+             ['SA n ≥', nMin, setNMin], ['Seat ≤ %', seatMax, setSeatMax]] as const).map(([lab, val, set]) => (
+            <label key={lab} style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+              {lab}<br />
+              <input value={val} onChange={e => (set as (v: string) => void)(e.target.value)}
+                     inputMode="decimal" placeholder="—"
+                     style={{ fontSize: 12, padding: '3px 6px', marginTop: 3, width: 76 }} />
+            </label>
+          ))}
+          <button onClick={clearAll} style={{ fontSize: 12, padding: '5px 12px', cursor: 'pointer' }}>Clear</button>
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>Quick:</span>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setSeatMax('50'); setSort({ key: 'seatRate', dir: 'asc' }) }}>
+            Seat &lt; 50% · starved
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setSort({ key: 'lost', dir: 'desc' }) }}>
+            Worst seating cost
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setPfMin('2'); setSort({ key: 'lost', dir: 'desc' }) }}>
+            SA PF ≥ 2 · by cost
+          </button>
+          <button style={{ fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}
+                  onClick={() => { clearAll(); setSort({ key: 'sa_profitFactor', dir: 'asc' }) }}>
+            Weakest standalone PF
+          </button>
+        </div>
+      </div>
+
+      {loading && rows.length === 0 ? <p className="adm-p adm-p-muted">Loading…</p> : (
+        <div className="card card-pad" style={{ overflowX: 'auto' }}>
+          <table className="adm-table" style={{ fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>cfg_sid</th>
+                <th style={{ textAlign: 'left' }}>asset</th>
+                <th style={{ textAlign: 'left' }}>tf</th>
+                <th style={{ textAlign: 'left' }}>archetype</th>
+                <th style={{ textAlign: 'left' }}>dir</th>
+                <H k="sa_trades" title="STANDALONE — every signal the cfg fires">SA n</H>
+                <H k="sa_winRate" title="STANDALONE win rate">SA WR%</H>
+                <H k="sa_profitFactor" title="STANDALONE profit factor — the quality measure">SA PF</H>
+                <H k="sa_netUsd" title="STANDALONE net, locked risk-sized">SA net $</H>
+                <H k="seated_trades" title="SEATED — only trades that won a lane">SEAT n</H>
+                <H k="seated_netUsd" title="SEATED net, locked risk-sized">SEAT net $</H>
+                <H k="seatRate" title="share of its signals that won a lane">seat %</H>
+                <H k="lost" title="standalone minus seated — what lane competition cost">GAP $</H>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(r => (
+                <tr key={r.sid}>
+                  <td className="num adm-mono-sm" style={{ textAlign: 'left' }}>{r.sid}</td>
+                  <td style={{ textAlign: 'left' }}>{r.asset}</td>
+                  <td style={{ textAlign: 'left' }}>{r.tf}</td>
+                  <td style={{ textAlign: 'left' }}>{r.archetype}</td>
+                  <td style={{ textAlign: 'left' }}>{r.direction}</td>
+                  <td className="num">{r.sa_trades}</td>
+                  <td className="num">{r.sa_winRate?.toFixed(1)}</td>
+                  <td className="num" style={{ fontWeight: r.sa_profitFactor < 1 ? 700 : 400,
+                                               color: r.sa_profitFactor < 1 ? '#ef4444' : undefined }}>
+                    {r.sa_profitFactor?.toFixed(2)}
+                  </td>
+                  <td className="num">{Math.round(r.sa_netUsd).toLocaleString()}</td>
+                  <td className="num">{r.seated_trades}</td>
+                  <td className="num">{Math.round(r.seated_netUsd).toLocaleString()}</td>
+                  <td className="num" style={{ color: r.seatRate < 50 ? '#f59e0b' : undefined }}>
+                    {r.seatRate?.toFixed(1)}
+                  </td>
+                  <td className="num" style={{ fontWeight: 600 }}>{Math.round(r.lost).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
