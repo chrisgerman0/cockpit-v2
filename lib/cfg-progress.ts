@@ -410,11 +410,24 @@ function trailArchetypePhase(args: {
   // peak — matches customer intuition + remains accurate (engine catches up
   // at next bar close anyway).
   const mfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
+  // 2026-08-16 — established from engine source, not assumed.
+  //   engine.py:1734/1739  MFE is the bar's HIGH (long) / LOW (short), so a TOUCH is enough:
+  //                        price never has to hold to the close for the peak to count.
+  //   engine.py:1526/1531  the trail is computed from `mfe_abs`, and the MFE update at :1730
+  //                        happens LATER in the same `for t` loop (:1314). So within bar t the
+  //                        trail uses the peak through bar t-1 — it steps at bar boundaries and
+  //                        NEVER moves intra-bar.
+  // state.json is written at bar close of t carrying the peak through t, which is exactly the
+  // engine's input for bar t+1. So the COMMITTED mfe (raw mfePct, no live correction) is the
+  // faithful input for the trail level and the tier. The lag-corrected `mfe` above is for
+  // DISPLAYING the peak only — using it for the trail would draw a mark that moves intra-bar
+  // when the engine's does not.
+  const mfeCommitted = Math.max(0, mfePct ?? 0)
   const trailLabel = trailModeLabel(cfg.trail_mode)
   const activation = trailActivationPct(cfg.trail_mode)
 
   if (cfg.trail_mode === 'multi_tier') {
-    const lvl = multiTierLevel(mfe)
+    const lvl = multiTierLevel(mfeCommitted)
     if (lvl.tier === 0) {
       // Yellow — approaching first tier. LIVE (see armingBar).
       return armingBar({
@@ -424,7 +437,7 @@ function trailArchetypePhase(args: {
     // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
     return greenTrailBar({
       trailLabel, mfe, pnlPct, badges,
-      trailPct: trailLevelPct(cfg.trail_mode, mfe, side),
+      trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
       // `T1` not `Tier 1 · 60% retrace allowed` — the long form pushed this caption to 83 chars,
       // wider than the HYPE row that produced the scrollbar. The retrace % lives in the tooltip.
       extraSub: `T${lvl.tier}`,
@@ -432,14 +445,14 @@ function trailArchetypePhase(args: {
   }
 
   // chandelier / atr_2 / fixed_3pct — single threshold
-  if (mfe < activation) {
+  if (mfeCommitted < activation) {
     return armingBar({
       label: trailLabel, threshold: activation, pnlPct, mfe, badges,
     })
   }
   return greenTrailBar({
     trailLabel, mfe, pnlPct, badges,
-    trailPct: trailLevelPct(cfg.trail_mode, mfe, side),
+    trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
   })
 }
 
