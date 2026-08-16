@@ -649,13 +649,33 @@ function SLDangerCell({
  * styled Tooltip component, but `title` is the lightest first cut and
  * already gives customers the educational hover-to-learn pattern.
  */
+/** TF label -> milliseconds. Any label not here returns 0 = "unknown", which makes
+ *  barsHeld null and the time-gated badge FAIL CLOSED rather than arm on a guess. */
+const TF_MS: Record<string, number> = {
+  '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000,
+  '4h': 14_400_000, '6h': 21_600_000, '8h': 28_800_000, '12h': 43_200_000,
+  '1d': 86_400_000,
+}
+
+/** Bars since entry, the quantity engine.py:1056 tests as `bars_held > 6`.
+ *  entryTs is the FILL time, so it is floored to its bar open first — the engine counts
+ *  bars, not elapsed time from the fill. Returns null when the tf is unknown or entryTs
+ *  is missing, and null means the badge does not arm. */
+function barsHeldFrom(entryTs: number | undefined, tf: string | undefined): number | null {
+  const tfMs = TF_MS[String(tf ?? '')] ?? 0
+  if (!tfMs || !entryTs || !Number.isFinite(entryTs) || entryTs <= 0) return null
+  const barOpen = Math.floor(entryTs / tfMs) * tfMs
+  return Math.max(0, Math.floor((Date.now() - barOpen) / tfMs))
+}
+
 function CfgProgressCell({
-  cfgDims, entry, mark, side,
+  cfgDims, entry, mark, side, entryTs,
 }: {
   cfgDims: CfgDims
   entry: number
   mark: number | null
   side: 'LONG' | 'SHORT'
+  entryTs?: number
 }) {
   // Throttle high-frequency Bitget WS ticks down to the same 750ms cadence
   // SLDangerCell uses, so the bar + caption update smoothly without jitter.
@@ -667,6 +687,7 @@ function CfgProgressCell({
 
   const state: ProgressBarState | null = computeProgressBarState({
     cfg: cfgDims,
+    barsHeld: barsHeldFrom(entryTs, cfgDims.tf),
     side,
     entryPx: entry,
     slPx: cfgDims.sl_price,
@@ -712,8 +733,22 @@ function CfgProgressCell({
 
   return (
     <div className="lt-sl-cell" title={cellTitle}>
-      <div className={barClasses.join(' ')}>
+      <div className={barClasses.join(' ')} style={{ position: 'relative' }}>
         <div className={'adm-meter-fill ' + fillClass} style={{ width: state.fillPct + '%' }} />
+        {/* 2026-08-16 (Chris): in the GREEN phase the bar spans entry -> MFE and this black
+            mark is the TRAIL. The green fill recedes toward it as price gives back; when the
+            fill reaches the mark, the trail exit fires. Absent for ATR-based trail modes,
+            where the level is not derivable without the engine's live ATR. */}
+        {state.phase === 'green' && state.markerPct != null && (
+          <div
+            title="Trail level — if the bar recedes to this mark, the trailing exit fires."
+            style={{
+              position: 'absolute', top: -1, bottom: -1,
+              left: `calc(${state.markerPct}% - 1px)`, width: 2,
+              background: '#000', borderRadius: 1, pointerEvents: 'auto',
+            }}
+          />
+        )}
       </div>
       <div className={'lt-sl-text ' + (state.phase === 'red' ? 'lt-sl-text-critical' : state.phase === 'green' ? 'lt-sl-text-armed' : 'lt-sl-text-warn')}>
         {state.label}
@@ -931,6 +966,7 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
                               entry={r.entryPx}
                               mark={r.markPx ?? null}
                               side={r.side}
+                              entryTs={r.entryTs}
                             />
                           : <SLDangerCell
                               entry={r.entryPx}
@@ -1019,6 +1055,7 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
                           entry={r.entryPx}
                           mark={r.markPx ?? null}
                           side={r.side}
+                          entryTs={r.entryTs}
                         />
                       : <SLDangerCell
                           entry={r.entryPx}

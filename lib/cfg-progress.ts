@@ -26,6 +26,10 @@ export type ProgressBarState = {
   phase: ProgressPhase
   /** 0-100, where the fill bar lands. Phase-dependent semantics. */
   fillPct: number
+  /** GREEN phase only. 0-100 position of the TRAIL marker on an entry->MFE bar.
+   *  null when the trail level is not derivable from the cfg alone (ATR-based
+   *  modes need the engine's live ATR — we do not invent one). */
+  markerPct?: number | null
   /** Primary label rendered under the bar. Mechanical + precise (Chris Q1). */
   label: string
   /** Secondary label, e.g. "tier 2 · 50% retrace" for multi_tier. May be empty. */
@@ -74,6 +78,34 @@ function trailActivationPct(trailMode: string): number {
     case 'off':         return Infinity
     default:            return Infinity
   }
+}
+
+/** The TRAIL LEVEL expressed as a return-% from entry, for the green-phase marker.
+ *
+ *  multi_tier — the trail gives back `retracePct` of the PEAK, so it sits at
+ *    mfe * (1 - retracePct/100) in return space. Matches the "50% retrace allowed" sublabel.
+ *  fixed_3pct — engine.py:1085-1097 `_compute_trail_price` returns mfe_price * (1 ∓ 0.03),
+ *    i.e. 3% off the peak PRICE, not 3 percentage points off the peak return. Converted here
+ *    in price space and direction-correctly, because for a short the two differ.
+ *  chandelier / atr_2 — ATR-based. The distance depends on the engine's live ATR, which the
+ *    dashboard does not have. Returns null: NO MARKER rather than an invented one.
+ */
+export function trailLevelPct(trailMode: string, mfePct: number,
+                              side: 'LONG' | 'SHORT'): number | null {
+  if (!Number.isFinite(mfePct) || mfePct <= 0) return null
+  if (trailMode === 'multi_tier') {
+    const lvl = multiTierLevel(mfePct)
+    if (lvl.tier === 0) return null
+    return mfePct * (1 - lvl.retracePct / 100)
+  }
+  if (trailMode === 'fixed_3pct') {
+    const D = 0.03
+    // peak price relative to entry (entry = 1.0), then the trail 3% off it, back to return-%.
+    return side === 'LONG'
+      ? ((1 + mfePct / 100) * (1 - D) - 1) * 100
+      : (1 - (1 - mfePct / 100) * (1 + D)) * 100
+  }
+  return null   // ATR-based — not derivable from the cfg
 }
 
 /** Strong-alert gate threshold (MFE % needed to pass the gate). */
@@ -126,6 +158,8 @@ function trailModeLabel(trailMode: string): string {
  * Returns null if essential data missing (no entry / no mark / no cfg).
  */
 export function computeProgressBarState(args: {
+  /** Bars held since entry. Required for time_gt_6bars / mfe_and_time; null = unknown -> fail closed. */
+  barsHeld?: number | null
   cfg: CfgDims
   side: 'LONG' | 'SHORT'
   entryPx: number
@@ -135,6 +169,7 @@ export function computeProgressBarState(args: {
   currentPx: number
 }): ProgressBarState | null {
   const { cfg, side, entryPx, slPx, mfePct, beMovedFromState, currentPx } = args
+  const barsHeld = args.barsHeld ?? null
   if (!Number.isFinite(entryPx) || entryPx <= 0) return null
   if (!Number.isFinite(currentPx) || currentPx <= 0) return null
   if (slPx == null || !Number.isFinite(slPx) || slPx <= 0) return null
@@ -180,7 +215,18 @@ export function computeProgressBarState(args: {
     // 2026-05-27: gate-passed check uses live-peak MFE (engine mfe_abs may
     // lag intra-bar). max(engine, current_pnl_if_favorable).
     const livePeakMfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
-    const gatePassed = livePeakMfe >= gateMfe
+    // 2026-08-16 FIX (Chris caught it on HYPE). MFE threshold was the ONLY test, but two of
+    // the four gated values are not pure-MFE gates:
+    //   time_gt_6bars -> threshold 0, so livePeakMfe >= 0 is TRUE for every non-negative
+    //                   position: the badge was PERMANENTLY armed from open.  7 of the 70.
+    //   mfe_and_time  -> needs BOTH MFE>=2% AND bars>=6; the bars half was never checked
+    //                   anywhere in this file despite the comment claiming it was. 16 of 70.
+    // Fail CLOSED: barsHeld unknown -> do NOT arm a time-gated badge.
+    const needsBars = (cfg.strong_alert_gate === 'time_gt_6bars'
+                    || cfg.strong_alert_gate === 'mfe_and_time')
+    // engine.py:1056-1059 is `bars_held > 6` — STRICTLY greater. Mirror it exactly.
+    const barsOk = needsBars ? (barsHeld != null && barsHeld > 6) : true
+    const gatePassed = livePeakMfe >= gateMfe && barsOk
     if (gatePassed) {
       badges.push({
         kind: 'strong_alert_armed',
@@ -227,7 +273,7 @@ export function computeProgressBarState(args: {
   // ─── Branch by archetype ───────────────────────────────────────────────
   if (archetype === 'A_TRAIL_ONLY' || archetype === 'B_TRAIL_PLUS_BE') {
     return trailArchetypePhase({
-      cfg, pnlPct, mfePct, badges, beMovedFromState,
+      cfg, side, pnlPct, mfePct, badges, beMovedFromState,
     })
   }
   if (archetype === 'C_BE_ONLY') {
@@ -252,16 +298,60 @@ export function computeProgressBarState(args: {
   }
 }
 
+/** GREEN phase, to Chris's spec (2026-08-16).
+ *
+ *  The bar spans ENTRY -> MFE, not 0->100% of some abstract progress:
+ *    · green fill  = (pnlPct / mfe) * 100  — a retrace RECEDES toward the marker
+ *    · black marker= (trailPct / mfe) * 100 — where the trail would take us out
+ *    · sublabel    = the live gap between the two
+ *  When price is at a new peak, fill == 100 and the bar is full. When price gives
+ *  back, the fill falls toward the marker; when it reaches the marker, the trail fires.
+ *  Lag-corrected mfe is passed in by the caller (same correction the yellow phase uses).
+ */
+function greenTrailBar(args: {
+  trailLabel: string
+  mfe: number
+  pnlPct: number
+  trailPct: number | null
+  extraSub?: string
+  badges: ProgressBadge[]
+}): ProgressBarState {
+  const { trailLabel, mfe, pnlPct, trailPct, extraSub, badges } = args
+  const clamp = (v: number) => Math.max(0, Math.min(100, v))
+  const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
+  const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
+  const bits: string[] = []
+  if (extraSub) bits.push(extraSub)
+  bits.push(`peak ${mfe.toFixed(2)}%`)
+  if (trailPct != null) {
+    const gap = pnlPct - trailPct
+    bits.push(`now ${pnlPct.toFixed(2)}% · trail ${trailPct.toFixed(2)}%`)
+    bits.push(gap >= 0 ? `${gap.toFixed(2)}% above trail` : `trail crossed by ${(-gap).toFixed(2)}%`)
+  } else {
+    bits.push(`now ${pnlPct.toFixed(2)}% · trail level ATR-based (not shown)`)
+  }
+  return {
+    phase: 'green',
+    fillPct: fill,
+    markerPct: marker,
+    label: `${trailLabel} active`,
+    sublabel: bits.join(' · '),
+    flash: false,
+    badges,
+  }
+}
+
 /** Archetype A (Trail only) + B (Trail + BE) shared trail logic.
  *  Yellow = MFE > 0, below trail activation. Green = trail active. */
 function trailArchetypePhase(args: {
   cfg: CfgDims
+  side: 'LONG' | 'SHORT'
   pnlPct: number
   mfePct: number | null
   badges: ProgressBadge[]
   beMovedFromState: boolean
 }): ProgressBarState {
-  const { cfg, pnlPct, mfePct, badges } = args
+  const { cfg, side, pnlPct, mfePct, badges } = args
   // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
   // bar close (4h / 2h / 1h cadence). If current price is making a new
   // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
@@ -287,17 +377,12 @@ function trailArchetypePhase(args: {
         badges,
       }
     }
-    // Green — trail active at tier `lvl.tier`
-    // Per Chris (label tweak): "X% retrace allowed" mirrors engine reality
-    // honestly. Exit triggers if price retraces lvl.retracePct of MFE from peak.
-    return {
-      phase: 'green',
-      fillPct: 100,
-      label: `${trailLabel} active`,
-      sublabel: `Tier ${lvl.tier} · ${lvl.retracePct}% retrace allowed · peak ${mfe.toFixed(2)}%`,
-      flash: false,
-      badges,
-    }
+    // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
+    return greenTrailBar({
+      trailLabel, mfe, pnlPct, badges,
+      trailPct: trailLevelPct(cfg.trail_mode, mfe, side),
+      extraSub: `Tier ${lvl.tier} · ${lvl.retracePct}% retrace allowed`,
+    })
   }
 
   // chandelier / atr_2 / fixed_3pct — single threshold
@@ -313,14 +398,10 @@ function trailArchetypePhase(args: {
       badges,
     }
   }
-  return {
-    phase: 'green',
-    fillPct: 100,
-    label: `${trailLabel} active`,
-    sublabel: `Peak ${mfe.toFixed(2)}%`,
-    flash: false,
-    badges,
-  }
+  return greenTrailBar({
+    trailLabel, mfe, pnlPct, badges,
+    trailPct: trailLevelPct(cfg.trail_mode, mfe, side),
+  })
 }
 
 /** Archetype C (Breakeven only) — exit is RSI TP or strong-alert.
