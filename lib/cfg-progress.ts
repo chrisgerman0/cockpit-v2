@@ -367,15 +367,19 @@ function greenTrailBar(args: {
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
   const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
+  // Kept SHORT deliberately: this caption sits in a narrow table cell, and a long one used to
+  // force the whole table wider (the HYPE ATR row's horizontal scrollbar, 2026-08-16). The CSS
+  // now wraps rather than expands, but a caption that fits on one line is still the better fix.
   const bits: string[] = []
   if (extraSub) bits.push(extraSub)
-  bits.push(`peak ${mfe.toFixed(2)}%`)
+  bits.push(`peak ${mfe.toFixed(2)}%`, `now ${pnlPct.toFixed(2)}%`)
   if (trailPct != null) {
     const gap = pnlPct - trailPct
-    bits.push(`now ${pnlPct.toFixed(2)}% · trail ${trailPct.toFixed(2)}%`)
-    bits.push(gap >= 0 ? `${gap.toFixed(2)}% above trail` : `trail crossed by ${(-gap).toFixed(2)}%`)
+    bits.push(gap >= 0
+      ? `trail ${trailPct.toFixed(2)}% (+${gap.toFixed(2)}%)`
+      : `trail ${trailPct.toFixed(2)}% (CROSSED ${(-gap).toFixed(2)}%)`)
   } else {
-    bits.push(`now ${pnlPct.toFixed(2)}% · trail level ATR-based (not shown)`)
+    bits.push('trail ATR-based')
   }
   return {
     phase: 'green',
@@ -421,7 +425,9 @@ function trailArchetypePhase(args: {
     return greenTrailBar({
       trailLabel, mfe, pnlPct, badges,
       trailPct: trailLevelPct(cfg.trail_mode, mfe, side),
-      extraSub: `Tier ${lvl.tier} · ${lvl.retracePct}% retrace allowed`,
+      // `T1` not `Tier 1 · 60% retrace allowed` — the long form pushed this caption to 83 chars,
+      // wider than the HYPE row that produced the scrollbar. The retrace % lives in the tooltip.
+      extraSub: `T${lvl.tier}`,
     })
   }
 

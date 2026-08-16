@@ -4852,7 +4852,16 @@ html.light .stax-app .adm-log-tail {
   font-size: 9.5px;
   color: var(--muted-2);
   font-family: 'JetBrains Mono', monospace;
-  white-space: nowrap;
+  /* 2026-08-16: was `white-space: nowrap`, which let a long caption force the cell — and
+     therefore the whole table — wider than its container, producing a horizontal scrollbar
+     (HYPE's ATR trail caption did exactly this). The caption must NEVER drive table width:
+     it wraps inside whatever width the column already has. min-width:0 is required because
+     this sits in a flex column, where the default min-width:auto refuses to shrink below
+     content size and would defeat the wrap. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }

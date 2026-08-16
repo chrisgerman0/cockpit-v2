@@ -757,8 +757,11 @@ function CfgProgressCell({
       </div>
       {state.sublabel ? (
         <div className="lt-sl-prices" title={
+          state.sublabel.includes('ATR-based') ? 'The trail is following price at an ATR-derived distance. The exact level depends on the engine’s live ATR, which the dashboard does not receive, so no trail mark is drawn rather than one in a guessed place.' :
+          /^T[1-4] · /.test(state.sublabel) ? TOOLTIPS.tier :
           state.sublabel.includes('Tier')   ? TOOLTIPS.tier :
           state.sublabel.includes('retrace') ? TOOLTIPS.retrace :
+          state.sublabel.includes('peak')    ? TOOLTIPS.mfe :
           state.sublabel.includes('MFE')     ? TOOLTIPS.mfe :
           undefined
         }>
