@@ -739,9 +739,11 @@ function CfgProgressCell({
             mark is the TRAIL. The green fill recedes toward it as price gives back; when the
             fill reaches the mark, the trail exit fires. Absent for ATR-based trail modes,
             where the level is not derivable without the engine's live ATR. */}
-        {state.phase === 'green' && state.markerPct != null && (
+        {state.markerPct != null && (
           <div
-            title="Trail level — if the bar recedes to this mark, the trailing exit fires."
+            title={state.phase === 'green'
+              ? 'Trail level — if the bar recedes to this mark, the trailing exit fires.'
+              : 'Peak (MFE) reached so far. The bar shows where price is NOW; this mark is the high-water mark the arming threshold is measured against.'}
             style={{
               position: 'absolute', top: -1, bottom: -1,
               left: `calc(${state.markerPct}% - 1px)`, width: 2,

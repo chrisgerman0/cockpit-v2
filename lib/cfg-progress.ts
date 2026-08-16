@@ -298,6 +298,53 @@ export function computeProgressBarState(args: {
   }
 }
 
+/** YELLOW phase — LIVE, not ratcheted (2026-08-16, Chris caught it on ONDO).
+ *
+ *  THE BUG THIS REPLACES. Every yellow return computed its fill AND its "X% to arm" label from
+ *  `mfe` — a HIGH-WATER MARK that never decreases. So once ONDO's peak touched 1.29% against a
+ *  1.5% gate, the bar froze at 86% and the label froze at "0.21% to arm" — unchanged whether
+ *  price sat at +0.16% or +1.13%. Chris watched it not move across a 0.97pp swing. A bar that
+ *  cannot go down is not a progress bar, it is a record of the best moment of the trade.
+ *
+ *  TWO NUMBERS ARE TRUE HERE AND THEY ARE NOT THE SAME:
+ *    · threshold − mfe    = how much further the PEAK must extend      (0.21% for ONDO)
+ *    · threshold − pnlPct = how far PRICE must travel from where it is (1.34% for ONDO)
+ *  The gate fires on the peak, but the question a trader is asking is the second one. So the
+ *  headline is the LIVE distance, the fill tracks LIVE price, and the peak is preserved as the
+ *  marker + in the sublabel — nothing is lost, and the bar breathes.
+ */
+function armingBar(args: {
+  label: string
+  threshold: number
+  pnlPct: number
+  mfe: number
+  extraSub?: string
+  badges: ProgressBadge[]
+}): ProgressBarState {
+  const { label, threshold, pnlPct, mfe, extraSub, badges } = args
+  const clamp = (v: number) => Math.max(0, Math.min(100, v))
+  const live = Math.max(0, pnlPct)
+  const fill = threshold > 0 ? clamp((live / threshold) * 100) : 0
+  const marker = threshold > 0 ? clamp((mfe / threshold) * 100) : null
+  const needLive = Math.max(0, threshold - pnlPct)
+  const needPeak = Math.max(0, threshold - mfe)
+  const bits: string[] = []
+  if (extraSub) bits.push(extraSub)
+  bits.push(`now ${pnlPct.toFixed(2)}% · peak ${mfe.toFixed(2)}%`)
+  // Only worth saying when price is off its peak — at a new high the two are the same number.
+  if (mfe - live > 0.005) bits.push(`peak needs ${needPeak.toFixed(2)}% more`)
+  return {
+    phase: 'yellow',
+    fillPct: fill,
+    // marker = the peak. It only earns a mark once it is meaningfully ahead of live price.
+    markerPct: marker != null && mfe - live > 0.005 ? marker : null,
+    label: threshold > 0 ? `${needLive.toFixed(2)}% to ${label}` : 'Building MFE',
+    sublabel: bits.join(' · '),
+    flash: false,
+    badges,
+  }
+}
+
 /** GREEN phase, to Chris's spec (2026-08-16).
  *
  *  The bar spans ENTRY -> MFE, not 0->100% of some abstract progress:
@@ -365,17 +412,10 @@ function trailArchetypePhase(args: {
   if (cfg.trail_mode === 'multi_tier') {
     const lvl = multiTierLevel(mfe)
     if (lvl.tier === 0) {
-      // Yellow — approaching first tier
-      const fill = activation > 0 ? Math.max(0, Math.min(100, (mfe / activation) * 100)) : 0
-      const need = (activation - mfe).toFixed(2)
-      return {
-        phase: 'yellow',
-        fillPct: fill,
-        label: `${need}% to arm ${trailLabel}`,
-        sublabel: `MFE ${mfe.toFixed(2)}%`,
-        flash: false,
-        badges,
-      }
+      // Yellow — approaching first tier. LIVE (see armingBar).
+      return armingBar({
+        label: `arm ${trailLabel}`, threshold: activation, pnlPct, mfe, badges,
+      })
     }
     // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
     return greenTrailBar({
@@ -387,16 +427,9 @@ function trailArchetypePhase(args: {
 
   // chandelier / atr_2 / fixed_3pct — single threshold
   if (mfe < activation) {
-    const fill = activation > 0 ? Math.max(0, Math.min(100, (mfe / activation) * 100)) : 0
-    const need = Math.max(0, activation - mfe).toFixed(2)
-    return {
-      phase: 'yellow',
-      fillPct: fill,
-      label: activation > 0 ? `${need}% to ${trailLabel}` : `Building MFE`,
-      sublabel: `MFE ${mfe.toFixed(2)}%`,
-      flash: false,
-      badges,
-    }
+    return armingBar({
+      label: trailLabel, threshold: activation, pnlPct, mfe, badges,
+    })
   }
   return greenTrailBar({
     trailLabel, mfe, pnlPct, badges,
@@ -419,16 +452,10 @@ function beOnlyArchetypePhase(args: {
   const gateMfe = strongAlertGateMfeThreshold(cfg.strong_alert_gate)
 
   if (mfe < gateMfe && cfg.strong_alert_gate !== 'baseline' && cfg.strong_alert_gate !== 'off') {
-    const fill = gateMfe > 0 ? Math.max(0, Math.min(100, (mfe / gateMfe) * 100)) : 0
-    const need = (gateMfe - mfe).toFixed(2)
-    return {
-      phase: 'yellow',
-      fillPct: fill,
-      label: `${need}% to arm Take-profit`,
-      sublabel: beMovedFromState ? 'Breakeven moved · MFE ' + mfe.toFixed(2) + '%' : `MFE ${mfe.toFixed(2)}%`,
-      flash: false,
-      badges,
-    }
+    return armingBar({
+      label: 'arm Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
+      extraSub: beMovedFromState ? 'Breakeven moved' : undefined,
+    })
   }
   // Green — gate passed OR baseline gate (always armed when in profit)
   return {
@@ -456,16 +483,10 @@ function rsiSlOnlyArchetypePhase(args: {
 
   // No trail/BE on this archetype — only RSI TP + strong-alert TP + hard SL
   if (mfe < gateMfe && cfg.strong_alert_gate !== 'baseline' && cfg.strong_alert_gate !== 'off') {
-    const fill = gateMfe > 0 ? Math.max(0, Math.min(100, (mfe / gateMfe) * 100)) : 0
-    const need = (gateMfe - mfe).toFixed(2)
-    return {
-      phase: 'yellow',
-      fillPct: fill,
-      label: `${need}% to arm Take-profit`,
-      sublabel: `MFE ${mfe.toFixed(2)}% · awaiting RSI`,
-      flash: false,
-      badges,
-    }
+    return armingBar({
+      label: 'arm Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
+      extraSub: 'awaiting RSI',
+    })
   }
   return {
     phase: 'green',
