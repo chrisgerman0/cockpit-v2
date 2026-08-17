@@ -160,6 +160,13 @@ function trailModeLabel(trailMode: string): string {
 export function computeProgressBarState(args: {
   /** Bars held since entry. Required for time_gt_6bars / mfe_and_time; null = unknown -> fail closed. */
   barsHeld?: number | null
+  /** STICKY high-water peak %, held by the caller across renders and never allowed to fall while
+   *  the position is open. Distinct from cfg.mfe_pct, which is the ENGINE's committed peak and
+   *  only advances at bar close. Without this the displayed peak was recomputed every render as
+   *  max(committed, now), so at a new high peak == now and the bar pinned at 100%, and any
+   *  intra-bar peak was forgotten the moment price ticked down (Chris, ONDO, 2026-08-17).
+   *  Falls back to the old behaviour when the caller does not supply it. */
+  peakPct?: number | null
   cfg: CfgDims
   side: 'LONG' | 'SHORT'
   entryPx: number
@@ -170,6 +177,7 @@ export function computeProgressBarState(args: {
 }): ProgressBarState | null {
   const { cfg, side, entryPx, slPx, mfePct, beMovedFromState, currentPx } = args
   const barsHeld = args.barsHeld ?? null
+  const peakPct = args.peakPct ?? null
   if (!Number.isFinite(entryPx) || entryPx <= 0) return null
   if (!Number.isFinite(currentPx) || currentPx <= 0) return null
   if (slPx == null || !Number.isFinite(slPx) || slPx <= 0) return null
@@ -273,7 +281,7 @@ export function computeProgressBarState(args: {
   // ─── Branch by archetype ───────────────────────────────────────────────
   if (archetype === 'A_TRAIL_ONLY' || archetype === 'B_TRAIL_PLUS_BE') {
     return trailArchetypePhase({
-      cfg, side, pnlPct, mfePct, badges, beMovedFromState,
+      cfg, side, pnlPct, mfePct, peakPct, badges, beMovedFromState,
     })
   }
   if (archetype === 'C_BE_ONLY') {
@@ -399,17 +407,20 @@ function trailArchetypePhase(args: {
   side: 'LONG' | 'SHORT'
   pnlPct: number
   mfePct: number | null
+  peakPct?: number | null
   badges: ProgressBadge[]
   beMovedFromState: boolean
 }): ProgressBarState {
-  const { cfg, side, pnlPct, mfePct, badges } = args
+  const { cfg, side, pnlPct, mfePct, peakPct, badges } = args
   // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
   // bar close (4h / 2h / 1h cadence). If current price is making a new
   // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
   // MFE and current favorable PnL so the displayed value tracks the live
   // peak — matches customer intuition + remains accurate (engine catches up
   // at next bar close anyway).
-  const mfe = Math.max(mfePct ?? 0, Math.max(0, pnlPct))
+  const mfe = peakPct != null
+    ? Math.max(peakPct, mfePct ?? 0)            // STICKY high-water — never falls on a retrace
+    : Math.max(mfePct ?? 0, Math.max(0, pnlPct))
   // 2026-08-16 — established from engine source, not assumed.
   //   engine.py:1734/1739  MFE is the bar's HIGH (long) / LOW (short), so a TOUCH is enough:
   //                        price never has to hold to the close for the peak to count.

@@ -668,6 +668,26 @@ function barsHeldFrom(entryTs: number | undefined, tf: string | undefined): numb
   return Math.max(0, Math.floor((Date.now() - barOpen) / tfMs))
 }
 
+/** STICKY PEAK (high-water mark), per open position.
+ *
+ *  The engine's cfg.mfe_pct only advances at BAR CLOSE, so between closes the true peak lives
+ *  nowhere but here. Previously the displayed peak was recomputed every render as
+ *  max(committed, now) — which meant at a new high peak == now and the bar sat pinned at 100%,
+ *  and the instant price ticked down the intra-bar peak was forgotten (Chris, ONDO, 2026-08-17:
+ *  "peak and now is always the same ... the progress bar is always full").
+ *
+ *  Keyed by cfg_sid + entry timestamp, so a NEW position on the same cfg starts a fresh peak
+ *  and a closed one can never contaminate it. Monotone by construction: it only ever rises while
+ *  the position is open. Session-scoped and bounded by positions-seen; a reload reseeds it from
+ *  the engine's committed peak, which is the correct conservative floor. */
+const PEAK_HWM = new Map<string, number>()
+
+function stickyPeak(key: string, committedPct: number, livePnlPct: number): number {
+  const next = Math.max(PEAK_HWM.get(key) ?? 0, committedPct, Math.max(0, livePnlPct))
+  PEAK_HWM.set(key, next)
+  return next
+}
+
 function CfgProgressCell({
   cfgDims, entry, mark, side, entryTs,
 }: {
@@ -685,9 +705,16 @@ function CfgProgressCell({
     return <span style={{ color: 'var(--muted)' }}>—</span>
   }
 
+  // Live unrealized %, direction-aware — the same quantity computeProgressBarState derives.
+  const livePnlPct = side === 'LONG'
+    ? ((stableMark - entry) / entry) * 100
+    : ((entry - stableMark) / entry) * 100
+
   const state: ProgressBarState | null = computeProgressBarState({
     cfg: cfgDims,
     barsHeld: barsHeldFrom(entryTs, cfgDims.tf),
+    peakPct: stickyPeak(`${cfgDims.cfg_sid}:${entryTs ?? 0}`,
+                        cfgDims.mfe_pct ?? 0, livePnlPct),
     side,
     entryPx: entry,
     slPx: cfgDims.sl_price,
