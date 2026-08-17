@@ -366,29 +366,39 @@ function armingBar(args: {
 function greenTrailBar(args: {
   trailLabel: string
   mfe: number
+  /** The engine's COMMITTED peak — the value the trail is actually derived from. */
+  mfeEffective: number
   pnlPct: number
   trailPct: number | null
   extraSub?: string
   badges: ProgressBadge[]
 }): ProgressBarState {
-  const { trailLabel, mfe, pnlPct, trailPct, extraSub, badges } = args
+  const { trailLabel, mfe, mfeEffective, pnlPct, trailPct, extraSub, badges } = args
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
   const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
   // Kept SHORT deliberately: this caption sits in a narrow table cell, and a long one used to
   // force the whole table wider (the HYPE ATR row's horizontal scrollbar, 2026-08-16). The CSS
   // now wraps rather than expands, but a caption that fits on one line is still the better fix.
+  // 2026-08-17 (Chris): "if the trail hasn't tightened, 2.71% is not the MFE in effect - both
+  // can't be true". Correct, and the fault was this label. Two DISTINCT quantities:
+  //   MFE in effect  = the engine's COMMITTED peak; engine.py:1526 computes the trail from it
+  //   running high   = a real extreme already reached, which engine.py:1730 only commits at the
+  //                    bar's CLOSE - at which point the trail tightens
+  // Calling the running high "peak" implied it was the MFE, which contradicted the trail level
+  // sitting below it. Name both, and only call the committed one MFE.
   const bits: string[] = []
   if (extraSub) bits.push(extraSub)
-  bits.push(`peak ${mfe.toFixed(2)}%`, `now ${pnlPct.toFixed(2)}%`)
   if (trailPct != null) {
     const gap = pnlPct - trailPct
-    bits.push(gap >= 0
-      ? `trail ${trailPct.toFixed(2)}% (+${gap.toFixed(2)}%)`
-      : `trail ${trailPct.toFixed(2)}% (CROSSED ${(-gap).toFixed(2)}%)`)
+    bits.push(`MFE ${mfeEffective.toFixed(2)}% -> trail ${trailPct.toFixed(2)}%`)
+    bits.push(gap >= 0 ? `now ${pnlPct.toFixed(2)}% (+${gap.toFixed(2)}%)`
+                       : `now ${pnlPct.toFixed(2)}% (CROSSED ${(-gap).toFixed(2)}%)`)
   } else {
-    bits.push('trail ATR-based')
+    bits.push(`MFE ${mfeEffective.toFixed(2)}% · trail ATR-based`, `now ${pnlPct.toFixed(2)}%`)
   }
+  // Only worth showing when an uncommitted extreme is genuinely ahead of the committed MFE.
+  if (mfe - mfeEffective > 0.005) bits.push(`high ${mfe.toFixed(2)}% uncommitted`)
   return {
     phase: 'green',
     fillPct: fill,
@@ -447,7 +457,7 @@ function trailArchetypePhase(args: {
     }
     // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
     return greenTrailBar({
-      trailLabel, mfe, pnlPct, badges,
+      trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges,
       trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
       // `T1` not `Tier 1 · 60% retrace allowed` — the long form pushed this caption to 83 chars,
       // wider than the HYPE row that produced the scrollbar. The retrace % lives in the tooltip.
@@ -462,7 +472,7 @@ function trailArchetypePhase(args: {
     })
   }
   return greenTrailBar({
-    trailLabel, mfe, pnlPct, badges,
+    trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges,
     trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
   })
 }
