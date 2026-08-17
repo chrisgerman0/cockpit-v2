@@ -167,6 +167,9 @@ export function computeProgressBarState(args: {
    *  intra-bar peak was forgotten the moment price ticked down (Chris, ONDO, 2026-08-17).
    *  Falls back to the old behaviour when the caller does not supply it. */
   peakPct?: number | null
+  /** Milliseconds until the current bar closes — when the running high COMMITS as MFE and the
+   *  trail steps. Rendered as h:mm beside the uncommitted figure so the wait is visible. */
+  commitsInMs?: number | null
   cfg: CfgDims
   side: 'LONG' | 'SHORT'
   entryPx: number
@@ -178,6 +181,7 @@ export function computeProgressBarState(args: {
   const { cfg, side, entryPx, slPx, mfePct, beMovedFromState, currentPx } = args
   const barsHeld = args.barsHeld ?? null
   const peakPct = args.peakPct ?? null
+  const commitsInMs = args.commitsInMs ?? null
   if (!Number.isFinite(entryPx) || entryPx <= 0) return null
   if (!Number.isFinite(currentPx) || currentPx <= 0) return null
   if (slPx == null || !Number.isFinite(slPx) || slPx <= 0) return null
@@ -281,7 +285,7 @@ export function computeProgressBarState(args: {
   // ─── Branch by archetype ───────────────────────────────────────────────
   if (archetype === 'A_TRAIL_ONLY' || archetype === 'B_TRAIL_PLUS_BE') {
     return trailArchetypePhase({
-      cfg, side, pnlPct, mfePct, peakPct, badges, beMovedFromState,
+      cfg, side, pnlPct, mfePct, peakPct, commitsInMs, badges, beMovedFromState,
     })
   }
   if (archetype === 'C_BE_ONLY') {
@@ -371,9 +375,11 @@ function greenTrailBar(args: {
   pnlPct: number
   trailPct: number | null
   extraSub?: string
+  commitsInMs?: number | null
   badges: ProgressBadge[]
 }): ProgressBarState {
-  const { trailLabel, mfe, mfeEffective, pnlPct, trailPct, extraSub, badges } = args
+  const { trailLabel, mfe, mfeEffective, pnlPct, trailPct, extraSub, badges,
+          commitsInMs } = args
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
   const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
@@ -398,7 +404,16 @@ function greenTrailBar(args: {
     bits.push(`MFE ${mfeEffective.toFixed(2)}% · trail ATR-based`, `now ${pnlPct.toFixed(2)}%`)
   }
   // Only worth showing when an uncommitted extreme is genuinely ahead of the committed MFE.
-  if (mfe - mfeEffective > 0.005) bits.push(`high ${mfe.toFixed(2)}% uncommitted`)
+  if (mfe - mfeEffective > 0.005) {
+    // h:mm to bar close — when this high commits as MFE and the trail steps. Chris asked for
+    // hours and minutes only; seconds would churn the caption every render for no information.
+    let when = ''
+    if (commitsInMs != null && commitsInMs > 0) {
+      const mins = Math.floor(commitsInMs / 60000)
+      when = ` in ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
+    }
+    bits.push(`high ${mfe.toFixed(2)}% uncommitted${when}`)
+  }
   return {
     phase: 'green',
     fillPct: fill,
@@ -418,10 +433,11 @@ function trailArchetypePhase(args: {
   pnlPct: number
   mfePct: number | null
   peakPct?: number | null
+  commitsInMs?: number | null
   badges: ProgressBadge[]
   beMovedFromState: boolean
 }): ProgressBarState {
-  const { cfg, side, pnlPct, mfePct, peakPct, badges } = args
+  const { cfg, side, pnlPct, mfePct, peakPct, commitsInMs, badges } = args
   // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
   // bar close (4h / 2h / 1h cadence). If current price is making a new
   // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
@@ -457,7 +473,7 @@ function trailArchetypePhase(args: {
     }
     // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
     return greenTrailBar({
-      trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges,
+      trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges, commitsInMs,
       trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
       // `T1` not `Tier 1 · 60% retrace allowed` — the long form pushed this caption to 83 chars,
       // wider than the HYPE row that produced the scrollbar. The retrace % lives in the tooltip.
@@ -472,7 +488,7 @@ function trailArchetypePhase(args: {
     })
   }
   return greenTrailBar({
-    trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges,
+    trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges, commitsInMs,
     trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
   })
 }

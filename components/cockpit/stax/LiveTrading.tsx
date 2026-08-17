@@ -688,6 +688,16 @@ function stickyPeak(key: string, committedPct: number, livePnlPct: number): numb
   return next
 }
 
+/** Milliseconds until the CURRENT bar closes — the moment the engine commits the running high
+ *  as MFE and the trail steps (engine_wrapper.py:1041, inside on_bar_closed). Null when the tf is
+ *  unknown. Bars are wall-clock aligned, so this needs no entry time. */
+function msToBarClose(tf: string | undefined): number | null {
+  const tfMs = TF_MS[String(tf ?? '')] ?? 0
+  if (!tfMs) return null
+  const now = Date.now()
+  return (Math.floor(now / tfMs) + 1) * tfMs - now
+}
+
 function CfgProgressCell({
   cfgDims, entry, mark, side, entryTs,
 }: {
@@ -713,8 +723,14 @@ function CfgProgressCell({
   const state: ProgressBarState | null = computeProgressBarState({
     cfg: cfgDims,
     barsHeld: barsHeldFrom(entryTs, cfgDims.tf),
+    // Prefer the DAEMON's live intra-bar extreme (level_watcher.observe, published every 10s):
+    // it is the real running high, survives a page reload, and updates per minute instead of per
+    // 30s browser poll. The browser high-water mark is now only a floor for the gap between
+    // publishes — it can no longer be the sole source, which is what showed +2.38% when the true
+    // ONDO high was +3.71%.
     peakPct: stickyPeak(`${cfgDims.cfg_sid}:${entryTs ?? 0}`,
-                        cfgDims.mfe_pct ?? 0, livePnlPct),
+                        Math.max(cfgDims.mfe_pct ?? 0, cfgDims.live_mfe_pct ?? 0), livePnlPct),
+    commitsInMs: msToBarClose(cfgDims.tf),
     side,
     entryPx: entry,
     slPx: cfgDims.sl_price,
