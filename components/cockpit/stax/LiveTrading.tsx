@@ -682,8 +682,28 @@ function barsHeldFrom(entryTs: number | undefined, tf: string | undefined): numb
  *  the engine's committed peak, which is the correct conservative floor. */
 const PEAK_HWM = new Map<string, number>()
 
+/** 2026-08-18 (Chris, OP): the caption read "high 53.39% uncommitted" against a committed MFE of
+ *  3.10%, and the bar rendered almost EMPTY because fill = pnlPct / peak = 1.56 / 53.39 = 2.9%.
+ *  One bug, both symptoms. Arithmetic named it: OP entry 0.083425, and a 53.39% SHORT gain implies
+ *  a mark of 0.0389 — SEI's price, not OP's. A single contaminated `mark` tick reached livePnlPct,
+ *  and because this high-water mark is MONOTONE it latched that value for the life of the session.
+ *  The daemon was never wrong: live_peaks.json published C_a1c01521c3 live_mfe_pct=3.1019.
+ *
+ *  So the daemon's level_watcher peak is AUTHORITATIVE (per-minute, direction-aware, entry-guarded)
+ *  and the browser HWM goes back to what it was only ever meant to be: a floor bridging the <=10s
+ *  gap between publishes. A browser value more than TOL ahead of the daemon is not a faster read,
+ *  it is a bad tick — rejected. And the stored HWM is re-floored every call, so a session already
+ *  poisoned heals on the next render instead of needing a reload. */
+const PEAK_TOL_PCT = 1.0
+
 function stickyPeak(key: string, committedPct: number, livePnlPct: number): number {
-  const next = Math.max(PEAK_HWM.get(key) ?? 0, committedPct, Math.max(0, livePnlPct))
+  const browser = Math.max(0, livePnlPct)
+  const ceiling = committedPct + PEAK_TOL_PCT
+  // A browser tick beyond the daemon's peak + tolerance is cross-asset contamination, not news.
+  const candidate = browser <= ceiling ? browser : committedPct
+  // Re-floor any previously latched value: monotone WITHIN the sane band, never above it.
+  const prev = Math.min(PEAK_HWM.get(key) ?? 0, ceiling)
+  const next = Math.max(prev, committedPct, candidate)
   PEAK_HWM.set(key, next)
   return next
 }
