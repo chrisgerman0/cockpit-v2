@@ -285,7 +285,7 @@ export function computeProgressBarState(args: {
   // ─── Branch by archetype ───────────────────────────────────────────────
   if (archetype === 'A_TRAIL_ONLY' || archetype === 'B_TRAIL_PLUS_BE') {
     return trailArchetypePhase({
-      cfg, side, pnlPct, mfePct, peakPct, commitsInMs, badges, beMovedFromState,
+      cfg, side, entryPx, pnlPct, mfePct, peakPct, commitsInMs, badges, beMovedFromState,
     })
   }
   if (archetype === 'C_BE_ONLY') {
@@ -310,6 +310,13 @@ export function computeProgressBarState(args: {
   }
 }
 
+/** The PRICE at which MFE reaches `gatePct` — direction-aware. MFE is measured from entry, so a
+ *  long needs entry x (1 + g) and a short entry x (1 - g). */
+function gatePx(entryPx: number, side: 'LONG' | 'SHORT', gatePct: number): number | null {
+  if (!Number.isFinite(entryPx) || entryPx <= 0 || !Number.isFinite(gatePct) || gatePct <= 0) return null
+  return side === 'LONG' ? entryPx * (1 + gatePct / 100) : entryPx * (1 - gatePct / 100)
+}
+
 /** YELLOW phase — LIVE, not ratcheted (2026-08-16, Chris caught it on ONDO).
  *
  *  THE BUG THIS REPLACES. Every yellow return computed its fill AND its "X% to arm" label from
@@ -332,11 +339,14 @@ function armingBar(args: {
   mfe: number
   /** The ENGINE's COMMITTED peak — the only value that can arm the trail. */
   mfeCommitted: number
+  /** The PRICE at which MFE reaches the gate — what the trader actually watches. */
+  armPx?: number | null
   commitsInMs?: number | null
   extraSub?: string
   badges: ProgressBadge[]
 }): ProgressBarState {
-  const { label, threshold, pnlPct, mfe, mfeCommitted, commitsInMs, extraSub, badges } = args
+  const { label, threshold, pnlPct, mfe, mfeCommitted, armPx, commitsInMs, extraSub,
+          badges } = args
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const live = Math.max(0, pnlPct)
   // FILL = progress of the COMMITTED peak toward the gate, so a FULL yellow bar always means
@@ -356,23 +366,34 @@ function armingBar(args: {
   // countdown, exactly as the green phase does.
   const needCommitted = Math.max(0, threshold - mfeCommitted)
   const marker = threshold > 0 ? clamp((mfeCommitted / threshold) * 100) : null
+  // 2026-08-18 (Chris): "at what price does the trail turn on?" — the caption gave a percentage
+  // and no price. Worse, MFE is the bar's EXTREME, not its close, so once the intra-bar high has
+  // cleared the gate the trail arms AT THE CLOSE no matter where price sits then. Saying
+  // "1.16% to arm" in that state is wrong: nothing more is needed. OP and SEI were both already
+  // past their arm price (0.082034 / 0.038801) while the label still asked for 1.16% / 1.11%.
+  const armed = mfe >= threshold - 1e-9
+  let when = ''
+  if (commitsInMs != null && commitsInMs > 0) {
+    const mins = Math.floor(commitsInMs / 60000)
+    when = `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
+  }
+  const px = (v: number) => v >= 100 ? v.toFixed(2) : v >= 1 ? v.toFixed(4) : v.toFixed(6)
   const bits: string[] = []
   if (extraSub) bits.push(extraSub)
   bits.push(`MFE ${mfeCommitted.toFixed(2)}%`, `now ${pnlPct.toFixed(2)}%`)
   if (mfe - mfeCommitted > 0.005) {
-    let when = ''
-    if (commitsInMs != null && commitsInMs > 0) {
-      const mins = Math.floor(commitsInMs / 60000)
-      when = ` in ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
-    }
-    bits.push(`high ${mfe.toFixed(2)}% uncommitted${when}`)
+    bits.push(`high ${mfe.toFixed(2)}%${armed ? '' : ' uncommitted'}${when && !armed ? ` in ${when}` : ''}`)
   }
+  if (armPx != null && !armed) bits.push(`arms at ${px(armPx)}`)
   return {
     phase: 'yellow',
     fillPct: fill,
     // The mark is LIVE price against the gate; the fill is the committed peak.
     markerPct: liveMark,
-    label: threshold > 0 ? `${needCommitted.toFixed(2)}% to ${label}` : 'Building MFE',
+    label: threshold <= 0 ? 'Building MFE'
+      // The high already cleared the gate: it arms when the bar closes, price is irrelevant now.
+      : armed ? `${label} arms at close${when ? ` — ${when}` : ''}`
+      : `${needCommitted.toFixed(2)}% to arm ${label} (${armPx != null ? px(armPx) : '—'})`,
     sublabel: bits.join(' · '),
     flash: false,
     badges,
@@ -452,6 +473,7 @@ function greenTrailBar(args: {
 function trailArchetypePhase(args: {
   cfg: CfgDims
   side: 'LONG' | 'SHORT'
+  entryPx: number
   pnlPct: number
   mfePct: number | null
   peakPct?: number | null
@@ -459,7 +481,7 @@ function trailArchetypePhase(args: {
   badges: ProgressBadge[]
   beMovedFromState: boolean
 }): ProgressBarState {
-  const { cfg, side, pnlPct, mfePct, peakPct, commitsInMs, badges } = args
+  const { cfg, side, entryPx, pnlPct, mfePct, peakPct, commitsInMs, badges } = args
   // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
   // bar close (4h / 2h / 1h cadence). If current price is making a new
   // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
@@ -490,7 +512,8 @@ function trailArchetypePhase(args: {
     if (lvl.tier === 0) {
       // Yellow — approaching first tier. LIVE (see armingBar).
       return armingBar({
-        label: `arm ${trailLabel}`, threshold: activation, pnlPct, mfe, mfeCommitted, commitsInMs, badges,
+        label: trailLabel, threshold: activation, pnlPct, mfe, mfeCommitted, commitsInMs, badges,
+        armPx: gatePx(entryPx, side, activation),
       })
     }
     // Green — trail active at tier `lvl.tier`. Bar spans entry -> MFE with the trail marked.
@@ -507,6 +530,7 @@ function trailArchetypePhase(args: {
   if (mfeCommitted < activation) {
     return armingBar({
       label: trailLabel, threshold: activation, pnlPct, mfe, mfeCommitted, commitsInMs, badges,
+      armPx: gatePx(entryPx, side, activation),
     })
   }
   return greenTrailBar({
@@ -532,7 +556,7 @@ function beOnlyArchetypePhase(args: {
 
   if (mfe < gateMfe && cfg.strong_alert_gate !== 'baseline' && cfg.strong_alert_gate !== 'off') {
     return armingBar({
-      label: 'arm Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
+      label: 'Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
       mfeCommitted: Math.max(0, mfePct ?? 0), commitsInMs: args.commitsInMs,
       extraSub: beMovedFromState ? 'Breakeven moved' : undefined,
     })
@@ -565,7 +589,7 @@ function rsiSlOnlyArchetypePhase(args: {
   // No trail/BE on this archetype — only RSI TP + strong-alert TP + hard SL
   if (mfe < gateMfe && cfg.strong_alert_gate !== 'baseline' && cfg.strong_alert_gate !== 'off') {
     return armingBar({
-      label: 'arm Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
+      label: 'Take-profit', threshold: gateMfe, pnlPct, mfe, badges,
       mfeCommitted: Math.max(0, mfePct ?? 0), commitsInMs: args.commitsInMs,
       extraSub: 'awaiting RSI',
     })
