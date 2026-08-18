@@ -814,6 +814,24 @@ function CfgProgressCell({
             }}
           />
         )}
+        {/* 2026-08-18 (Chris): the SECOND mark — where the reduce-only limit is actually resting.
+            The black mark only ARMS the exit; this is where the money leaves. Amber + 💵 so the
+            two can never be confused at a glance. */}
+        {state.limitMarkerPct != null && (
+          <div
+            title={`Reduce-only limit resting at ${state.limitPx} — the exit fills HERE, not at the black trail mark.`}
+            style={{
+              position: 'absolute', top: -1, bottom: -1,
+              left: `calc(${state.limitMarkerPct}% - 1px)`, width: 2,
+              background: '#d97706', borderRadius: 1, pointerEvents: 'auto', zIndex: 2,
+            }}
+          >
+            <span style={{
+              position: 'absolute', top: -13, left: -6, fontSize: 10, lineHeight: '10px',
+              pointerEvents: 'none',
+            }}>💵</span>
+          </div>
+        )}
       </div>
       <div className={'lt-sl-text ' + (state.phase === 'red' ? 'lt-sl-text-critical' : state.phase === 'green' ? 'lt-sl-text-armed' : 'lt-sl-text-warn')}>
         {state.label}

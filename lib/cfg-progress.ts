@@ -30,6 +30,11 @@ export type ProgressBarState = {
    *  null when the trail level is not derivable from the cfg alone (ATR-based
    *  modes need the engine's live ATR — we do not invent one). */
   markerPct?: number | null
+  /** 2026-08-18 (Chris): a SECOND mark, on the same entry->MFE scale, for the reduce-only limit
+   *  Plan A has resting. The black mark stays the TRAIL; this one is where the money actually
+   *  leaves. Null when no limit is resting. */
+  limitMarkerPct?: number | null
+  limitPx?: number | null
   /** Primary label rendered under the bar. Mechanical + precise (Chris Q1). */
   label: string
   /** Secondary label, e.g. "tier 2 · 50% retrace" for multi_tier. May be empty. */
@@ -286,6 +291,7 @@ export function computeProgressBarState(args: {
   if (archetype === 'A_TRAIL_ONLY' || archetype === 'B_TRAIL_PLUS_BE') {
     return trailArchetypePhase({
       cfg, side, entryPx, pnlPct, mfePct, peakPct, commitsInMs, badges, beMovedFromState,
+      currentPx,
     })
   }
   if (archetype === 'C_BE_ONLY') {
@@ -420,9 +426,16 @@ function greenTrailBar(args: {
   extraSub?: string
   commitsInMs?: number | null
   badges: ProgressBadge[]
+  /** 2026-08-18 (Chris): the trail-limit Plan A placed and Bitget ACCEPTED, and the live mark.
+   *  Once the trail is crossed the exit is no longer a percentage question — a real order is
+   *  sitting there and the only thing that matters is how far price is from filling it. */
+  trailLimitPx?: number | null
+  currentPx?: number | null
+  side?: 'LONG' | 'SHORT'
+  entryPx?: number | null
 }): ProgressBarState {
   const { trailLabel, mfe, mfeEffective, pnlPct, trailPct, extraSub, badges,
-          commitsInMs } = args
+          commitsInMs, trailLimitPx, currentPx, side, entryPx } = args
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
   const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
@@ -457,11 +470,34 @@ function greenTrailBar(args: {
     }
     bits.push(`high ${mfe.toFixed(2)}% uncommitted${when}`)
   }
+  // ── A LIMIT IS RESTING ─────────────────────────────────────────────────────────────────
+  // 2026-08-18 (Chris): "keep the black marker as is for reference and just add a mark for when
+  // we place a limit order to TP". The black mark is the TRAIL; crossing it only ARMS the exit.
+  // The limit is where the money actually leaves, and it sits FURTHER into profit than the trail
+  // (a short's buy rests below it), so on the same entry->MFE scale it lands to the RIGHT of the
+  // black mark. SEI made the gap obvious: fill 1.62%, trail 1.50%, limit 1.77% — price had passed
+  // the trail and still had 0.13% to go before anything filled, and the bar could not say so.
+  let limitMarkerPct: number | null = null
+  let limitPxOut: number | null = null
+  if (trailLimitPx != null && trailLimitPx > 0 && entryPx != null && entryPx > 0 && side && mfe > 0) {
+    // the limit expressed as the SAME unrealised-% the bar is drawn in
+    const limitPct = side === 'SHORT'
+      ? ((entryPx - trailLimitPx) / entryPx) * 100
+      : ((trailLimitPx - entryPx) / entryPx) * 100
+    limitMarkerPct = clamp((limitPct / mfe) * 100)
+    limitPxOut = trailLimitPx
+    const px = (v: number) => v >= 100 ? v.toFixed(2) : v >= 1 ? v.toFixed(4) : v.toFixed(6)
+    const gap = limitPct - pnlPct          // >0 = still to travel before the limit fills
+    bits.push(`limit ${px(trailLimitPx)}`,
+              gap <= 0 ? 'FILLING' : `${gap.toFixed(2)}% to fill`)
+  }
   return {
     phase: 'green',
     fillPct: fill,
     markerPct: marker,
-    label: `${trailLabel} active`,
+    limitMarkerPct,
+    limitPx: limitPxOut,
+    label: limitMarkerPct != null ? `${trailLabel} — limit resting` : `${trailLabel} active`,
     sublabel: bits.join(' · '),
     flash: false,
     badges,
@@ -480,8 +516,10 @@ function trailArchetypePhase(args: {
   commitsInMs?: number | null
   badges: ProgressBadge[]
   beMovedFromState: boolean
+  /** live mark — needed for distance-to-fill once a trail limit is resting */
+  currentPx?: number | null
 }): ProgressBarState {
-  const { cfg, side, entryPx, pnlPct, mfePct, peakPct, commitsInMs, badges } = args
+  const { cfg, side, entryPx, pnlPct, mfePct, peakPct, commitsInMs, badges, currentPx } = args
   // 2026-05-27 fix (Chris caught): engine writes mfe_abs to state.json only at
   // bar close (4h / 2h / 1h cadence). If current price is making a new
   // favorable high intra-bar, the engine's mfe_abs lags. Take max of engine
@@ -520,6 +558,7 @@ function trailArchetypePhase(args: {
     return greenTrailBar({
       trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges, commitsInMs,
       trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
+      trailLimitPx: cfg.trail_limit_px, currentPx, side, entryPx,
       // `T1` not `Tier 1 · 60% retrace allowed` — the long form pushed this caption to 83 chars,
       // wider than the HYPE row that produced the scrollbar. The retrace % lives in the tooltip.
       extraSub: `T${lvl.tier}`,
@@ -536,6 +575,7 @@ function trailArchetypePhase(args: {
   return greenTrailBar({
     trailLabel, mfe, mfeEffective: mfeCommitted, pnlPct, badges, commitsInMs,
     trailPct: trailLevelPct(cfg.trail_mode, mfeCommitted, side),
+    trailLimitPx: cfg.trail_limit_px, currentPx, side, entryPx,
   })
 }
 
