@@ -825,12 +825,7 @@ function CfgProgressCell({
               left: `calc(${state.limitMarkerPct}% - 1px)`, width: 2,
               background: '#d97706', borderRadius: 1, pointerEvents: 'auto', zIndex: 2,
             }}
-          >
-            <span style={{
-              position: 'absolute', top: -13, left: -6, fontSize: 10, lineHeight: '10px',
-              pointerEvents: 'none',
-            }}>💵</span>
-          </div>
+          />
         )}
       </div>
       <div className={'lt-sl-text ' + (state.phase === 'red' ? 'lt-sl-text-critical' : state.phase === 'green' ? 'lt-sl-text-armed' : 'lt-sl-text-warn')}>
