@@ -35,6 +35,13 @@ export type ProgressBarState = {
    *  leaves. Null when no limit is resting. */
   limitMarkerPct?: number | null
   limitPx?: number | null
+  /** 2026-08-19 (Chris): "ETH is barely in profit and the bar is nearly full". It was — the fill
+   *  tracked the committed PEAK while the eye reads it as NOW. Solid fill is now NOW; this ghost
+   *  is the PEAK behind it, so the GAP between them is the give-back, visible at a glance. */
+  ghostPct?: number | null
+  /** The level that changes state: the trail in green. Null in yellow, where that level IS the
+   *  bar's right edge. Kept separate from markerPct so the BLACK mark has ONE fixed meaning. */
+  triggerPct?: number | null
   /** Primary label rendered under the bar. Mechanical + precise (Chris Q1). */
   label: string
   /** Secondary label, e.g. "tier 2 · 50% retrace" for multi_tier. May be empty. */
@@ -360,8 +367,12 @@ function armingBar(args: {
   // live 1.83% past a 1.50% gate filled the bar while the committed peak was only 0.39%).
   // The LIVE price is the moving marker instead — the bar still breathes every tick, but the
   // thing that fills is the thing that arms.
-  const fill = threshold > 0 ? clamp((mfeCommitted / threshold) * 100) : 0
-  const liveMark = threshold > 0 ? clamp((live / threshold) * 100) : null
+  // 2026-08-19 (Chris): SOLID = NOW, GHOST = PEAK. Previously the solid fill was the committed
+  // peak and the mark was live price, so a trade that ran to 1.64% and gave it all back showed a
+  // 75%-full bar at +0.12% — arithmetically right, and read as "almost there" by everyone.
+  const fill = threshold > 0 ? clamp((live / threshold) * 100) : 0
+  const ghost = threshold > 0 ? clamp((mfeCommitted / threshold) * 100) : null
+  const liveMark = threshold > 0 ? clamp((mfeCommitted / threshold) * 100) : null
   // 2026-08-17 (Chris, SEI): this printed "0.00% to arm Trailing TP" while the bar stayed YELLOW.
   // The contradiction was mine — the arm/no-arm DECISION uses the engine's COMMITTED peak
   // (mfeCommitted, which only advances at bar close), but the caption computed its distance from
@@ -386,7 +397,8 @@ function armingBar(args: {
   const px = (v: number) => v >= 100 ? v.toFixed(2) : v >= 1 ? v.toFixed(4) : v.toFixed(6)
   const bits: string[] = []
   if (extraSub) bits.push(extraSub)
-  bits.push(`MFE ${mfeCommitted.toFixed(2)}%`, `now ${pnlPct.toFixed(2)}%`)
+  // name BOTH, in the order the bar draws them: solid first, ghost second.
+  bits.push(`now ${pnlPct.toFixed(2)}%`, `peak ${mfeCommitted.toFixed(2)}%`)
   if (mfe - mfeCommitted > 0.005) {
     bits.push(`high ${mfe.toFixed(2)}%${armed ? '' : ' uncommitted'}${when && !armed ? ` in ${when}` : ''}`)
   }
@@ -394,8 +406,11 @@ function armingBar(args: {
   return {
     phase: 'yellow',
     fillPct: fill,
-    // The mark is LIVE price against the gate; the fill is the committed peak.
+    // BLACK MARK = THE PEAK, in every phase. The arm threshold is the bar's right edge, so it
+    // needs no mark of its own.
     markerPct: liveMark,
+    ghostPct: ghost,
+    triggerPct: null,
     label: threshold <= 0 ? 'Building MFE'
       // The high already cleared the gate: it arms when the bar closes, price is irrelevant now.
       : armed ? `${label} arms at close${when ? ` — ${when}` : ''}`
@@ -438,6 +453,12 @@ function greenTrailBar(args: {
           commitsInMs, trailLimitPx, currentPx, side, entryPx } = args
   const clamp = (v: number) => Math.max(0, Math.min(100, v))
   const fill = mfe > 0 ? clamp((pnlPct / mfe) * 100) : 100
+  // BLACK = the PEAK (same meaning as the yellow phase). The trail is a SEPARATE, differently
+  // coloured mark, because "where the exit fires" and "how high this went" are different facts
+  // and one symbol cannot mean both — Chris asked what the mark meant precisely because it changed
+  // meaning by phase.
+  const ghost = mfe > 0 ? clamp((mfeEffective / mfe) * 100) : null
+  const peakMark = 100
   const marker = trailPct != null && mfe > 0 ? clamp((trailPct / mfe) * 100) : null
   // Kept SHORT deliberately: this caption sits in a narrow table cell, and a long one used to
   // force the whole table wider (the HYPE ATR row's horizontal scrollbar, 2026-08-16). The CSS
@@ -459,7 +480,16 @@ function greenTrailBar(args: {
   } else {
     bits.push(`MFE ${mfeEffective.toFixed(2)}% · trail ATR-based`, `now ${pnlPct.toFixed(2)}%`)
   }
-  // Only worth showing when an uncommitted extreme is genuinely ahead of the committed MFE.
+  // 2026-08-18 (Chris): "no more countdown? 😢" — it was conditional on an uncommitted high
+  // being ahead of the committed MFE, so it vanished the moment the two converged (SEI: both
+  // 3.00%). But the countdown answers a question that matters regardless: WHEN does the running
+  // high commit as MFE and the trail step. Always show it in the green phase; name the
+  // uncommitted high only when there actually is one.
+  let barWhen = ''
+  if (commitsInMs != null && commitsInMs > 0) {
+    const m = Math.floor(commitsInMs / 60000)
+    barWhen = `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`
+  }
   if (mfe - mfeEffective > 0.005) {
     // h:mm to bar close — when this high commits as MFE and the trail steps. Chris asked for
     // hours and minutes only; seconds would churn the caption every render for no information.
@@ -469,6 +499,9 @@ function greenTrailBar(args: {
       when = ` in ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
     }
     bits.push(`high ${mfe.toFixed(2)}% uncommitted${when}`)
+  } else if (barWhen) {
+    // no uncommitted high — still say when the trail can next step
+    bits.push(`trail steps in ${barWhen}`)
   }
   // ── A LIMIT IS RESTING ─────────────────────────────────────────────────────────────────
   // 2026-08-18 (Chris): "keep the black marker as is for reference and just add a mark for when
@@ -494,7 +527,9 @@ function greenTrailBar(args: {
   return {
     phase: 'green',
     fillPct: fill,
-    markerPct: marker,
+    markerPct: peakMark,
+    ghostPct: ghost,
+    triggerPct: marker,
     limitMarkerPct,
     limitPx: limitPxOut,
     label: limitMarkerPct != null ? `${trailLabel} — limit resting` : `${trailLabel} active`,

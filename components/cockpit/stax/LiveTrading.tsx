@@ -797,16 +797,40 @@ function CfgProgressCell({
   return (
     <div className="lt-sl-cell" title={cellTitle}>
       <div className={barClasses.join(' ')} style={{ position: 'relative' }}>
-        <div className={'adm-meter-fill ' + fillClass} style={{ width: state.fillPct + '%' }} />
+        {/* 2026-08-19 (Chris): GHOST = the PEAK, drawn BEHIND the solid fill. The solid bar is
+            NOW. The gap between them is exactly how much of the move has been given back — the
+            thing that made ETH look "almost there" at +0.12% when it had run to 1.64%. */}
+        {state.ghostPct != null && state.ghostPct > state.fillPct && (
+          <div
+            title="Peak reached so far (high-water). The gap back to the solid bar is what has been given back."
+            className={'adm-meter-fill ' + fillClass}
+            style={{ width: state.ghostPct + '%', opacity: 0.28, position: 'absolute',
+                     left: 0, top: 0, bottom: 0 }}
+          />
+        )}
+        <div className={'adm-meter-fill ' + fillClass}
+             style={{ width: state.fillPct + '%', position: 'relative', zIndex: 1 }} />
         {/* 2026-08-16 (Chris): in the GREEN phase the bar spans entry -> MFE and this black
             mark is the TRAIL. The green fill recedes toward it as price gives back; when the
             fill reaches the mark, the trail exit fires. Absent for ATR-based trail modes,
             where the level is not derivable without the engine's live ATR. */}
+        {/* BLACK = THE PEAK, in EVERY phase. It used to mean the trail level when green and the
+            live price when yellow — Chris asked what it meant on three rows precisely because a
+            mark that changes meaning by phase cannot be read. The trail now has its own mark. */}
+        {state.triggerPct != null && (
+          <div
+            title="Trail level — if the solid bar recedes to this mark, the trailing exit fires."
+            style={{
+              position: 'absolute', top: -1, bottom: -1,
+              left: `calc(${state.triggerPct}% - 1px)`, width: 2,
+              background: '#b91c1c', borderRadius: 1, pointerEvents: 'auto', zIndex: 3,
+            }}
+          />
+        )}
         {state.markerPct != null && (
           <div
-            title={state.phase === 'green'
-              ? 'Trail level — if the bar recedes to this mark, the trailing exit fires.'
-              : 'Peak (MFE) reached so far. The bar shows where price is NOW; this mark is the high-water mark the arming threshold is measured against.'}
+            title={'Peak (high-water) reached so far. The solid bar is where price is NOW; '
+                   + 'the distance back to this mark is what has been given back.'}
             style={{
               position: 'absolute', top: -1, bottom: -1,
               left: `calc(${state.markerPct}% - 1px)`, width: 2,
