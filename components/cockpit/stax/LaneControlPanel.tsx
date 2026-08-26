@@ -286,11 +286,30 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               No occupancy mirrors held — every occupied lane has Bitget money behind it.
             </div>
           ) : mr.stale === 0 ? (
-            <div className="adm-p" style={{ marginTop: 4 }}>
-              <b className="num">{mr.in_sync}</b> mirror{mr.in_sync === 1 ? '' : 's'} held, all
-              still backed by an open canonical trade. Each will free its lane in the same
-              moment canonical closes it — <b style={{ color: 'var(--pos, #16a34a)' }}>in step</b>.
-            </div>
+            /* "all still backed by an open canonical trade ... in step" is a claim about NOW,
+               derived entirely from the canonical book. On 2026-08-26 that book was 1,198 minutes
+               old and still listed a cfg that had closed hours earlier, so this sentence rendered
+               as a present-tense fact that was false. A claim is only as current as its source:
+               when the source is stale the claim is withheld and the age is shown instead. */
+            d.canonical_freshness?.stale ? (
+              <div className="adm-p" style={{ marginTop: 4 }}>
+                <b className="num">{mr.in_sync}</b> mirror{mr.in_sync === 1 ? '' : 's'} held.{' '}
+                <b style={{ color: 'var(--warn, #d97706)' }}>Cannot say whether they are in step</b>
+                {' '}— that depends on the canonical book, which is{' '}
+                <b className="num">
+                  {d.canonical_freshness.age_sec !== null
+                    ? Math.floor(d.canonical_freshness.age_sec / 60).toLocaleString()
+                    : '?'}
+                </b>{' '}minutes old. A mirror whose cfg canonical closed since then would look
+                healthy here.
+              </div>
+            ) : (
+              <div className="adm-p" style={{ marginTop: 4 }}>
+                <b className="num">{mr.in_sync}</b> mirror{mr.in_sync === 1 ? '' : 's'} held, all
+                still backed by an open canonical trade. Each will free its lane in the same
+                moment canonical closes it — <b style={{ color: 'var(--pos, #16a34a)' }}>in step</b>.
+              </div>
+            )
           ) : (
             <>
               <div className="adm-p" style={{ marginTop: 4 }}>
