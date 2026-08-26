@@ -28,6 +28,11 @@ type Payload = {
   headline: { tier: string; live: any; canon: any; state: string; match: boolean }
   tiers: Tier[]
   timestamps: { now_ms: number; last_parity_check_ms: number | null; last_state_change_ms?: number | null; last_lane_write_ms: number | null; monitor_heartbeat: string | null }
+  canonical_freshness?: {
+    computed_at: string | null; age_sec: number | null; stale: boolean
+    served_from_lkg: boolean; publisher_halted: boolean; halt_reason: string | null
+    consecutive_fails: number; last_publish_outcome: string | null; warning: string | null
+  }
   history?: { ts: string | null; resolved: boolean; text: string }[]
   state_held_since_ms?: number | null
 }
@@ -172,6 +177,33 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               {d.timestamps.last_state_change_ms
                 ? ` · unchanged for ${dur(d.timestamps.last_state_change_ms, now)}` : ''}
             </div>
+            {/* Every timestamp above describes the LIVE side. If the canonical book itself is
+                stale the verdict above is about yesterday's canonical, and saying nothing makes
+                this panel lie — which is exactly what it did on 2026-08-26. */}
+            {d.canonical_freshness?.warning && (
+              <div
+                className="adm-p adm-p-sm"
+                style={{
+                  marginTop: 8, padding: '8px 10px', borderRadius: 6,
+                  border: '1px solid var(--warn, #d97706)', color: 'var(--warn, #d97706)',
+                  background: 'color-mix(in srgb, var(--warn, #d97706) 8%, transparent)',
+                }}
+              >
+                <b>CANONICAL BOOK STALE — the comparison above is not current.</b>
+                <div style={{ marginTop: 4 }}>{d.canonical_freshness.warning}</div>
+                <div style={{ marginTop: 4, opacity: 0.85 }}>
+                  computed_at {d.canonical_freshness.computed_at ?? 'unknown'}
+                  {d.canonical_freshness.consecutive_fails > 0
+                    ? ` · ${d.canonical_freshness.consecutive_fails} consecutive validation failure${d.canonical_freshness.consecutive_fails === 1 ? '' : 's'}`
+                    : ''}
+                </div>
+                {d.canonical_freshness.last_publish_outcome && (
+                  <div style={{ marginTop: 4, opacity: 0.7, fontFamily: 'var(--mono, monospace)', fontSize: '0.85em' }}>
+                    {d.canonical_freshness.last_publish_outcome}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <div className="adm-p" style={{ marginTop: 6 }}>
@@ -327,6 +359,72 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
           Transitions only. The monitor writes a line every ~5 minutes whether or not anything
           changed; listing those made a clean book look like a wall of incidents.
         </div>
+      </div>
+
+      <CronTimersStrip />
+    </div>
+  )
+}
+
+/**
+ * The three recurring timers, judged by what they WROTE — never by process state.
+ * A cron-type pm2 app reads "stopped" between fires; that is normal, and reading it as DOWN is a
+ * mistake already made once against these exact timers. Age of the artifact each one touches every
+ * run is the only thing that settles whether it is alive.
+ */
+function CronTimersStrip() {
+  const [d, setD] = useState<any | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    let stop = false
+    const run = async () => {
+      try {
+        const j = await authedFetch<any>('/api/admin/cron-timers')
+        if (!stop) { setD(j); setErr(null) }
+      } catch (e: any) {
+        if (!stop) setErr(e?.message ?? String(e))
+      }
+    }
+    run()
+    const id = setInterval(run, 60_000)
+    return () => { stop = true; clearInterval(id) }
+  }, [])
+
+  if (err) return null
+  if (!d?.timers) return null
+
+  const fmtAge = (s: number | null) =>
+    s === null ? '—' : s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`
+
+  return (
+    <div className="adm-card" style={{ marginTop: 12 }}>
+      <div className="adm-card-title">— TIMERS</div>
+      <div style={{ marginTop: 8 }}>
+        {d.timers.map((t: any) => {
+          const ok = t.state === 'OK'
+          const color = ok ? 'var(--pos, #16a34a)' : 'var(--warn, #d97706)'
+          return (
+            <div
+              key={t.name}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 10, padding: '6px 0',
+                borderBottom: '1px solid var(--hairline, rgba(128,128,128,0.18))',
+              }}
+            >
+              <span style={{ color, fontWeight: 700, minWidth: 58 }}>{t.state}</span>
+              <span style={{ fontWeight: 600, minWidth: 168 }}>{t.name}</span>
+              <span className="num adm-p-sm adm-p-muted" style={{ minWidth: 104 }}>{t.schedule}</span>
+              <span className="adm-p-sm" style={{ minWidth: 118 }}>
+                last wrote <b className="num">{fmtAge(t.age_sec)}</b> ago
+              </span>
+              <span className="adm-p-sm adm-p-muted" style={{ flex: 1 }}>{t.what}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="adm-p adm-p-sm adm-p-muted" style={{ marginTop: 8 }}>
+        Judged by the file each timer writes every run, not by process state — a cron-type pm2 app
+        reads &ldquo;stopped&rdquo; between fires and that is normal. LATE = two fires missed.
       </div>
     </div>
   )
