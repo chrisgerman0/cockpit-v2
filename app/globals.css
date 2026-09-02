@@ -155,3 +155,11 @@ textarea {
     hsl(var(--card) / 0.96);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 16px 36px rgba(28, 22, 10, .08);
 }
+
+/* XA (2026-08-28): indeterminate progress for the hand-built basket simulation. The run takes
+   2-4 minutes on the locked pipeline and must never block the page, so the bar only says
+   "still working" — it deliberately does not fake a percentage it cannot know. */
+@keyframes staxsIndet {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}

@@ -243,11 +243,7 @@ const NAV_ITEMS = [
   { id: 'dashboard', tKey: 'nav.dashboard',   icon: Icons.Grid,      href: '/' },
   { id: 'live',      tKey: 'nav.live',        icon: Icons.TrendUp,   href: '/live' },
   { id: 'backtest',  tKey: 'nav.backtesting', icon: Icons.Bars,      href: '/backtesting' },
-  // BROKER PARKED 2026-09-02 (Chris: prefer organic growth, value into the token). Not deleted —
-  // see app/(app)/broker/page.tsx for what it did and how to restore it. The Simulator takes
-  // its slot (Chris, DL). It lives on the marketing site, hence the absolute URL.
-  // { id: 'broker',    tKey: 'nav.broker',      icon: Icons.Briefcase, href: '/broker' },
-  { id: 'simulator', tKey: 'nav.simulator',   icon: Icons.Play,      href: 'https://staxs.ai/simulator' },
+  { id: 'broker',    tKey: 'nav.broker',      icon: Icons.Briefcase, href: '/broker' },
   { id: 'admin',     tKey: 'nav.admin',       icon: Icons.Shield,    href: '/admin' },
 ] as const
 
@@ -886,9 +882,7 @@ const MOBILE_NAV_ITEMS = [
   { id: 'dashboard', tKey: 'nav.dashboard',  shortEn: 'Dashboard', shortPt: 'Painel',     icon: Icons.Grid,      href: '/' },
   { id: 'live',      tKey: 'nav.live',       shortEn: 'Live',      shortPt: 'Ao Vivo',    icon: Icons.TrendUp,   href: '/live' },
   { id: 'backtest',  tKey: 'nav.backtesting',shortEn: 'Backtest',  shortPt: 'Backtest',   icon: Icons.Bars,      href: '/backtesting' },
-  // BROKER PARKED 2026-09-02 — replaced by the Simulator, same slot.
-  // { id: 'broker',    tKey: 'nav.broker',     shortEn: 'Broker',    shortPt: 'Parceiro',   icon: Icons.Briefcase, href: '/broker' },
-  { id: 'simulator', tKey: 'nav.simulator',  shortEn: 'Simulator', shortPt: 'Simulador',  icon: Icons.Play,      href: 'https://staxs.ai/simulator' },
+  { id: 'broker',    tKey: 'nav.broker',     shortEn: 'Broker',    shortPt: 'Parceiro',   icon: Icons.Briefcase, href: '/broker' },
   { id: 'settings',  tKey: 'nav.settings',   shortEn: 'Settings',  shortPt: 'Ajustes',    icon: Icons.Gear,      href: '/settings' },
 ] as const
 
@@ -905,10 +899,10 @@ function MobileBottomNav() {
   const pathname = usePathname()
   const t = useT()
   const { isAdmin } = useIsAdmin()
-  // Admins: Simulator -> Admin (was Broker, parked 2026-09-02). Non-admins see the stock five.
+  // Admins: Broker -> Admin. Non-admins see the stock five, unchanged.
   const navItems = useMemo(
     () => (isAdmin === true
-      ? MOBILE_NAV_ITEMS.map(it => (it.id === 'simulator' ? MOBILE_ADMIN_ITEM : it))
+      ? MOBILE_NAV_ITEMS.map(it => (it.id === 'broker' ? MOBILE_ADMIN_ITEM : it))
       : MOBILE_NAV_ITEMS) as readonly (typeof MOBILE_NAV_ITEMS[number] | typeof MOBILE_ADMIN_ITEM)[],
     [isAdmin])
   // Read lang directly so we can pick the short label variant (different

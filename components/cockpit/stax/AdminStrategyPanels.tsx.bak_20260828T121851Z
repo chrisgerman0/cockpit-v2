@@ -1897,10 +1897,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
   const [fArch, setFArch] = useState('all')
   const [fTf, setFTf] = useState('all')
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'sa_winRate', dir: 'desc' })
-  // 2026-08-28 (Chris): NOTHING IS TICKED BY DEFAULT. It used to default to every row kept, so
-  // building a basket by hand meant unticking hundreds of cfgs. `picked` is now the source of
-  // truth — empty means empty — and the two buttons below do the bulk work.
-  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [excluded, setExcluded] = useState<Record<string, boolean>>({})
   const [saveMsg, setSaveMsg] = useState('')
   // XA — the hand-built basket simulator. tierS is SEPARATE from keep: a cfg must be kept to be
   // Tier-S (XA1), so unticking keep silently drops it from the Tier-S set at submit time.
@@ -1908,12 +1905,6 @@ export function ContendersPanel({ active }: { active: boolean }) {
   const [simRun, setSimRun] = useState<any>(null)
   const [simHist, setSimHist] = useState<any[]>([])
   const [simMsg, setSimMsg] = useState('')
-  // XV/XW — presets and the post-run paint. Both are plain state; they live here with every other
-  // hook and ABOVE the `if (!active) return null` guard, because a hook after a conditional return
-  // is what blanked this tab with React #310.
-  const [presets, setPresets] = useState<Record<string, any>>({})
-  const [presetName, setPresetName] = useState('')
-  const [paint, setPaint] = useState(true)
 
   useEffect(() => {
     if (!active) return
@@ -1932,43 +1923,6 @@ export function ContendersPanel({ active }: { active: boolean }) {
     return () => { cancelled = true }
   }, [active])
 
-  // ─────────────────────────────────────────────────────────────────────────────────────────
-  // XA hooks. THESE MUST STAY ABOVE `if (!active) return null`. 2026-08-28: they were BELOW it,
-  // so an inactive tab rendered 16 hooks and an active one rendered 18. React counts hooks per
-  // render and threw #310 — "rendered more hooks than during the previous render" — which blanked
-  // the ENTIRE tab. A hook placed after a conditional return is always a bug, however harmless
-  // the hook itself looks. This is the third time this page has gone dark; see the smoke test.
-  // ─────────────────────────────────────────────────────────────────────────────────────────
-  const loadSimHistory = async () => {
-    try {
-      const r = await authedFetch<any>('/api/admin/basket-sim')
-      setSimHist(Array.isArray(r?.runs) ? r.runs : [])
-    } catch { /* history is a convenience; never block the tab on it */ }
-  }
-  useEffect(() => { if (active) loadSimHistory() }, [active])
-
-  useEffect(() => {
-    if (!active) return
-    authedFetch<any>('/api/admin/basket-sim?presets=1')
-      .then(r => setPresets(r?.presets ?? {}))
-      .catch(() => { /* presets are a convenience; never block the tab */ })
-  }, [active])
-
-  // XA3: a run takes 2-4 minutes, so poll — never block the page.
-  useEffect(() => {
-    if (!active) return
-    if (!simRun?.runId || simRun.status === 'done' || simRun.status === 'error') return
-    let stop = false
-    const t = setInterval(async () => {
-      try {
-        const r = await authedFetch<any>(`/api/admin/basket-sim?runId=${simRun.runId}`)
-        if (stop || !r?.runId) return
-        setSimRun(r)
-        if (r.status === 'done' || r.status === 'error') { clearInterval(t); loadSimHistory() }
-      } catch { /* transient poll failure is not a run failure */ }
-    }, 4000)
-    return () => { stop = true; clearInterval(t) }
-  }, [active, simRun?.runId, simRun?.status])
   if (!active) return null
 
   const num = (s: string) => (s.trim() === '' ? null : Number(s))
@@ -2000,71 +1954,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
     if (c === 0) c = String(x.sid).localeCompare(String(y.sid))
     return sort.dir === 'asc' ? c : -c
   })
-  const survivors = sorted.filter(r => !!picked[r.sid])
-
-  // ── XX: the two numbers that change his picks BEFORE he runs, not after ────────────────────
-  // Anti-pyramid allows ONE position per asset, so two ticked cfgs on the same asset+timeframe
-  // contend for a seat only one of them can ever hold. He was flying blind on the one constraint
-  // that decides whether a pick can trade at all.
-  const pickedAll = rows.filter(r => !!picked[r.sid])          // across ALL rows, not just filtered
-  const seatKey = (r: any) => `${r.asset}|${r.tf}`
-  const seatCount: Record<string, number> = {}
-  pickedAll.forEach(r => { seatKey(r) && (seatCount[seatKey(r)] = (seatCount[seatKey(r)] ?? 0) + 1) })
-  const collidingSeats = Object.entries(seatCount).filter(([, n]) => n > 1)
-  const nCollisions = collidingSeats.reduce((a, [, n]) => a + (n - 1), 0)
-  const nAssets = new Set(pickedAll.map(r => r.asset)).size
-  const worstSeat = collidingSeats.sort((a, b) => b[1] - a[1])[0]
-
-  // ── XW: paint the table from the last completed run ────────────────────────────────────────
-  const memByS: Record<string, any> = {}
-  ;(simRun?.members ?? []).forEach((m: any) => { memByS[m.sid] = m })
-  const painted = paint && simRun?.status === 'done' && (simRun.members ?? []).length > 0
-  const topEarners = new Set(
-    (simRun?.members ?? []).filter((m: any) => (m.seated_pnl ?? 0) > 0)
-      .sort((a: any, b: any) => b.seated_pnl - a.seated_pnl).slice(0, 10).map((m: any) => m.sid))
-  const rowPaint = (r: any): { bg?: string; title?: string } => {
-    if (!painted) {
-      // pre-run: still warn on a collision he has just created
-      if (picked[r.sid] && (seatCount[seatKey(r)] ?? 0) > 1) {
-        return { bg: 'rgba(217,119,6,0.16)',
-                 title: `COLLISION — ${seatCount[seatKey(r)]} ticked cfgs on ${r.asset} ${r.tf}. Anti-pyramid allows one position per asset, so only one can ever hold the seat.` }
-      }
-      return {}
-    }
-    const m = memByS[r.sid]
-    if (!m) return {}
-    if ((m.seated_trades ?? 0) === 0) {
-      return { bg: 'rgba(185,28,28,0.14)',
-               title: `ZERO SEATS — fired ${m.sa_trades ?? '?'} signals alone and took NO seated trades. Contributed nothing.` }
-    }
-    if ((seatCount[seatKey(r)] ?? 0) > 1) {
-      return { bg: 'rgba(217,119,6,0.16)',
-               title: `COLLISION — ${seatCount[seatKey(r)]} ticked cfgs on ${r.asset} ${r.tf}; seated ${m.seated_trades} (${m.seat_rate}% of its own signals).` }
-    }
-    if (topEarners.has(r.sid)) {
-      return { bg: 'rgba(21,128,61,0.16)',
-               title: `TOP EARNER — $${Math.round(m.seated_pnl).toLocaleString()} seated over ${m.seated_trades} trades (${m.seat_rate}% seat rate).` }
-    }
-    return {}
-  }
-
-  const loadPreset = (name: string) => {
-    const pr = presets[name]
-    if (!pr) return
-    const pk: Record<string, boolean> = {}
-    ;(pr.sids ?? []).forEach((x: string) => { pk[x] = true })
-    const ts: Record<string, boolean> = {}
-    ;(pr.tierS ?? []).forEach((x: string) => { ts[x] = true })
-    setPicked(pk); setTierS(ts); setPresetName(name); setPaint(false)
-    setSimMsg(`loaded ${pr.label} — ${pr.sids?.length ?? 0} cfgs, ${pr.tierS?.length ?? 0} Tier-S. Edit freely.`)
-  }
-
-  const dropZeroSeat = () => {
-    const zero = (simRun?.members ?? []).filter((m: any) => (m.seated_trades ?? 0) === 0)
-    if (!zero.length) return
-    setPicked(pk => { const n = { ...pk }; zero.forEach((m: any) => { delete n[m.sid] }); return n })
-    setSimMsg(`unticked ${zero.length} zero-seat member(s) — re-run to see the effect`)
-  }
+  const survivors = sorted.filter(r => !excluded[r.sid])
   const uniq = (f: (r: CoRow) => any) =>
     Array.from(new Set(rows.map(f).filter(v => v !== null && v !== undefined))).map(String).sort()
   const onSort = (k: string) =>
@@ -2093,6 +1983,29 @@ export function ContendersPanel({ active }: { active: boolean }) {
     } catch (e: any) { setSaveMsg(`failed: ${e?.message ?? e}`) }
   }
 
+  const loadSimHistory = async () => {
+    try {
+      const r = await authedFetch<any>('/api/admin/basket-sim')
+      setSimHist(Array.isArray(r?.runs) ? r.runs : [])
+    } catch { /* history is a convenience; never block the tab on it */ }
+  }
+  useEffect(() => { if (active) loadSimHistory() }, [active])
+
+  // XA3: 2-4 minutes per run, so poll — never block the page.
+  useEffect(() => {
+    if (!simRun?.runId || simRun.status === 'done' || simRun.status === 'error') return
+    let stop = false
+    const t = setInterval(async () => {
+      try {
+        const r = await authedFetch<any>(`/api/admin/basket-sim?runId=${simRun.runId}`)
+        if (stop || !r?.runId) return
+        setSimRun(r)
+        if (r.status === 'done' || r.status === 'error') { clearInterval(t); loadSimHistory() }
+      } catch { /* transient poll failure is not a run failure */ }
+    }, 4000)
+    return () => { stop = true; clearInterval(t) }
+  }, [simRun?.runId, simRun?.status])
+
   const runSimulation = async () => {
     const sids = survivors.map(s => s.sid)
     if (!sids.length) { setSimMsg('nothing kept — tick at least one cfg'); return }
@@ -2104,14 +2017,13 @@ export function ContendersPanel({ active }: { active: boolean }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sids, tierS: ts, label: `hand-built · ${sids.length} cfgs · ${ts.length} Tier-S` }),
       })
-      if (r?.runId) { setPaint(true); setSimRun({ runId: r.runId, status: 'queued', n_members: sids.length, n_tier_s: ts.length }) }
+      if (r?.runId) { setSimRun({ runId: r.runId, status: 'queued', n_members: sids.length, n_tier_s: ts.length }) }
       else setSimMsg(`failed: ${JSON.stringify(r)}`)
     } catch (e: any) { setSimMsg(`failed: ${e?.message ?? e}`) }
   }
 
   const openRun = async (runId: string) => {
-    // XW5: loading an old result must repaint the table exactly as a fresh run does.
-    try { setSimRun(await authedFetch<any>(`/api/admin/basket-sim?runId=${runId}`)); setPaint(true) }
+    try { setSimRun(await authedFetch<any>(`/api/admin/basket-sim?runId=${runId}`)) }
     catch (e: any) { setSimMsg(`could not open ${runId}: ${e?.message ?? e}`) }
   }
 
@@ -2124,7 +2036,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
-          Contenders 🎯 — {sorted.length} shown · {survivors.length} ticked
+          Contenders 🎯 — {sorted.length} shown{survivors.length !== sorted.length ? ` · ${survivors.length} kept` : ''}
         </h2>
         <span style={{ color: 'var(--ink-mute)', fontSize: 12 }}>
           {c.scored ?? 0} scored · {c.clearedFloor ?? 0} cleared the +0.5% PnL floor ·{' '}
@@ -2194,25 +2106,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
             <option value="all">all</option>{uniq(r => r.tf).map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         </label>
-        {/* XV: a starting point, never a lock — load it, then tick and untick freely. */}
-        <label>preset{' '}
-          <select value={presetName} onChange={e => loadPreset(e.target.value)}>
-            <option value="">load a basket…</option>
-            {Object.entries(presets).map(([k, v]: any) => (
-              <option key={k} value={k}>{v.label} ({v.k} cfgs)</option>
-            ))}
-          </select>
-        </label>
-        {presetName && presets[presetName]?.note && (
-          <span style={{ color: 'var(--ink-mute)', maxWidth: 420 }} title={presets[presetName].note}>
-            {String(presets[presetName].note).slice(0, 70)}…
-          </span>
-        )}
-        <button onClick={() => setPicked(p => {
-          const n = { ...p }; sorted.forEach(r => { n[r.sid] = true }); return n
-        })} title="tick every row currently visible under the filters">tick all {sorted.length} shown</button>
-        <button onClick={() => { setPicked({}); setTierS({}) }}
-                title="clear every tick, including Tier-S">untick all</button>
+        <button onClick={() => setExcluded({})}>reset excludes</button>
         <button onClick={exportCull} style={{ fontWeight: 700 }}>
           EXPORT {survivors.length} kept → next search
         </button>
@@ -2225,18 +2119,8 @@ export function ContendersPanel({ active }: { active: boolean }) {
                          padding: '5px 12px', borderRadius: 5, cursor: 'pointer' }}>
           {simRun && simRun.status !== 'done' && simRun.status !== 'error'
             ? `RUNNING… ${simRun.status}`
-            : `RUN SIMULATION (${pickedAll.length} cfgs · ${pickedAll.filter(x => tierS[x.sid]).length} Tier-S)`}
+            : `RUN SIMULATION (${survivors.length} cfgs · ${survivors.filter(x => tierS[x.sid]).length} Tier-S)`}
         </button>
-        {/* XX2/XX1: assets and duplicated seats, live as he ticks. */}
-        <span style={{ fontSize: 11 }}>
-          <strong>{nAssets}</strong> assets ·{' '}
-          <strong style={{ color: nCollisions ? '#b45309' : '#15803d' }}>
-            {nCollisions} duplicated seat{nCollisions === 1 ? '' : 's'}
-          </strong>
-          {worstSeat ? (
-            <span style={{ color: 'var(--ink-mute)' }}> (worst: {worstSeat[0].replace('|', ' ')} ×{worstSeat[1]})</span>
-          ) : null}
-        </span>
         <button onClick={() => setTierS({})}>clear Tier-S</button>
         <span style={{ color: 'var(--ink-mute)' }}>{saveMsg}{simMsg ? ` · ${simMsg}` : ''}</span>
       </div>
@@ -2304,25 +2188,6 @@ export function ContendersPanel({ active }: { active: boolean }) {
                       )}
                     </tbody>
                   </table>
-                  {/* XW5: the legend, and the toggle that clears the paint. */}
-                  <div style={{ marginTop: 8, fontSize: 11, display: 'flex', gap: 14,
-                                alignItems: 'center', flexWrap: 'wrap' }}>
-                    <strong>table painted from this run:</strong>
-                    <span><span style={{ background: 'rgba(21,128,61,0.16)', padding: '2px 8px',
-                                         borderRadius: 3 }}>top earner</span> — best 10 by seated PnL</span>
-                    <span><span style={{ background: 'rgba(217,119,6,0.16)', padding: '2px 8px',
-                                         borderRadius: 3 }}>collision</span> — shares asset+TF with another ticked row</span>
-                    <span><span style={{ background: 'rgba(185,28,28,0.14)', padding: '2px 8px',
-                                         borderRadius: 3 }}>zero seats</span> — took no trades at all</span>
-                    <button onClick={() => setPaint(p => !p)}>{paint ? 'clear paint' : 'repaint'}</button>
-                    {/* XW6: one click, untick every passenger, re-run. */}
-                    {(simRun.members ?? []).some((m: any) => (m.seated_trades ?? 0) === 0) && (
-                      <button onClick={dropZeroSeat} style={{ fontWeight: 700 }}>
-                        remove {(simRun.members ?? []).filter((m: any) => (m.seated_trades ?? 0) === 0).length} zero-seat members
-                      </button>
-                    )}
-                  </div>
-
                   {/* XA4: which picks earned their seat. */}
                   {(simRun.members ?? []).length > 0 && (
                     <details style={{ marginTop: 8 }}>
@@ -2433,14 +2298,12 @@ export function ContendersPanel({ active }: { active: boolean }) {
           </thead>
           <tbody>
             {sorted.map(r => {
-              const off = !picked[r.sid]
-              const pnt = rowPaint(r)
+              const off = !!excluded[r.sid]
               return (
-                <tr key={r.sid} title={pnt.title}
-                    style={{ opacity: off ? 0.35 : 1, background: pnt.bg }}>
+                <tr key={r.sid} style={{ opacity: off ? 0.35 : 1 }}>
                   <td style={{ textAlign: 'center' }}>
                     <input type="checkbox" checked={!off}
-                           onChange={() => setPicked(pk => ({ ...pk, [r.sid]: off }))} />
+                           onChange={() => setExcluded(e => ({ ...e, [r.sid]: !off }))} />
                   </td>
                   {/* XA1: membership and elevation are separate ticks. Unkeeping a row disables
                       its Tier-S box — a cfg that is not in the basket cannot evict anything. */}

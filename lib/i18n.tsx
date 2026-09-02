@@ -23,6 +23,7 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'nav.live':        { en: 'Live Trading',  pt: 'Trading Ao Vivo' },
   'nav.backtesting': { en: 'Backtesting',   pt: 'Backtesting' },
   'nav.broker':      { en: 'Broker',        pt: 'Parceiro' },
+  'nav.simulator':   { en: 'Simulator',     pt: 'Simulador' },   // took the Broker slot 2026-09-02
   'nav.admin':       { en: 'Admin',         pt: 'Admin' },
   'nav.settings':    { en: 'Settings',      pt: 'Configurações' },
   'nav.signout':     { en: 'Sign Out',      pt: 'Sair' },

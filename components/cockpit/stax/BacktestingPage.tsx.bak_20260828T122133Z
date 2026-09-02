@@ -838,18 +838,6 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
   // Y-axis only fits visible series — hiding the strategy line should rescale
   // the chart to the BH range, not leave a stranded BH curve squashed at the
   // bottom of an axis still sized for the strategy's order-of-magnitude.
-  // ── Hover state ────────────────────────────────────────────────────────────
-  // Track ts under cursor (interpolated, not snapped to a sample). Both dots
-  // and the tooltip read off this single ts so they stay aligned.
-  //
-  // 2026-08-28: THESE WERE BELOW THE "No data" EARLY RETURN. With both series toggled off — or
-  // any render where nothing is visible — this component returned before declaring 3 hooks, then
-  // declared them once data appeared. React counts hooks per render and throws #310, which blanks
-  // the whole Backtesting page. Found by scripts/admin_tab_smoke.py on its first run.
-  const [hoverTs, setHoverTs] = useState<number | null>(null)
-  const [hoverVbX, setHoverVbX] = useState<number>(0)
-  const wrapRef = useRef<HTMLDivElement | null>(null)
-
   const visibleValues = [
     ...(show.strategy ? strategy.map(p => p.value) : []),
     ...(show.bh ? bh.map(p => p.value) : []),
@@ -929,6 +917,12 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
     return a.value + (b.value - a.value) * k
   }
 
+  // ── Hover state ────────────────────────────────────────────────────────────
+  // Track ts under cursor (interpolated, not snapped to a sample). Both dots
+  // and the tooltip read off this single ts so they stay aligned.
+  const [hoverTs, setHoverTs] = useState<number | null>(null)
+  const [hoverVbX, setHoverVbX] = useState<number>(0)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
 
   function onMove(e: React.PointerEvent<HTMLDivElement>) {
     const el = wrapRef.current

@@ -28,16 +28,20 @@ import { useIsAdmin } from '@/lib/use-is-admin'
 import { Icons } from './Icons'
 import LaneControlPanel from './LaneControlPanel'
 import { PHASE_H_SYMBOLS } from '@/lib/phase-h-basket'
+import { BasketSelectionPanel } from './BasketSelectionPanel'
+import { PanelBoundary } from './PanelBoundary'
 import {
   StrategyResearchPanel,
   DiscoveryPanel,
   CfgQualityPanel,
   BestStaxsPanel,
+  ContendersPanel,
   // SatoshiStackerSpecPanel / StrategyOptimizationsPanel / ExecutionArchitecturePanel
   // are still exported but no longer wired into the StrategyPanel tabs. Dead-end
   // strategies removed 2026-05-17; only SwingMate remains.
 } from './AdminStrategyPanels'
 import { SocialDispatchPanel, SocialGalleryPanel } from './AdminSocialPanels'
+import { RegimePanel } from './AdminRegimePanel'
 
 // ─── Local icons (admin-specific, kept inline so Icons.tsx stays cosmetic) ──
 
@@ -61,7 +65,7 @@ const ExternalLink = (p: IconProps) => <I {...p}><path d="M14 4h6v6M20 4l-9 9M19
 type TabId =
   | 'overview' | 'execution' | 'lanes' | 'alerts' | 'users'
   | 'brokers' | 'broker-invoices' | 'broker-payouts' | 'wallets'
-  | 'revenue' | 'strategy' | 'social'
+  | 'revenue' | 'strategy' | 'social' | 'regime'
 
 type TabDef = { id: TabId; label: string; group: string; icon: React.ComponentType<IconProps> }
 
@@ -81,6 +85,8 @@ const TABS: TabDef[] = [
   { id: 'revenue',          label: 'Revenue',    group: 'Business',   icon: Dollar },
   { id: 'strategy',         label: 'Strategy',   group: 'Research',   icon: Icons.Bars },
   { id: 'social',           label: 'Social',     group: 'Research',   icon: Megaphone },
+  // 2026-08-27 UQ3: quarterly win rate long/short/both + the BTC-state cross-tab behind it.
+  { id: 'regime',           label: 'Regime',     group: 'Research',   icon: Icons.Bars },
 ]
 
 const TAB_IDS: TabId[] = TABS.map(t => t.id) as TabId[]
@@ -416,6 +422,9 @@ export function AdminContent() {
           </div>
           <div style={{ display: tab === 'social' ? 'block' : 'none' }}>
             <SocialPanel active={tab === 'social'} />
+          </div>
+          <div style={{ display: tab === 'regime' ? 'block' : 'none' }}>
+            <RegimePanel active={tab === 'regime'} />
           </div>
         </div>
       </div>
@@ -1983,7 +1992,7 @@ function WalletsPanel({ active }: { active: boolean }) {
 // 9. Strategy panel — sub-tabs for Research / Spec / Optimizations / Architecture
 // ────────────────────────────────────────────────────────────────────────────
 
-type StratSub = 'cfgquality' | 'discovery' | 'swingmate' | 'bob' | 'staxs'
+type StratSub = 'basket' | 'cfgquality' | 'discovery' | 'swingmate' | 'bob' | 'staxs' | 'contenders'
 
 function StrategyPanel({ active }: { active: boolean }) {
   // SwingMate ⚡ = single-cfg leaderboard (cross-asset post Phase G, 200k+ swept).
@@ -2001,15 +2010,20 @@ function StrategyPanel({ active }: { active: boolean }) {
         value={sub}
         onChange={setSub}
         items={[
+          { id: 'basket', label: 'Basket Selection 🧺' },
           { id: 'cfgquality', label: 'CFG Quality 🎯' },
           { id: 'discovery', label: 'CFG Discovery 💎' },
           { id: 'swingmate', label: 'SwingMate ⚡' },
           { id: 'bob', label: 'Best of The Best 🏆' },
           { id: 'staxs', label: 'Best Staxs 🥞' },
+          { id: 'contenders', label: 'Contenders 🎯' },
         ]}
       />
+      <div style={{ display: sub === 'basket' ? 'block' : 'none' }}>
+        <PanelBoundary name="Basket Selection"><BasketSelectionPanel active={active && sub === 'basket'} /></PanelBoundary>
+      </div>
       <div style={{ display: sub === 'cfgquality' ? 'block' : 'none' }}>
-        <CfgQualityPanel active={active && sub === 'cfgquality'} />
+        <PanelBoundary name="CFG Quality"><CfgQualityPanel active={active && sub === 'cfgquality'} /></PanelBoundary>
       </div>
       <div style={{ display: sub === 'discovery' ? 'block' : 'none' }}>
         <DiscoveryPanel active={active && sub === 'discovery'} />
@@ -2022,6 +2036,9 @@ function StrategyPanel({ active }: { active: boolean }) {
       </div>
       <div style={{ display: sub === 'staxs' ? 'block' : 'none' }}>
         <BestStaxsPanel active={active && sub === 'staxs'} />
+      </div>
+      <div style={{ display: sub === 'contenders' ? 'block' : 'none' }}>
+        <PanelBoundary name="Contenders"><ContendersPanel active={active && sub === 'contenders'} /></PanelBoundary>
       </div>
 
       {/* 2026-05-25 (Session 3): inline re-lock history. Visible across all
