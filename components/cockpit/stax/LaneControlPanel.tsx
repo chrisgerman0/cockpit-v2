@@ -262,7 +262,7 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                 <th style={{ width: 34, textAlign: 'center' }} />
                 <th style={{ textAlign: 'left' }}>Live</th>
                 <th style={{ width: 88, textAlign: 'center' }}>Backing</th>
-                <th style={{ textAlign: 'left' }}>Canonical</th>
+                <th style={{ textAlign: 'right' }}>Canonical</th>
               </tr>
             </thead>
             <tbody>
@@ -300,7 +300,8 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                       ? <span className="adm-pill" style={{ borderColor: 'rgba(212,160,23,0.5)', color: 'var(--gold)' }}>{cur.super_lane.kind ?? 'HELD'}</span>
                       : <span style={{ opacity: 0.5, fontSize: 11 }}>—</span>}
                   </td>
-                  <td style={{ textAlign: 'left', opacity: 0.85 }}>
+                  {/* right-aligned to sit directly above the cfg in the ordinary rows below */}
+                  <td style={{ textAlign: 'right', opacity: 0.85 }}>
                     {cur.canon?.super_lane_occupied
                       ? <span style={{ color: 'var(--gold)' }}>reserved seat in use</span>
                       : <span style={{ opacity: 0.6 }}>reserved seat free</span>}
