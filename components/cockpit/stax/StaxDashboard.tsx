@@ -1157,36 +1157,6 @@ const STAT_TOUR_ID: Record<string, string> = {
   'Total Return':   'total-return',
 }
 
-/** 2026-09-02 — TRACK RECORD EPOCH.
- *  The live numbers are pinned to the k54_bounded re-lock: everything before 07:52:04Z on
- *  2 September 2026 belongs to the previous book and is archived, not deleted. Without this
- *  caption a fresh basket's first day reads as a broken panel — the counts are zero because
- *  the record just started, not because the data failed to load. Renders nothing when the
- *  API sends no epoch, so an older deployment is unchanged.
- */
-function TrackRecordNote({ tr }: { tr?: StaxDashboardData['trackRecord'] }) {
-  if (!tr) return null
-  return (
-    <div
-      className="card"
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-        marginBottom: 12, fontSize: 13, lineHeight: 1.45, opacity: 0.92,
-      }}
-    >
-      <span aria-hidden style={{ fontSize: 15 }}>📌</span>
-      <span>
-        <strong>Track record since {tr.epoch_label}</strong>
-        {' — '}live results for the current strategy basket only.
-        {tr.hidden_count > 0 && (
-          <> {tr.hidden_count} earlier trade{tr.hidden_count === 1 ? '' : 's'} from the previous
-          book {tr.hidden_count === 1 ? 'is' : 'are'} archived, not deleted.</>
-        )}
-      </span>
-    </div>
-  )
-}
-
 function StatsRow({ stats }: { stats: StatCardSpec[] }) {
   const t = useT()
   // Translate the sub which is sometimes templated (e.g. "9656 closed", "1 leg open")
@@ -1710,7 +1680,6 @@ export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
     <div className="stax-page">
       <OnboardingBanner />
       <Hero data={data} />
-      <TrackRecordNote tr={data.trackRecord} />
       <StatsRow stats={liveStats} />
       <TablesRow positions={livePositions} trades={data.trades} />
       <BottomRow data={data} />
