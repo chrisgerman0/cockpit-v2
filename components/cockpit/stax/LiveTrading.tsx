@@ -87,6 +87,33 @@ export function LiveTradingContent() {
   return <LiveTradingView data={state.data} />
 }
 
+/** 2026-09-02 — TRACK RECORD EPOCH. Same caption as the dashboard, same reason: the live
+ *  numbers are pinned to the k54_bounded re-lock (07:52:04Z, 2 September 2026) and everything
+ *  before it belongs to the previous book. A fresh basket's first day would otherwise read as a
+ *  broken panel. Renders nothing when the API sends no epoch. */
+function TrackRecordNote({ tr }: { tr?: LiveTradingData['trackRecord'] }) {
+  if (!tr) return null
+  return (
+    <div
+      className="card"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+        marginBottom: 12, fontSize: 13, lineHeight: 1.45, opacity: 0.92,
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 15 }}>📌</span>
+      <span>
+        <strong>Track record since {tr.epoch_label}</strong>
+        {' — '}live results for the current strategy basket only.
+        {tr.hidden_count > 0 && (
+          <> {tr.hidden_count} earlier trade{tr.hidden_count === 1 ? '' : 's'} from the previous
+          book {tr.hidden_count === 1 ? 'is' : 'are'} archived, not deleted.</>
+        )}
+      </span>
+    </div>
+  )
+}
+
 function LiveTradingView({ data }: { data: LiveTradingData }) {
   // Live tickers — drive per-tick PnL recomputation in the openRows memo
   // below. Critical: data hook does NOT depend on tickers (would cause a
@@ -177,6 +204,7 @@ function LiveTradingView({ data }: { data: LiveTradingData }) {
   return (
     <div className="stax-page">
       <PageHeader lastUpdatedMs={data.lastUpdatedMs} hasOpen={openRows.length > 0} />
+      <TrackRecordNote tr={data.trackRecord} />
       {/* 2026-05-26 Unrealized PnL fix: pass the live-recomputed sum from
           openRows (each row's pnl is updated on every ticker tick via the
           openRows memo above). Previously we passed `data.unrealizedPnl`

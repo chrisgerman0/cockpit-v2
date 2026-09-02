@@ -418,6 +418,18 @@ function buildStats(opts: {
   ]
 }
 
+// 2026-09-02: the live track record is pinned to the k54_bounded re-lock. The API
+// filters the trades to that epoch; this carries the label so the page can SAY so —
+// a zero on day one must read as a fresh start, not a broken panel.
+type TrackRecord = {
+  epoch_ms: number
+  epoch_iso: string
+  epoch_label: string
+  basket: string
+  hidden_count: number
+  note: string
+}
+
 export type StaxLoadState =
   | { status: 'loading' }
   | { status: 'unauthenticated' }
@@ -456,7 +468,7 @@ export function useStaxDashboardData(): StaxLoadState {
           // limit=50 caps each symbol at 3 closed rows → busy symbols get truncated,
           // undercounting realized PnL / return / closed-count vs the Live Trading
           // page (which uses 500). Match it so both read the SAME full closed set.
-          authedFetch<{ trades: RawTrade[] }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[] })),
+          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[], track_record: undefined })),
         ])
         if (cancelled) return
 
@@ -742,6 +754,7 @@ export function useStaxDashboardData(): StaxLoadState {
         })
 
         const data: StaxDashboardData = {
+          trackRecord: userTradesRes?.track_record,
           btcPrice,
           balanceUsd: equity || startCapital,
           tierLabel,

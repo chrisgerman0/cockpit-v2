@@ -22,6 +22,18 @@ const SHORT: Record<V1Symbol, CoinShort> = (() => {
   return m
 })()
 
+// 2026-09-02: the live track record is pinned to the k54_bounded re-lock. The API
+// filters the trades to that epoch; this carries the label so the page can SAY so —
+// a zero on day one must read as a fresh start, not a broken panel.
+type TrackRecord = {
+  epoch_ms: number
+  epoch_iso: string
+  epoch_label: string
+  basket: string
+  hidden_count: number
+  note: string
+}
+
 export type LiveTrade = {
   id: string
   sym: CoinShort
@@ -62,6 +74,10 @@ export type CfgDims = {
   tf: string
   sl_price: number | null
   mfe_pct: number | null
+  /** Live intra-bar extreme published by the daemon every 10s; null if unavailable/stale. */
+  live_mfe_pct?: number | null
+  /** The trail-limit Plan A placed and Bitget ACCEPTED. null when none is resting. */
+  trail_limit_px?: number | null
   be_moved: boolean
   trail_mode: string
   breakeven_at_R: string
@@ -101,6 +117,8 @@ export type AssetState = {
 }
 
 export type LiveTradingData = {
+  /** 2026-09-02: live track record is pinned to the k54_bounded re-lock; the page must SAY so. */
+  trackRecord?: TrackRecord
   active: ActivePosition | null
   closed: LiveTrade[]
   open: LiveTrade[]
@@ -245,7 +263,7 @@ export function useLiveTradingData(): LiveLoadState {
           // load needs the totals card to skeleton during the gap, which is
           // a UI refactor across Live Trading components. Deferred to
           // Phase 2.5 with the full structural refactor.
-          authedFetch<{ trades: RawTrade[] }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[] })),
+          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[], track_record: undefined })),
           fetch('/api/strategy-state').then(r => r.ok ? r.json() : { positions: [] }).catch(() => ({ positions: [] })) as Promise<StrategyStateResp>,
         ])
         if (cancelled) return
@@ -388,6 +406,7 @@ export function useLiveTradingData(): LiveLoadState {
         })
 
         const data: LiveTradingData = {
+          trackRecord: tradesRes?.track_record,
           active,
           closed,
           open,
