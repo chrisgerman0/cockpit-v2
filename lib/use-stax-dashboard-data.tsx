@@ -654,6 +654,15 @@ export function useStaxDashboardData(): StaxLoadState {
           const bt = b.closed_at ? new Date(b.closed_at).getTime() : 0
           return bt - at  // newest first
         })
+        // 2026-09-02 — THE FALLBACK MUST NOT FIRE FOR A LIVE ACCOUNT WITH A CLEAN SHEET.
+        // "the user has none" used to mean brand-new or preview. Since the track record was
+        // pinned to the k54 re-lock it ALSO means "active, paying, and simply hasn't traded
+        // yet" — and the widget then showed five of the STRATEGY's own trades next to stat
+        // cards reading "No trades yet" and "Total Return +0.00%". They look like the user's
+        // trades and they are not. Chris caught it on his own dashboard.
+        // Fall back ONLY in the preview state (no keys / no bot), where there is no account to
+        // report on. A live account shows its own record, empty if that is the truth.
+        const isPreviewState = noKeys || noBot
         const trades: Trade[] = closedSorted.length > 0 ? closedSorted.slice(0, 5).map(t => {
           const entry = Number(t.entry_price) || 0
           const exit = Number(t.exit_price) || 0
@@ -732,7 +741,9 @@ export function useStaxDashboardData(): StaxLoadState {
         // backtest so the dashboard reads as full. Strategy trades are
         // pre-filtered for eod markers by fetchPortfolioTrades, so the
         // counts here are real closed-trade counts.
-        const useStrategyForStats = userClosedTrades.length === 0
+        // Same rule as Recent Trades above: a LIVE account with a clean sheet reports its own
+        // (empty) numbers. Only a preview account borrows the strategy's.
+        const useStrategyForStats = isPreviewState && userClosedTrades.length === 0
         const wr20 = useStrategyForStats
           ? winRateFromPortfolio(portfolio, 20)
           : buildWinRate(userTrades, 20)
@@ -780,7 +791,11 @@ export function useStaxDashboardData(): StaxLoadState {
           equityRangeLabel,
           stats,
           positions,
-          trades,
+          // 2026-09-02: a LIVE account with a clean sheet shows its own (empty) record. The
+          // strategy fallback above is for the PREVIEW state only — see the note at
+          // isPreviewState. Without this the widget showed five strategy trades beside stat
+          // cards reading "No trades yet".
+          trades: (!isPreviewState && closedSorted.length === 0) ? [] : trades,
           // Live account-wide leverage = total open notional / equity. Falls
           // to 0 when flat. Bumps up as more legs open or pyramid scales them.
           leverage: equity > 0
