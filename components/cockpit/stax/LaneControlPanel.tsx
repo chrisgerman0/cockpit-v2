@@ -13,13 +13,20 @@ import { authedFetch } from '@/lib/api'
 
 type Lane = {
   lane_id: number; cfg_sid: string | null; asset: string | null
-  kind: 'REAL' | 'MIRROR' | null; qty: number | null; adopted: boolean; seat_ts_ms: number | null
+  kind: 'REAL' | 'MIRROR' | 'PENDING' | null; qty: number | null; adopted: boolean; seat_ts_ms: number | null
+  pending_since_ms?: number | null; pending_note?: string | null
 }
 type Row = { kind: 'MATCH' | 'CANON_ONLY' | 'LIVE_ONLY'; live: Lane | null; canon: { cfg_sid: string; asset: string } | null }
+type SuperLane = {
+  lane_id: number; occupied: boolean; cfg_sid: string | null; asset: string | null
+  kind: string | null; tier_s: boolean | null; label: string; note: string
+}
 type Tier = {
   tier: string; lanes: number
-  live: { occupied: number; free: number; n_lanes: number } | null
-  canon: { occupied: number; free: number }
+  ordinary_lanes?: number
+  super_lane?: SuperLane
+  live: { occupied: number; free: number; n_lanes: number; ordinary_lanes?: number; occupied_total?: number } | null
+  canon: { occupied: number; free: number; ordinary_lanes?: number; occupied_total?: number; super_lane_occupied?: boolean }
   state: 'MATCH' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
   divergence_age_sec: number | null; maturity_sec: number
   computed_at: string | null; rows: Row[]
@@ -32,6 +39,10 @@ type Payload = {
     computed_at: string | null; age_sec: number | null; stale: boolean
     served_from_lkg: boolean; publisher_halted: boolean; halt_reason: string | null
     consecutive_fails: number; last_publish_outcome: string | null; warning: string | null
+    halt_note?: string | null
+    last_refresh_at?: string | null; last_discard_at?: string | null
+    last_discard_position?: string | null; discard_is_current_cause?: boolean
+    cycles_behind?: number | null
   }
   history?: { ts: string | null; resolved: boolean; text: string }[]
   state_held_since_ms?: number | null
@@ -152,12 +163,12 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               <div>
                 <div className="adm-stat-label">Live free lanes</div>
                 <div className="adm-h-val num" style={{ color: tone }}>{liveFree}</div>
-                <div className="adm-stat-sub">{cur.live.occupied} of {cur.live.n_lanes} occupied</div>
+                <div className="adm-stat-sub">{cur.live.occupied} of {cur.ordinary_lanes ?? cur.live.n_lanes} occupied</div>
               </div>
               <div>
                 <div className="adm-stat-label">Canonical free lanes</div>
                 <div className="adm-h-val num">{canonFree}</div>
-                <div className="adm-stat-sub">{cur.canon.occupied} of {cur.lanes} occupied</div>
+                <div className="adm-stat-sub">{cur.canon.occupied} of {cur.canon.ordinary_lanes ?? cur.lanes} occupied</div>
               </div>
               <div>
                 <div className="adm-stat-label">Verdict</div>
@@ -180,6 +191,25 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
             {/* Every timestamp above describes the LIVE side. If the canonical book itself is
                 stale the verdict above is about yesterday's canonical, and saying nothing makes
                 this panel lie — which is exactly what it did on 2026-08-26. */}
+            {/* 2026-08-29 — THE HALT IS CONTEXT, NOT AN ALARM. The amber banner used to fire on
+                `publisher_halted` alone, and that flag has been true continuously since the
+                operator halt of 2026-08-27 — so it rendered on EVERY load, including when the
+                canonical book was perfectly fresh, and then blamed the halt for a staleness that
+                did not exist. A warning that is always on teaches you to ignore it. The halt now
+                states itself, neutrally, and the amber banner is reserved for a book that is
+                genuinely behind. */}
+            {d.canonical_freshness?.halt_note && (
+              <div
+                className="adm-p adm-p-sm"
+                style={{
+                  marginTop: 8, padding: '8px 10px', borderRadius: 6,
+                  border: '1px solid var(--border, #d4d4d8)', color: 'var(--muted, #71717a)',
+                  background: 'transparent',
+                }}
+              >
+                {d.canonical_freshness.halt_note}
+              </div>
+            )}
             {d.canonical_freshness?.warning && (
               <div
                 className="adm-p adm-p-sm"
@@ -202,12 +232,20 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                     {d.canonical_freshness.last_publish_outcome}
                   </div>
                 )}
+                {d.canonical_freshness.last_refresh_at && (
+                  <div style={{ marginTop: 4, opacity: 0.85 }}>
+                    last good forward refresh {d.canonical_freshness.last_refresh_at}
+                    {d.canonical_freshness.cycles_behind != null && d.canonical_freshness.cycles_behind > 0
+                      ? ` · ${d.canonical_freshness.cycles_behind} publish cycle${d.canonical_freshness.cycles_behind === 1 ? '' : 's'} behind`
+                      : ''}
+                  </div>
+                )}
               </div>
             )}
           </>
         ) : (
           <div className="adm-p" style={{ marginTop: 6 }}>
-            Canonical holds <b className="num">{cur.canon.occupied}</b> of {cur.lanes} lanes
+            Canonical holds <b className="num">{cur.canon.occupied}</b> of {cur.canon.ordinary_lanes ?? cur.lanes} ordinary lanes
             ({cur.canon.free} free). No live account trades this tier, so there is nothing to
             compare — switch to <b style={{ textTransform: 'capitalize' }}>{liveTier}</b> for parity.
           </div>
@@ -228,7 +266,49 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {cur.rows.map((r: any, i: number) => {
+              {/* 2026-09-02 (Chris) — THE SUPER LANE IS ALWAYS ITS OWN ROW.
+                  It is not a regular lane: only a protected (Tier-S) strategy can take it, so it
+                  is excluded from the ordinary free-lane counts above and shown here on its own,
+                  empty or not. An empty super lane is normal and must not read as a missing lane. */}
+              {cur.super_lane && (
+                <tr style={{
+                  background: cur.super_lane.occupied ? 'rgba(212,160,23,0.14)' : 'rgba(212,160,23,0.06)',
+                  borderTop: '2px solid rgba(212,160,23,0.45)',
+                  borderBottom: '2px solid rgba(212,160,23,0.45)',
+                }}>
+                  <td style={{ textAlign: 'center' }} title={cur.super_lane.note}>
+                    {cur.super_lane.occupied ? '★' : '☆'}
+                  </td>
+                  <td style={{ textAlign: 'left' }}>
+                    <b style={{ color: 'var(--gold)', letterSpacing: 0.4 }}>SUPER LANE</b>
+                    <span style={{ opacity: 0.65, fontSize: 11 }}> · lane {cur.super_lane.lane_id} · Tier-S only</span>
+                    {cur.super_lane.occupied && (
+                      <div style={{ fontSize: 12 }}>
+                        <b>{cur.super_lane.asset}</b>{' '}
+                        <span style={{ opacity: 0.7 }}>{cur.super_lane.cfg_sid}</span>
+                        {cur.super_lane.tier_s === false && (
+                          <b style={{ color: 'var(--neg, #dc2626)' }}> — NOT Tier-S, the reservation is not being honoured</b>
+                        )}
+                      </div>
+                    )}
+                    {!cur.super_lane.occupied && (
+                      <div style={{ fontSize: 11.5, opacity: 0.7 }}>Empty and waiting — an ordinary signal can never take it.</div>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {cur.super_lane.occupied
+                      ? <span className="adm-pill" style={{ borderColor: 'rgba(212,160,23,0.5)', color: 'var(--gold)' }}>{cur.super_lane.kind ?? 'HELD'}</span>
+                      : <span style={{ opacity: 0.5, fontSize: 11 }}>—</span>}
+                  </td>
+                  <td style={{ textAlign: 'left', opacity: 0.85 }}>
+                    {cur.canon?.super_lane_occupied
+                      ? <span style={{ color: 'var(--gold)' }}>reserved seat in use</span>
+                      : <span style={{ opacity: 0.6 }}>reserved seat free</span>}
+                  </td>
+                </tr>
+              )}
+              {cur.rows.filter((r: any) => !(cur.super_lane?.cfg_sid && r.live?.cfg_sid === cur.super_lane.cfg_sid))
+                       .map((r: any, i: number) => {
                 const k = r.kind ?? (r.live && r.canon ? 'MATCH' : r.canon ? 'CANON_ONLY' : 'LIVE_ONLY')
                 const bad = k !== 'MATCH'
                 const c = k === 'CANON_ONLY' ? 'var(--neg, #dc2626)' : 'var(--warn, #d97706)'
@@ -249,6 +329,17 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                           borderRadius: 4, background: 'var(--pos, #16a34a)', color: '#fff',
                         }}>REAL</span>
                       )}
+                      {/* 2026-08-28: a resting LIMIT ENTRY is neither REAL nor MIRROR. It used to
+                          show as REAL because qty>0 was read as money — but a pending limit carries
+                          its INTENDED size, so a lane owning no position looked like a phantom. */}
+                      {r.live?.kind === 'PENDING' && (
+                        <span title={r.live.pending_note ?? undefined}
+                              style={{
+                          fontSize: 10, fontWeight: 800, letterSpacing: .6, padding: '2px 7px',
+                          borderRadius: 4, border: '1px solid #2563eb',
+                          color: '#2563eb', background: 'rgba(37,99,235,0.10)',
+                        }}>PENDING FILL</span>
+                      )}
                       {r.live?.kind === 'MIRROR' && (
                         <span style={{
                           fontSize: 10, fontWeight: 800, letterSpacing: .6, padding: '2px 7px',
@@ -260,7 +351,11 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                     <td>
                       {r.canon
                         ? <><b>{r.canon.asset}</b> <span className="adm-mono-sm adm-p-muted">{r.canon.cfg_sid}</span></>
-                        : <span style={{ color: c, fontWeight: 600 }}>canonical does not hold this</span>}
+                        : (r.live?.kind === 'PENDING'
+                            ? <span style={{ color: 'var(--ink-mute)' }}>
+                                not yet — the limit has not filled, so canonical cannot hold it
+                              </span>
+                            : <span style={{ color: c, fontWeight: 600 }}>canonical does not hold this</span>)}
                     </td>
                   </tr>
                 )
@@ -269,7 +364,7 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
           </table>
         </div>
         <div className="adm-p adm-p-sm adm-p-muted" style={{ marginTop: 8 }}>
-          <b>REAL</b> = Bitget money behind the lane. <b>MIRROR</b> = adopted occupancy holding a
+          <b>REAL</b> = Bitget money behind the lane. <b style={{ color: '#2563eb' }}>PENDING FILL</b> = a limit entry is resting and has <b>not</b> filled, so no Bitget position exists yet and both canonical and the customer app correctly show nothing — the lane is reserved while the order waits (0.15% away, up to 120 min). <b>MIRROR</b> = adopted occupancy holding a
           seat for a cfg canonical is in but live never filled.
         </div>
       </div>
