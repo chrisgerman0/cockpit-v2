@@ -538,9 +538,12 @@ const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive' | 'kamika
 // SL is 4% of entry across basket.
 //
 // Tier-grid v2 invariants (locked 2026-06-09):
-//   conservative: 2 lanes × 1× lev × 50%  = 1× capital max notional
-//   moderate:     4 lanes × 3× lev × 75%  = 3× capital max notional
-//   aggressive:   6 lanes × 6× lev × 100% = 6× capital max notional
+//   conservative: 2 ordinary (+1 reserved) × 1× lev × 50%  = 1× capital max ordinary notional
+//   moderate:     4 ordinary (+1 reserved) × 3× lev × 75%  = 3× capital max ordinary notional
+//   aggressive:   6 ordinary (+1 reserved) × 6× lev × 100% = 6× capital max ordinary notional
+//   2026-09-02: the reserved seat is Tier-S-only and ADDS to the ceiling — a fully occupied tier
+//   can hold one more position than its ordinary count, so worst-case exposure is (ordinary+1)
+//   lanes' notional, not (ordinary). Per-trade size is unchanged: it never divides by lanes.
 //
 // Nominal leverage = lanes × base_pct (Cons 1×, Mod 3×, Aggr 6×) — 6× is the
 // 6L-stress-validated ceiling (4.30× real peak, 0 liq). Per-lane notional =
@@ -548,7 +551,8 @@ const TIER_LEVERAGE: Record<'conservative' | 'moderate' | 'aggressive' | 'kamika
 // downstream metric scales proportionally.
 //
 // Max single-trade loss per lane = (capital × base_pct) × 4% SL. On Aggressive
-// with all 6 lanes occupied, max simultaneous SL = capital × 6 × 4% ≈ 24%.
+// with all 6 ORDINARY lanes occupied, max simultaneous SL = capital × 6 × 4% ≈ 24%; with the
+// reserved Tier-S seat also filled it is capital × 7 × 4% ≈ 28%.
 const COMPOUND_CAP_MULTIPLIER = 2 as const  // compound lanes cap at 2× capital_initial
 
 // Staxs mode reserve target as % of capital_initial, per tier. The reserve
@@ -562,10 +566,15 @@ const RESERVE_PCT_BY_TIER: Record<TierKey, number> = {
 }
 
 const TIER_RATIOS = {
-  conservative: { lanes: 2, leverage: 1, basePct: 0.50, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
-  moderate:     { lanes: 4, leverage: 3, basePct: 0.75, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
-  aggressive:   { lanes: 6, leverage: 6, basePct: 1.00, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
-  kamikaze:     { lanes: 7, leverage: 9, basePct: 1.25, sl: 4, label: 'Kamikaze',     blurb: 'Disclosed tail risk — read before selecting.',   recommended: false },
+  // 2026-09-02 SUPER LANE — every tier is ORDINARY LANES + ONE RESERVED SEAT that only a
+  // protected (Tier-S) strategy may take. Ordinary capacity is unchanged from before; the extra
+  // seat is additional. These counts must match the live engine (tier_sizing._TIER_SHAPE) and
+  // canonical, because this table is what the wizard writes into the bot's config as
+  // lanes_active — a stale number here means the bot is configured for a book it is not running.
+  conservative: { lanes: 3, ordinary: 2, leverage: 1, basePct: 0.50, sl: 4, label: 'Conservative', blurb: 'Smoother ride. Lowest risk exposure.',           recommended: false },
+  moderate:     { lanes: 5, ordinary: 4, leverage: 3, basePct: 0.75, sl: 4, label: 'Moderate',     blurb: 'Balanced default. Best risk/reward.',            recommended: true  },
+  aggressive:   { lanes: 7, ordinary: 6, leverage: 6, basePct: 1.00, sl: 4, label: 'Aggressive',   blurb: 'Full capture. Highest risk.',                    recommended: false },
+  kamikaze:     { lanes: 8, ordinary: 7, leverage: 9, basePct: 1.25, sl: 4, label: 'Kamikaze',     blurb: 'Disclosed tail risk — read before selecting.',   recommended: false },
 } as const
 type TierKey = keyof typeof TIER_RATIOS
 
@@ -667,8 +676,8 @@ function BotPanel() {
 //   4. 12-Month Projection (concise — backtest stats per tier)
 //   5. Review & Activate (POSTs to /api/bot-activate)
 //
-// Tier ratios (TIER_RATIOS): Conservative 2 lanes × 1× lev × 50% / Moderate 4
-// lanes × 3× lev × 75% / Aggressive 6 lanes × 6× lev × 100% (Tier-grid v2).
+// Tier ratios (TIER_RATIOS): Conservative 2+1 lanes × 1× lev × 50% / Moderate 4+1
+// lanes × 3× lev × 75% / Aggressive 6+1 lanes × 6× lev × 100% (Tier-grid v2 + super lane).
 // SL is 4% across all tiers. Bitget leverage cap matches tier leverage.
 
 // Backtest stats per tier — Phase H 16-asset portfolio (BTC, ETH, SOL, BNB,
@@ -1494,12 +1503,26 @@ function BotSettingsWizard({
               <input type="checkbox" checked={d4} onChange={e => setD4(e.target.checked)} style={{ marginTop: 3 }} />
               <span>I understand the 20% performance fee is applied to net profit only — no fees on losses.</span>
             </label>
+            {/* 2026-09-02 SUPER LANE — a real, new product feature and nothing on this page said
+                so. Every tier now carries its ordinary lanes PLUS one reserved seat that only a
+                protected strategy can take, which raises the worst-case exposure by one lane. */}
+            <div style={{ marginTop: 10, padding: 10, background: 'rgba(212,160,23,0.06)', border: '1px solid rgba(212,160,23,0.28)', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--gold)', marginBottom: 6 }}>Reserved lane</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text)' }}>
+                {TIER_RATIOS[preset as TierKey]?.label} runs <strong>{TIER_RATIOS[preset as TierKey]?.ordinary} ordinary lanes plus 1 reserved lane</strong> ({TIER_RATIOS[preset as TierKey]?.lanes} total).
+                The reserved lane can only be taken by one of the strategies the book protects, so a
+                high-quality signal is never crowded out by ordinary trades. Your position size per
+                trade is unchanged — the reserved lane is extra capacity, which means at full
+                occupancy your exposure is {TIER_RATIOS[preset as TierKey]?.lanes} positions rather
+                than {TIER_RATIOS[preset as TierKey]?.ordinary}.
+              </div>
+            </div>
             {/* 2026-07-04 KAMIKAZE tail-risk panel + mandatory ack — shown ONLY when the Kamikaze tier is selected. */}
             {preset === 'kamikaze' ? (
               <div style={{ marginTop: 10, padding: 10, background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.30)', borderRadius: 8 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--neg, #ff4d4f)', marginBottom: 6 }}>⚠ Kamikaze — Disclosed Tail Risk</div>
                 <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--text)' }}>
-                  KAMIKAZE (7 lanes / 1.25×) — worst observed 7-year case is a ~61–68% drawdown week (full books occur roughly weekly on volatility events). A beyond-record simultaneous ≥2× gap-through event would be fatal below ~$50k. Minimum account is set by order mechanics (~$1k), NOT by a safety threshold — no account size makes this tier safe from its tail. Position sizing risks ~6.25% of configured capital per trade.
+                  KAMIKAZE (8 lanes — 7 ordinary + 1 reserved / 1.25×) — worst observed 7-year case is a ~61–68% drawdown week (full books occur roughly weekly on volatility events). A beyond-record simultaneous ≥2× gap-through event would be fatal below ~$50k. Minimum account is set by order mechanics (~$1k), NOT by a safety threshold — no account size makes this tier safe from its tail. Position sizing risks ~6.25% of configured capital per trade.
                 </div>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '8px 0 2px', fontSize: 13, fontWeight: 600 }}>
                   <input type="checkbox" checked={d5} onChange={e => setD5(e.target.checked)} style={{ marginTop: 3 }} />
