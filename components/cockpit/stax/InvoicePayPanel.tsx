@@ -154,6 +154,7 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
   const [netFor, setNetFor] = useState<Record<string, string>>({})
   const [coinFor, setCoinFor] = useState<Record<string, 'USDT' | 'USDC'>>({})
   const [txFor, setTxFor] = useState<Record<string, string>>({})
+  const [shakeFor, setShakeFor] = useState<string | null>(null)
   const [openPicker, setOpenPicker] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ id: string; text: string; bad?: boolean } | null>(null)
@@ -183,17 +184,32 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
     navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(null), 1500) }).catch(() => {})
   }
 
-  const confirmCrypto = async (inv: Invoice) => {
+  /** Nudge the field: red + a short shake, and put the cursor in it. */
+  const rejectField = (inv: Invoice, text: string) => {
+    setMsg({ id: inv.id, text, bad: true })
+    setShakeFor(inv.id)
+    setTimeout(() => setShakeFor(null), 520)
+    document.getElementById(`tx-${inv.id}`)?.focus()
+  }
+
+  const confirmCrypto = async (inv: Invoice, allowNoHash = false) => {
     const code = netFor[inv.id]
     const w = code ? walletFor(code) : null
     const net = NETWORKS.find(n => n.code === code)
-    const hash = extractTx(txFor[inv.id] || '')
-    if (!w) { setMsg({ id: inv.id, text: 'Choose a network first.', bad: true }); return }
-    // 2026-09-03 (Chris): "the person paying the invoice has to provide a valid tx link. the button
-    // can only be pressed if a valid link has been placed." The button is disabled without one; this
-    // is the belt to that braces, and the route rejects a missing hash independently.
-    if (!txIsValid(hash, net?.kind)) {
-      setMsg({ id: inv.id, text: 'Paste the transaction link or hash from your wallet.', bad: true }); return
+    const raw = txFor[inv.id] || ''
+    const hash = extractTx(raw)
+    if (!w) { setMsg({ id: inv.id, text: 'Choose a network in step 2 first.', bad: true }); return }
+    // Chris FB4: an empty field on the primary button gets a red state, a shake, and a message
+    // that names the way out -- not a generic error. The way out is the link beneath the button
+    // (FC3), for the customer who has sent the money and is waiting on their wallet for a hash.
+    if (!allowNoHash && !raw.trim()) {
+      rejectField(inv, 'Paste the transaction hash from your wallet — or use “I haven’t got the hash yet” below.')
+      return
+    }
+    if (raw.trim() && !txIsValid(hash, net?.kind)) {
+      rejectField(inv, `That is not a valid ${net?.name || ''} transaction hash. It should ` +
+        (net?.kind === 'evm' ? 'start 0x and be 64 characters.' : 'be the hash your wallet shows for the transfer.'))
+      return
     }
     setBusy(inv.id); setMsg(null)
     try {
@@ -202,7 +218,7 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
         // network = the wallet GROUP (finds the address); chain = what the customer actually
         // selected, so admin can check the right explorer instead of guessing across six EVM chains.
         // coin = the coin they actually sent, not the wallet's catch-all 'ALL'.
-        body: JSON.stringify({ coin: coinFor[inv.id] || 'USDT', network: w.network, chain: code, txHash: hash }),
+        body: JSON.stringify({ coin: coinFor[inv.id] || 'USDT', network: w.network, chain: code, txHash: hash || '' }),
       })
       await load(); onChange?.()
     } catch (e: any) { setMsg({ id: inv.id, text: humanError(e, 'Something went wrong.'), bad: true }) }
@@ -294,7 +310,7 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                       satisfied (and ticked) on first paint without hiding the choice. ── */}
                   <div style={{ display: 'flex', marginBottom: 14 }}>
                     <StepDot n={1} done active={false} />
-                    <div className="bp-cell" style={{ width: '100%', padding: 16 }}>
+                    <div className="bp-cell" style={{ width: '100%', padding: 13 }}>
                       <StepTitle>Select a coin</StepTitle>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
                         {COINS.map(c => {
@@ -328,7 +344,7 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                   {/* ── Step 2 — the recipient network ── */}
                   <div style={{ display: 'flex', marginBottom: 14 }}>
                     <StepDot n={2} done={!!w} active={!w} />
-                    <div className="bp-cell" style={{ width: '100%', padding: 16, overflow: 'visible' }}>
+                    <div className="bp-cell" style={{ width: '100%', padding: 13, overflow: 'visible' }}>
                       <StepTitle>Select recipient</StepTitle>
 
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -399,84 +415,121 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                     </div>
                   </div>
 
-                  {/* ── Step 3 — send it.
-                      Chris, 2026-09-03: "Step number 3 should have 3 fields horizontally, not
-                      vertically as it is now." Amount | Address | Transaction link, side by side.
-                      auto-fit/minmax holds one row on desktop and stacks on a phone without a
-                      media query, which inline styles cannot express. ── */}
+                  {/* ── Step 3 — THE ACTION STEP.
+                      Chris rejected the previous version: three equal-weight boxes side by side,
+                      two of which you COPY and one of which you TYPE INTO, all wearing the same
+                      treatment; an input that read as a read-only panel; and a confirm control
+                      that was grey text in a grey box while the card button beside it looked
+                      clickable. Rebuilt as: one INSTRUCTION surface carrying the only two facts
+                      that matter (how much, where), then a labelled break, then the field and an
+                      unmissable primary button. Step 3 is the only step with a gold border and a
+                      warmer fill, so it reads as the action rather than the third paragraph. ── */}
                   <div style={{ display: 'flex' }}>
                     <StepDot n={3} done={false} active={!!w} />
-                    <div className="bp-cell" style={{ width: '100%', padding: 16, opacity: w ? 1 : 0.55 }}>
-                      <StepTitle>Send the payment</StepTitle>
+                    <div style={{ width: '100%', padding: 15, borderRadius: 10,
+                                  border: `1px solid color-mix(in srgb, ${GOLD} 45%, var(--line))`,
+                                  background: 'var(--card-2)', opacity: w ? 1 : 0.6 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                                    gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>Send the payment</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>From any wallet or exchange</div>
+                      </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, alignItems: 'stretch' }}>
-                        {/* 1 — amount */}
-                        <div>
-                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>Send this exact amount</div>
-                          <div style={{ ...fieldBox, textAlign: 'center' }}>
-                            <div className="bp-cell-val bp-tone-gold" style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 22 }}>{payAmt}</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Must match exactly</div>
-                            <div><CopyBtn on={payAmt.replace('$', '')} k={`amt-${inv.id}`} /></div>
-                          </div>
-                        </div>
-
-                        {/* 2 — address */}
-                        <div>
-                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>To this wallet address</div>
-                          <div style={{ ...fieldBox, textAlign: 'center' }}>
-                            {w ? (
-                              <>
-                                <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'var(--font-mono, monospace)' }}>{w.wallet_address}</div>
-                                <div><CopyBtn on={w.wallet_address} k={`addr-${inv.id}`} /></div>
-                              </>
-                            ) : (
-                              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Choose a network in step 2</div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 3 — the transaction link. REQUIRED: nothing can be verified without it. */}
-                        <div>
-                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>Transaction link or hash</div>
-                          <div style={{ ...fieldBox, textAlign: 'center' }}>
-                            <input value={txRaw} disabled={!w}
-                                   onChange={e => setTxFor(m => ({ ...m, [inv.id]: e.target.value }))}
-                                   placeholder={chosen ? (chosen.kind === 'evm' ? '0x… or explorer link' : 'hash or explorer link') : 'Choose a network first'}
-                                   style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none',
-                                            textAlign: 'center', fontSize: 12, color: 'var(--text)',
-                                            fontFamily: 'var(--font-mono, monospace)' }} />
-                            <div style={{ fontSize: 11, marginTop: 6,
-                                          color: !txRaw ? 'var(--muted)' : txOk ? 'var(--pos, #22c55e)' : '#ef4444' }}>
-                              {!txRaw
-                                ? 'Required — paste it from your wallet'
-                                : txOk
-                                  ? `Valid ${chosen?.name} transaction`
-                                  : `Not a valid ${chosen?.name || ''} transaction hash`}
+                      {/* THE INSTRUCTION — how much, and where. Both large, mono, copyable. */}
+                      <div style={{ border: '1px solid var(--line-2)', borderRadius: 10,
+                                    background: 'var(--card)', overflow: 'hidden' }}>
+                        <div className="stax-payrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>Amount</div>
+                            <div style={{ fontSize: 26, fontWeight: 800, color: GOLD, letterSpacing: '-0.02em',
+                                          lineHeight: 1.1, fontFamily: 'var(--font-mono, JetBrains Mono, monospace)' }}>{payAmt}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                              Send this exact figure — it is how we match your payment.
                             </div>
-                            {txOk && chosen ? (
-                              <a href={`${chosen.explorer}${txHash}`} target="_blank" rel="noopener noreferrer"
-                                 style={{ fontSize: 11, marginTop: 6, color: GOLD, textDecoration: 'none' }}>Open in explorer ↗</a>
+                          </div>
+                          <button type="button" className={`stax-paycopy${copied === `amt-${inv.id}` ? ' done' : ''}`}
+                                  onClick={() => copy(payAmt.replace('$', ''), `amt-${inv.id}`)}>
+                            {copied === `amt-${inv.id}` ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                        <div className="stax-payrow" style={{ display: 'flex', alignItems: 'center', gap: 14,
+                                                              padding: '12px 14px', borderTop: '1px solid var(--line)' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>Wallet address</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, wordBreak: 'break-all', lineHeight: 1.35,
+                                          fontFamily: 'var(--font-mono, JetBrains Mono, monospace)' }}>
+                              {w ? w.wallet_address : 'Choose a network in step 2'}
+                            </div>
+                            {w && chosen ? (
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                                {chosen.chain} ({chosen.name}) only — another network loses the funds.
+                              </div>
                             ) : null}
                           </div>
+                          {w ? (
+                            <button type="button" className={`stax-paycopy${copied === `addr-${inv.id}` ? ' done' : ''}`}
+                                    onClick={() => copy(w.wallet_address, `addr-${inv.id}`)}>
+                              {copied === `addr-${inv.id}` ? 'Copied' : 'Copy'}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
 
-                      {/* 2026-09-03 (Chris): this was green with a tick, which reads as "paid" before
-                          the customer has done anything. Green is the SETTLED state, not the action.
-                          It is also now unpressable until a valid transaction hash is present. */}
-                      <button type="button" disabled={busy === inv.id || !canSend} onClick={() => confirmCrypto(inv)}
-                              style={{ width: '100%', marginTop: 16, background: canSend ? GOLD : 'transparent',
-                                       color: canSend ? '#08080D' : 'var(--muted)',
-                                       border: canSend ? 'none' : '1px solid var(--line)',
-                                       borderRadius: 8, padding: 13, fontSize: 14, fontWeight: 700,
-                                       cursor: canSend ? 'pointer' : 'not-allowed', opacity: canSend ? 1 : 0.6 }}>
-                        {busy === inv.id ? 'Submitting…'
-                          : !w ? 'Choose a network first'
-                          : !txOk ? 'Paste the transaction link'
-                          : 'I have sent the payment'}
+                      {/* the break between what you COPY and what you TYPE */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '15px 0 11px' }}>
+                        <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+                        <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Once you&apos;ve sent it</span>
+                        <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                                    gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                        <label htmlFor={`tx-${inv.id}`} style={{ fontSize: 13, fontWeight: 600 }}>Transaction hash</label>
+                        <span style={{ fontSize: 11, color: 'var(--muted)' }}>Optional — speeds up verification</span>
+                      </div>
+                      <input id={`tx-${inv.id}`} value={txRaw} disabled={!w}
+                             className={`stax-payfield${msg && msg.id === inv.id && msg.bad ? ' bad' : ''}${shakeFor === inv.id ? ' stax-shake' : ''}`}
+                             onChange={e => { setTxFor(m => ({ ...m, [inv.id]: e.target.value })); if (msg?.id === inv.id) setMsg(null) }}
+                             placeholder={chosen ? (chosen.kind === 'evm' ? '0x… or explorer link' : 'hash or explorer link') : 'Choose a network first'} />
+                      <div style={{ fontSize: 12, marginTop: 7, minHeight: 16,
+                                    color: msg && msg.id === inv.id ? (msg.bad ? 'var(--neg, #ef4444)' : 'var(--pos, #22c55e)')
+                                         : txOk ? 'var(--pos, #22c55e)' : 'var(--muted)' }}>
+                        {msg && msg.id === inv.id ? msg.text
+                          : txOk ? `Valid ${chosen?.name} transaction ✓` : ''}
+                      </div>
+                      {txOk && chosen ? (
+                        <a href={`${chosen.explorer}${txHash}`} target="_blank" rel="noopener noreferrer"
+                           style={{ fontSize: 11, color: GOLD, textDecoration: 'none' }}>Open in explorer ↗</a>
+                      ) : null}
+
+                      <button type="button" className="stax-paycta" disabled={busy === inv.id || !w}
+                              onClick={() => confirmCrypto(inv)}>
+                        {busy === inv.id ? 'Submitting…' : 'Confirm payment'}
                       </button>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
-                        We verify it manually, then mark the invoice paid. If nothing arrives within 72 hours, your card on file is charged automatically.
+                      <button type="button" disabled={busy === inv.id || !w}
+                              onClick={() => confirmCrypto(inv, true)}
+                              style={{ display: 'block', width: '100%', marginTop: 9, background: 'none', border: 0,
+                                       cursor: 'pointer', font: 'inherit', fontSize: 12, color: 'var(--muted)',
+                                       textDecoration: 'underline', textUnderlineOffset: 3 }}>
+                        I haven&apos;t got the hash yet — confirm anyway
+                      </button>
+
+                      {/* FC2: a customer's card gets charged. That is a material term, not a footnote. */}
+                      <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 14,
+                                    padding: '11px 13px', borderRadius: 9, background: 'var(--card)',
+                                    border: '1px solid var(--line-2)' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={2}
+                             style={{ flexShrink: 0, marginTop: 2 }}>
+                          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                        <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: 'var(--muted)' }}>
+                          We check the chain by hand and mark the invoice paid. If nothing arrives by{' '}
+                          <b style={{ color: 'var(--text)' }}>{dueLabel}</b>
+                          {card ? <> , your <b style={{ color: 'var(--text)' }}>
+                            {(card.brand || 'card')} ending {card.last4 || '****'}</b> is charged{' '}
+                            <b style={{ color: 'var(--text)' }}>{money(inv.amount_cents)}</b> automatically.</>
+                           : <> , the invoice falls overdue. No card is on file, so nothing can be charged automatically.</>}
+                        </p>
                       </div>
                     </div>
                   </div>
