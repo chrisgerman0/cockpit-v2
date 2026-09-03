@@ -484,8 +484,31 @@ export function SimulatorContent() {
   const past = (s: Step) => ['lang','theme','capital','tier','sizing','period','sim','results'].indexOf(step) > ['lang','theme','capital','tier','sizing','period','sim','results'].indexOf(s)
   const atOrPast = (s: Step) => step === s || past(s)
 
-  const pickLang = (l: Lang) => { setLang(l); setStep('theme') }
-  const pickTheme = (d: boolean) => { setDark(d); setStep('capital') }
+  const pickLang = (l: Lang) => {
+    // Same reasoning as pickTheme: this is the app's language selector while you are on this page.
+    try {
+      localStorage.setItem('stax-lang', l === 'pt' ? 'PT' : 'ENG')
+      window.dispatchEvent(new CustomEvent('stax-lang-change'))
+    } catch {}
+    setLang(l)
+    setStep('theme')
+  }
+  // 2026-09-03: picking a theme here used to recolour ONLY the simulator panel — the sidebar and
+  // footer stayed on the app's theme, so choosing Dark gave you a dark terminal inside a light
+  // app. As a page IN the app, this choice is the app's theme choice: drive the same html class,
+  // localStorage key and cookie the header toggle uses, and let the observer above pull `dark`
+  // back in. One theme for the whole shell.
+  const pickTheme = (d: boolean) => {
+    try {
+      const html = document.documentElement
+      if (d) { html.classList.add('dark'); html.classList.remove('light') }
+      else { html.classList.add('light'); html.classList.remove('dark') }
+      localStorage.setItem('stax-theme', d ? 'dark' : 'light')
+      document.cookie = `stax-theme=${d ? 'dark' : 'light'}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
+    } catch {}
+    setDark(d)
+    setStep('capital')
+  }
   const pickCapital = useCallback((v: number) => { setCapital(v); setStep('tier') }, [])
   const pickTier = useCallback((k: TierKey) => { setTierKey(k); setStep('sizing') }, [])
   const pickSizing = useCallback((m: SizingMode) => { setSizingMode(m); setStep('period') }, [])
