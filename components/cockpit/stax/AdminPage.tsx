@@ -78,11 +78,16 @@ const TABS: TabDef[] = [
   { id: 'lanes',            label: 'Lane Control', group: 'Operations', icon: Heart },
   { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
   { id: 'users',            label: 'Users',      group: 'Operations', icon: People },
-  { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
-  { id: 'broker-invoices',  label: 'Invoices',   group: 'Broker',     icon: Receipt },
-  { id: 'broker-payouts',   label: 'Payouts',    group: 'Broker',     icon: Dollar },
-  { id: 'wallets',          label: 'Wallets',    group: 'Broker',     icon: Wallet },
+  // 2026-09-03: Invoices and Wallets were filed under BROKER. With the broker programme parked
+  // that group reads as broker-only, so Chris could not find the invoice list at all and thought
+  // there wasn't one. They are not broker things — invoices are how the business is paid, and the
+  // wallets are where customers send the money. Moved to Business. The two genuinely broker-only
+  // tabs are commented out alongside the parked programme, not deleted.
+  // { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
+  // { id: 'broker-payouts',   label: 'Payouts',    group: 'Broker',     icon: Dollar },
   { id: 'revenue',          label: 'Revenue',    group: 'Business',   icon: Dollar },
+  { id: 'broker-invoices',  label: 'Invoices',   group: 'Business',   icon: Receipt },
+  { id: 'wallets',          label: 'Wallets',    group: 'Business',   icon: Wallet },
   { id: 'strategy',         label: 'Strategy',   group: 'Research',   icon: Icons.Bars },
   { id: 'social',           label: 'Social',     group: 'Research',   icon: Megaphone },
   // 2026-08-27 UQ3: quarterly win rate long/short/both + the BTC-state cross-tab behind it.

@@ -248,7 +248,9 @@ const NAV_ITEMS = [
   // its slot (Chris, DL). It lives on the marketing site, hence the absolute URL.
   // { id: 'broker',    tKey: 'nav.broker',      icon: Icons.Briefcase, href: '/broker' },
   { id: 'simulator', tKey: 'nav.simulator',   icon: Icons.Play,      href: 'https://staxs.ai/simulator' },
-  { id: 'billing',   tKey: 'nav.billing',     icon: Icons.Bars,      href: '/billing' },
+  // 2026-09-03 (Chris): Billing stays INSIDE Settings, where he already built it — not a
+  // top-level nav item. The /billing route remains for the invoice email to link to.
+  // { id: 'billing',   tKey: 'nav.billing',     icon: Icons.Bars,      href: '/billing' },
   { id: 'admin',     tKey: 'nav.admin',       icon: Icons.Shield,    href: '/admin' },
 ] as const
 
