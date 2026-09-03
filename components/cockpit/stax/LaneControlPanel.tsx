@@ -204,7 +204,7 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               Comparing against a canonical book computed {ageTxt(cur.canon_age_sec)}
               {cur.computed_at ? ` (${cur.computed_at.replace('T', ' ').slice(0, 19)}Z)` : ''}
               {(cur.not_seen_sids?.length ?? 0) > 0
-                ? ` · ${cur.not_seen_sids!.length} live lane(s) opened AFTER that: ${cur.not_seen_sids!.join(', ')}`
+                ? ` · canonical has not judged ${cur.not_seen_sids!.length} live lane(s) yet: ${cur.not_seen_sids!.join(', ')}`
                 : ''}
               <br />
               Checked {dur(d.timestamps.last_parity_check_ms, now)} ago · last lane action{' '}
