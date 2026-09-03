@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { authedFetch, browserClient } from './api'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
 import { fetchPortfolioTrades, normalizeTier, type Tier } from './use-portfolio-trades'
@@ -233,6 +233,15 @@ function normalize(t: RawTrade): LiveTrade {
 
 export function useLiveTradingData(): LiveLoadState {
   const [state, setState] = useState<LiveLoadState>({ status: 'loading' })
+  // ── 2026-09-03: A FAILED POLL USED TO BLANK THE SCREEN ────────────────────────────────────
+  // Every poll did `.catch(() => ({ trades: [] }))`, turning ANY transient failure — and
+  // /api/trades-live verifies the session against Supabase, which intermittently hits a 10s
+  // connect timeout — into a confident, fabricated "you have no trades". The dashboard then
+  // rendered "No open position" and 0.00x leverage while Chris held a live ONDO short, until the
+  // next poll happened to succeed. That is the flicker.
+  // A failed poll is an ABSENCE OF NEWS, not news that the book is empty. Hold the last good
+  // payload instead; only an genuinely empty first load shows empty.
+  const lastGoodTrades = useRef<{ trades: RawTrade[]; track_record?: TrackRecord } | null>(null)
   const tickers = usePublicTickers(15000)
   const tickersKey = tickers.map(t => `${t.symbol}:${t.price.toFixed(2)}`).join(',')
 
@@ -263,7 +272,9 @@ export function useLiveTradingData(): LiveLoadState {
           // load needs the totals card to skeleton during the gap, which is
           // a UI refactor across Live Trading components. Deferred to
           // Phase 2.5 with the full structural refactor.
-          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[], track_record: undefined })),
+          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500')
+            .then(r => { lastGoodTrades.current = r; return r })
+            .catch(() => lastGoodTrades.current ?? ({ trades: [] as RawTrade[], track_record: undefined })),
           fetch('/api/strategy-state').then(r => r.ok ? r.json() : { positions: [] }).catch(() => ({ positions: [] })) as Promise<StrategyStateResp>,
         ])
         if (cancelled) return

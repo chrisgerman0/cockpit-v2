@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Icons } from '@/components/cockpit/stax/Icons'
 import type { StaxDashboardData, Position, Trade, CoinSym, TickerAsset, StatCardSpec } from '@/components/cockpit/stax/StaxDashboard'
 
@@ -440,6 +440,15 @@ export type StaxLoadState =
 
 export function useStaxDashboardData(): StaxLoadState {
   const [state, setState] = useState<StaxLoadState>({ status: 'loading' })
+  // ── 2026-09-03: A FAILED POLL USED TO BLANK THE SCREEN ────────────────────────────────────
+  // Every poll did `.catch(() => ({ trades: [] }))`, turning ANY transient failure — and
+  // /api/trades-live verifies the session against Supabase, which intermittently hits a 10s
+  // connect timeout — into a confident, fabricated "you have no trades". The dashboard then
+  // rendered "No open position" and 0.00x leverage while Chris held a live ONDO short, until the
+  // next poll happened to succeed. That is the flicker.
+  // A failed poll is an ABSENCE OF NEWS, not news that the book is empty. Hold the last good
+  // payload instead; only an genuinely empty first load shows empty.
+  const lastGoodTrades = useRef<{ trades: RawTrade[]; track_record?: TrackRecord } | null>(null)
   const tickers = usePublicTickers(30000)
 
   useEffect(() => {
@@ -468,7 +477,9 @@ export function useStaxDashboardData(): StaxLoadState {
           // limit=50 caps each symbol at 3 closed rows → busy symbols get truncated,
           // undercounting realized PnL / return / closed-count vs the Live Trading
           // page (which uses 500). Match it so both read the SAME full closed set.
-          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500').catch(() => ({ trades: [] as RawTrade[], track_record: undefined })),
+          authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500')
+            .then(r => { lastGoodTrades.current = r; return r })
+            .catch(() => lastGoodTrades.current ?? ({ trades: [] as RawTrade[], track_record: undefined })),
         ])
         if (cancelled) return
 
