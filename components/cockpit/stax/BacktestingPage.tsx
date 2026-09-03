@@ -67,7 +67,15 @@ type AssetBreakdown = {
 // is fixed, never DISPLAY more open positions than the tier holds (2/4/6). Keep
 // the earliest-entered opens (the FCFS lane-holders); drop the newest over-cap
 // rows. Closed rows pass through untouched. (isOpenTrade is module-hoisted below.)
-const LIVE_LANE_CAP: Record<Tier, number> = { conservative: 2, moderate: 4, aggressive: 6, kamikaze: 7 }
+// 2026-09-03 — THIS CAP WAS SILENTLY DELETING A REAL OPEN POSITION.
+// The counts below were the PRE-SUPER-LANE lane counts. The 2026-09-02 re-lock added the
+// reserved Tier-S seat to every tier, taking them to 3/5/7/8 — so aggressive genuinely holds
+// SEVEN. The cap stayed at six and this function drops the NEWEST over-cap row, so canonical's
+// 7th open position was thrown away AFTER being fetched. Chris looked at the Backtesting page at
+// 20:00Z and AVAX (entered on the 6h bar closing 18:00Z, the newest of the seven) was not there;
+// the file and the HTTP response both carried it. A cap that hides a live position is worse than
+// the over-fill it was written to paper over.
+const LIVE_LANE_CAP: Record<Tier, number> = { conservative: 3, moderate: 5, aggressive: 7, kamikaze: 8 }
 function capOpensForTier(rows: PortfolioTrade[], tier: Tier): PortfolioTrade[] {
   const cap = LIVE_LANE_CAP[tier]
   const opens = rows.filter(isOpenTrade)
