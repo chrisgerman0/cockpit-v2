@@ -27,7 +27,9 @@ type Tier = {
   super_lane?: SuperLane
   live: { occupied: number; free: number; n_lanes: number; ordinary_lanes?: number; occupied_total?: number } | null
   canon: { occupied: number; free: number; ordinary_lanes?: number; occupied_total?: number; super_lane_occupied?: boolean }
-  state: 'MATCH' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
+  state: 'MATCH' | 'MATCH_CARRIED_EXCLUDED' | 'CANONICAL_BEHIND' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
+  not_seen_sids?: string[]
+  canon_age_sec?: number | null
   divergence_age_sec: number | null; maturity_sec: number
   computed_at: string | null; rows: Row[]
 }
@@ -113,9 +115,24 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
   const liveTier = d.headline.tier
   const cur = d.tiers.find(t => t.tier === (sel ?? liveTier)) ?? d.tiers[0]
   const isLiveTier = cur.tier === liveTier
-  const ok = cur.state === 'MATCH'
+  // 2026-09-03 (Chris, HD1): three states, named in words. The panel used to render RED for all
+  // three — "in sync", "canonical has not seen this bar yet", and "genuinely diverged" looked
+  // identical. On 2026-09-03 that turned an 18-minute publish delay into hours of divergence
+  // hunting. `CANONICAL_BEHIND` means the live lane's bar closed AFTER canonical last computed:
+  // canonical has not judged it, so there is nothing to disagree about yet.
+  const ok = cur.state === 'MATCH' || cur.state === 'MATCH_CARRIED_EXCLUDED'
+  const behind = cur.state === 'CANONICAL_BEHIND'
   const lag = cur.state === 'LAG'
-  const tone = ok ? 'var(--pos, #16a34a)' : lag ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
+  const tone = ok ? 'var(--pos, #16a34a)'
+    : (behind || lag) ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
+  const verdictWord = ok ? 'IN SYNC'
+    : behind ? 'CANONICAL BEHIND'
+    : lag ? 'PROPAGATING' : 'DIVERGED'
+  const ageTxt = (n?: number | null) =>
+    (n == null ? 'unknown age'
+      : n < 90 ? `${n}s ago`
+      : n < 5400 ? `${Math.round(n / 60)}m ago`
+      : `${(n / 3600).toFixed(1)}h ago`)
   const liveFree = cur.live?.free
   const canonFree = cur.canon?.free
   const mr: any = (cur as any).mirror_release
@@ -173,16 +190,23 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
               <div>
                 <div className="adm-stat-label">Verdict</div>
                 <div className="adm-h-val" style={{ color: tone, fontSize: '1.4rem' }}>
-                  {ok ? 'MATCH' : lag ? 'LAG' : 'MISMATCH'}
+                  {verdictWord}
                 </div>
                 <div className="adm-stat-sub">
                   {ok ? 'live can take what canonical takes'
+                    : behind ? `canonical has not seen this bar yet — it last computed ${ageTxt(cur.canon_age_sec)}`
                     : lag ? `${cur.divergence_age_sec}s old — inside the ${Math.round(cur.maturity_sec / 60)}m publish window`
                       : 'live cannot mirror canonical — needs action'}
                 </div>
               </div>
             </div>
             <div className="adm-p adm-p-sm adm-p-muted" style={{ marginTop: 10 }}>
+              Comparing against a canonical book computed {ageTxt(cur.canon_age_sec)}
+              {cur.computed_at ? ` (${cur.computed_at.replace('T', ' ').slice(0, 19)}Z)` : ''}
+              {(cur.not_seen_sids?.length ?? 0) > 0
+                ? ` · ${cur.not_seen_sids!.length} live lane(s) opened AFTER that: ${cur.not_seen_sids!.join(', ')}`
+                : ''}
+              <br />
               Checked {dur(d.timestamps.last_parity_check_ms, now)} ago · last lane action{' '}
               {dur(d.timestamps.last_lane_write_ms, now)} ago
               {d.timestamps.last_state_change_ms
