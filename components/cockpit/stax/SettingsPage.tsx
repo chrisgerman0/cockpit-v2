@@ -455,7 +455,7 @@ function BillingPanel() {
       {/* Billing History table — Period / Plan / PnL / Fee / Net / Status */}
       <div className="card card-pad bp-card">
         <div className="bp-eyebrow">Billing History</div>
-        <div style={{ overflowX: 'auto' }}>
+        <div className="bp-history-wrap" style={{ overflowX: 'auto' }}>
           <table className="bp-history">
             <thead>
               <tr>
@@ -488,6 +488,47 @@ function BillingPanel() {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* Phone view of the same history. The six-column table cut Net and Status off the
+            right edge at 390px with no scroll affordance, so the rows read as missing data.
+            Live Trading's .lt-cards does exactly this under the same 768px breakpoint. */}
+        <div className="bp-history-cards">
+          {data.history.length === 0 ? (
+            <div className="bp-hcard-empty">No billing history yet</div>
+          ) : data.history.map(h => {
+            const net = h.grossPnlCents - h.feeAmountCents
+            const labels: Record<string, string> = { open: 'Active', locked: 'Locked', invoiced: 'Invoiced', paid: 'Paid', failed: 'Failed' }
+            return (
+              <div className="bp-hcard" key={h.id}>
+                <div className="bp-hcard-head">
+                  <div>
+                    <div className="bp-hcard-period">{fmtMonthYear(h.startTs)}</div>
+                    <div className="bp-hcard-plan">{h.planName || '—'}</div>
+                  </div>
+                  <div style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                    <span className={'bp-status-dot bp-status-dot-' + h.status} />{labels[h.status] || h.status}
+                  </div>
+                </div>
+                <div className="bp-hcard-grid">
+                  <div className="bp-hcard-row">
+                    <div className="bp-hcard-label">PnL</div>
+                    <div className={'bp-hcard-val ' + (h.grossPnlCents >= 0 ? 'pos-text' : 'neg-text')}>{fmtCents(h.grossPnlCents)}</div>
+                  </div>
+                  <div className="bp-hcard-row">
+                    <div className="bp-hcard-label">Fee</div>
+                    <div className="bp-hcard-val" style={{ color: h.feeAmountCents > 0 ? 'var(--gold)' : 'var(--muted)' }}>
+                      {h.feeAmountCents > 0 ? fmtCentsAbs(h.feeAmountCents) : '$0'}
+                    </div>
+                  </div>
+                  <div className="bp-hcard-row">
+                    <div className="bp-hcard-label">Net</div>
+                    <div className={'bp-hcard-val ' + (net >= 0 ? 'pos-text' : 'neg-text')}>{fmtCents(net)}</div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>

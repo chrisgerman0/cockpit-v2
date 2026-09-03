@@ -5817,3 +5817,43 @@ html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(
   .stax-app .stax-payrow { flex-wrap: wrap }
   .stax-app .stax-paycopy { margin-left: 0; width: 100%; text-align: center }
 }
+
+/* ── Billing on a phone (2026-09-03, Chris: "The billing tab is not mobile friendly as
+   the other tabs. I cant see all the content.") ─────────────────────────────────────
+   The Billing History table has six columns in an overflow-x wrapper. At 390px that showed
+   Period/Plan/PnL/Fee and cut Net and Status off the right edge, with no scroll affordance
+   inside a vertically-scrolling page — so the data simply looked absent.
+   Live Trading already solved this: hide the table under 768px and render one card per row
+   (.lt-table-wrap / .lt-cards). Same pattern here, same breakpoint. */
+.stax-app .bp-history-cards { display: none; flex-direction: column; gap: 10px; }
+.stax-app .bp-hcard {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.stax-app .bp-hcard-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.stax-app .bp-hcard-period { font-size: 13px; font-weight: 600; color: var(--text); }
+.stax-app .bp-hcard-plan { font-size: 11px; color: var(--muted); }
+.stax-app .bp-hcard-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 12px; }
+.stax-app .bp-hcard-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stax-app .bp-hcard-label {
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); font-weight: 500;
+}
+.stax-app .bp-hcard-val { font-size: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.stax-app .bp-hcard-empty {
+  padding: 20px; text-align: center; color: var(--muted); font-size: 12px;
+  border: 1px solid var(--line); border-radius: 12px;
+}
+@media (max-width: 768px) {
+  .stax-app .bp-history-wrap { display: none; }
+  .stax-app .bp-history-cards { display: flex; }
+  /* card-pad is 20px 22px — on a 390px screen that is 44px of the width spent on gutters */
+  .stax-app .bp-card.card-pad { padding: 16px 14px; }
+}
+/* The period cells stacked one-per-row, which made the card six screens tall. The app's own
+   stat grids go TWO-up on a phone (.row-stats at 420px); match that. */
+@media (max-width: 720px) {
+  .stax-app .bp-period-grid { grid-template-columns: 1fr 1fr; }
+}
