@@ -24,6 +24,7 @@ const TRANSLATIONS: Record<string, { en: string; pt: string }> = {
   'nav.backtesting': { en: 'Backtesting',   pt: 'Backtesting' },
   'nav.broker':      { en: 'Broker',        pt: 'Parceiro' },
   'nav.simulator':   { en: 'Simulator',     pt: 'Simulador' },   // took the Broker slot 2026-09-02
+  'nav.billing':     { en: 'Billing',       pt: 'Faturamento' },
   'nav.admin':       { en: 'Admin',         pt: 'Admin' },
   'nav.settings':    { en: 'Settings',      pt: 'Configurações' },
   'nav.signout':     { en: 'Sign Out',      pt: 'Sair' },
