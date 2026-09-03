@@ -11,6 +11,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { InvoicePayPanel } from './InvoicePayPanel'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Icons } from './Icons'
@@ -275,66 +276,6 @@ function BillingPanel() {
   // in real data when /api/billing resolves. No 'Loading…' card.
   const [data, setData] = useState<BillingData>(EMPTY_BILLING)
 
-  // ── INVOICES + PAYMENT (ported 2026-09-03 from the pre-migration client-dashboard) ────────
-  // Chris built this before the UI migration and it was never carried across: the invoice list,
-  // the wallet picker, "I've sent the payment" and "Pay with Card". The endpoints behind it have
-  // been live the whole time. This is a port, not a redesign.
-  const [invoices, setInvoices] = useState<any[]>([])
-  const [wallets, setWallets] = useState<any[]>([])
-  const [cardOnFile, setCardOnFile] = useState<{ brand?: string; last4?: string } | null>(null)
-  const [payBusy, setPayBusy] = useState<string | null>(null)
-  const [payMsg, setPayMsg] = useState<{ id: string; text: string; bad?: boolean } | null>(null)
-  const [payChoice, setPayChoice] = useState<Record<string, string>>({})
-
-  const loadInvoices = useCallback(async () => {
-    try {
-      const j = await authedFetch<any>('/api/billing/invoices')
-      setInvoices(j.invoices || [])
-      setWallets(j.wallets || [])
-      setCardOnFile(j.card || null)
-    } catch { /* keep what we have — a failed poll is not "you have no invoices" */ }
-  }, [])
-  useEffect(() => { loadInvoices() }, [loadInvoices])
-
-  // authedFetch throws with the raw HTTP text ("400 Bad Request: {\"error\":\"...\"}"). A customer
-  // being asked for money should never be shown a status line and a JSON blob.
-  const humanError = (e: any, fallback: string) => {
-    const raw = String(e?.message || '')
-    const m = raw.match(/\{[\s\S]*\}$/)
-    if (m) { try { const j = JSON.parse(m[0]); if (j?.error) return String(j.error) } catch {} }
-    return raw && !/^\d{3}\b/.test(raw) ? raw : fallback
-  }
-
-  const payCrypto = async (inv: any) => {
-    const key = payChoice[inv.id] || (wallets[0] ? `${wallets[0].coin}|${wallets[0].network}` : '')
-    const [coin, network] = key.split('|')
-    if (!coin || !network) { setPayMsg({ id: inv.id, text: 'Choose a network first', bad: true }); return }
-    setPayBusy(inv.id); setPayMsg(null)
-    try {
-      await authedFetch(`/api/billing/invoices/${inv.id}/pay-crypto`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ coin, network }),
-      })
-      setPayMsg({ id: inv.id, text: 'Thank you — we are confirming your transfer.' })
-      await loadInvoices()
-    } catch (e: any) {
-      setPayMsg({ id: inv.id, text: humanError(e, 'Something went wrong — try again or pay by crypto.'), bad: true })
-    } finally { setPayBusy(null) }
-  }
-
-  const payCard = async (inv: any) => {
-    if (!cardOnFile) { setPayMsg({ id: inv.id, text: 'No card on file — add one in Payout Settings, or pay by crypto.', bad: true }); return }
-    setPayBusy(inv.id); setPayMsg(null)
-    try {
-      await authedFetch(`/api/billing/invoices/${inv.id}/charge-card`, { method: 'POST' })
-      setPayMsg({ id: inv.id, text: 'Card charged — invoice paid.' })
-      await loadInvoices()
-    } catch (e: any) {
-      // A declined card must SAY so. Silence here is how a paying customer ends up stopped.
-      setPayMsg({ id: inv.id, text: humanError(e, 'The card was declined. Try another method or pay by crypto.'), bad: true })
-    } finally { setPayBusy(null) }
-  }
-
   // Initial load + 60s poll + reload on tab-focus so PnL stays current as
   // trades close. Period roll-overs are server-driven; the panel just reads.
   useEffect(() => {
@@ -441,6 +382,9 @@ function BillingPanel() {
       </div>
 
       {/* Current Plan card */}
+      {/* 2026-09-03 (Chris): if something is due it goes FIRST — above the plan and the period. */}
+      <InvoicePayPanel onChange={() => window.location.reload()} />
+
       <div className="card card-pad bp-card">
         <div className="bp-plan-head">
           <div>
@@ -507,77 +451,6 @@ function BillingPanel() {
           </div>
         </div>
       ) : null}
-
-      {/* ── OUTSTANDING INVOICES + HOW TO PAY (ported 2026-09-03) ──────────────────────────── */}
-      {invoices.filter((i: any) => i.status !== 'paid' && i.status !== 'void').length > 0 && (
-        <div className="card card-pad bp-card">
-          <div className="bp-eyebrow">Amount Due</div>
-          {invoices.filter((i: any) => i.status !== 'paid' && i.status !== 'void').map((inv: any) => {
-            const due = inv.due_at ? Math.round((Date.parse(inv.due_at) - Date.now()) / 86400_000) : null
-            const overdue = due != null && due < 0
-            const declared = inv.status === 'pending_verification'
-            return (
-              <div key={inv.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{inv.description || 'Performance fee'}</div>
-                    <div className="bp-sub" style={{ color: overdue ? 'var(--neg)' : undefined }}>
-                      {overdue ? `${Math.abs(due!)} days overdue` : due != null ? `Due in ${due} day${due === 1 ? '' : 's'}` : 'Due'}
-                      {inv.due_at ? ` · ${new Date(inv.due_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 26, fontWeight: 800, fontFamily: 'var(--font-mono, monospace)' }}>
-                    ${(inv.amount_cents / 100).toFixed(2)}
-                  </div>
-                </div>
-
-                {declared ? (
-                  <div className="bp-sub" style={{ marginTop: 10 }}>Payment sent — we are confirming your transfer.</div>
-                ) : (
-                  <>
-                    <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <select
-                        value={payChoice[inv.id] || (wallets[0] ? `${wallets[0].coin}|${wallets[0].network}` : '')}
-                        onChange={e => setPayChoice(c => ({ ...c, [inv.id]: e.target.value }))}
-                        style={{ background: 'var(--card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
-                        {wallets.map((w: any) => (
-                          <option key={w.network} value={`${w.coin}|${w.network}`}>
-                            {w.coin === 'ALL' ? 'USDT / USDC' : w.coin} · {w.label || w.network}
-                          </option>
-                        ))}
-                      </select>
-                      <button className="btn" disabled={payBusy === inv.id} onClick={() => payCrypto(inv)}>
-                        {payBusy === inv.id ? 'Saving…' : "✓ I've sent the payment"}
-                      </button>
-                      <button className="btn" disabled={payBusy === inv.id} onClick={() => payCard(inv)}
-                              title={cardOnFile ? `${cardOnFile.brand || 'Card'} ending ${cardOnFile.last4}` : 'No card on file'}>
-                        Pay with Card{cardOnFile?.last4 ? ` ····${cardOnFile.last4}` : ''}
-                      </button>
-                    </div>
-                    {(() => {
-                      const key = payChoice[inv.id] || (wallets[0] ? `${wallets[0].coin}|${wallets[0].network}` : '')
-                      const w = wallets.find((x: any) => `${x.coin}|${x.network}` === key) || wallets[0]
-                      return w ? (
-                        <div className="bp-sub" style={{ marginTop: 8, wordBreak: 'break-all' }}>
-                          Send exactly <strong>${(inv.amount_cents / 100).toFixed(2)}</strong> to{' '}
-                          <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{w.wallet_address}</span>
-                          {' '}<button className="link-btn" onClick={() => navigator.clipboard?.writeText(w.wallet_address)}>copy</button>
-                        </div>
-                      ) : null
-                    })()}
-                    <div className="bp-sub" style={{ marginTop: 6, opacity: 0.75 }}>
-                      If nothing is received within 72 hours, the card on file is charged automatically.
-                    </div>
-                  </>
-                )}
-                {payMsg && payMsg.id === inv.id ? (
-                  <div className="bp-sub" style={{ marginTop: 8, color: payMsg.bad ? 'var(--neg)' : 'var(--pos)' }}>{payMsg.text}</div>
-                ) : null}
-              </div>
-            )
-          })}
-        </div>
-      )}
 
       {/* Billing History table — Period / Plan / PnL / Fee / Net / Status */}
       <div className="card card-pad bp-card">
