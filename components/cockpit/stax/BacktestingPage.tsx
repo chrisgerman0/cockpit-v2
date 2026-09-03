@@ -31,6 +31,7 @@ import { COIN_FILTERS, type CoinFilter, canonicalAsset } from '@/lib/phase-h-bas
 import { useIsAdmin } from '@/lib/use-is-admin'
 import { getAccessToken } from '@/lib/supabase-browser'
 import { type EquityPoint } from './Charts'
+import { PHASE_H_BASKET } from '@/lib/phase-h-basket'
 
 type Stats = {
   totalTrades?: number
@@ -109,10 +110,13 @@ type CompoundView = { map: Map<string, { notional: number; pnl: number; capped: 
 // (0.5×) / moderate (0.75×) / aggressive (1.0×). Legacy 'bold' is normalised
 // to 'aggressive' on read by the portfolio-trades hook.
 const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult: string }> = {
-  conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '2 lanes / 1× lev' },
-  moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '4 lanes / 3× lev' },
-  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '6 lanes / 6× lev' },
-  kamikaze:     { en: 'Kamikaze',     pt: 'Kamikaze',    notional: '$10,000', mult: '7 lanes / 8.75x lev' },
+  // 2026-09-03: pre-super-lane counts, and kamikaze quoted the nominal exposure (8.75x) where every
+  // other surface quotes the tier's leverage (9x). Each tier gained a reserved Tier-S seat at the
+  // 2026-09-02 re-lock: 2->3, 4->5, 6->7, 7->8.
+  conservative: { en: 'Conservative', pt: 'Conservador', notional: '$10,000', mult: '3 lanes / 1× lev' },
+  moderate:     { en: 'Moderate',     pt: 'Moderado',    notional: '$10,000', mult: '5 lanes / 3× lev' },
+  aggressive:   { en: 'Aggressive',   pt: 'Agressivo',   notional: '$10,000', mult: '7 lanes / 6× lev' },
+  kamikaze:     { en: 'Kamikaze',     pt: 'Kamikaze',    notional: '$10,000', mult: '8 lanes / 9× lev' },
 }
 
 // 2026-06-01: optional `base` lets the ?preview=1 path point at the 71-cfg
@@ -539,8 +543,8 @@ export function BacktestingContent() {
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP + SEI + ONDO. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×/8.75×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across BTC + ETH + SOL + BNB + XRP + DOGE + LINK + SUI + AVAX + ADA + TRX + ZEC + GRAM + HYPE + NEAR + OP + SEI + ONDO (18 assets). <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×/8.75×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado da super-stack sistemática multi-ativo em {PHASE_H_BASKET.length} ativos. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×/9×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
+            : <>Verified backtest of the systematic multi-asset super stack across {PHASE_H_BASKET.length} assets. <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×/9×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -643,7 +647,7 @@ export function BacktestingContent() {
           ) : null}
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
           {' '}{TIER_LABELS[tier].mult} ·
-          {' '}{isPt ? 'Cesta de 18 ativos' : '18-asset basket'} ·
+          {' '}{isPt ? `Cesta de ${PHASE_H_BASKET.length} ativos` : `${PHASE_H_BASKET.length}-asset basket`} ·
           {' '}{trades.length > 0 ? `${(((trades[trades.length - 1].exitTs - trades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
         </div>
       </div>

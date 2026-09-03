@@ -247,7 +247,9 @@ const NAV_ITEMS = [
   // see app/(app)/broker/page.tsx for what it did and how to restore it. The Simulator takes
   // its slot (Chris, DL). It lives on the marketing site, hence the absolute URL.
   // { id: 'broker',    tKey: 'nav.broker',      icon: Icons.Briefcase, href: '/broker' },
-  { id: 'simulator', tKey: 'nav.simulator',   icon: Icons.Play,      href: 'https://staxs.ai/simulator' },
+  // 2026-09-03: was an absolute staxs.ai link, which took the user OUT of the app and lost the
+  // sidebar. The simulator is now a page in the app like any other.
+  { id: 'simulator', tKey: 'nav.simulator',   icon: Icons.Play,      href: '/simulator' },
   // 2026-09-03 (Chris): Billing stays INSIDE Settings, where he already built it — not a
   // top-level nav item. The /billing route remains for the invoice email to link to.
   // { id: 'billing',   tKey: 'nav.billing',     icon: Icons.Bars,      href: '/billing' },
@@ -891,7 +893,7 @@ const MOBILE_NAV_ITEMS = [
   { id: 'backtest',  tKey: 'nav.backtesting',shortEn: 'Backtest',  shortPt: 'Backtest',   icon: Icons.Bars,      href: '/backtesting' },
   // BROKER PARKED 2026-09-02 — replaced by the Simulator, same slot.
   // { id: 'broker',    tKey: 'nav.broker',     shortEn: 'Broker',    shortPt: 'Parceiro',   icon: Icons.Briefcase, href: '/broker' },
-  { id: 'simulator', tKey: 'nav.simulator',  shortEn: 'Simulator', shortPt: 'Simulador',  icon: Icons.Play,      href: 'https://staxs.ai/simulator' },
+  { id: 'simulator', tKey: 'nav.simulator',  shortEn: 'Simulator', shortPt: 'Simulador',  icon: Icons.Play,      href: '/simulator' },
   { id: 'settings',  tKey: 'nav.settings',   shortEn: 'Settings',  shortPt: 'Ajustes',    icon: Icons.Gear,      href: '/settings' },
 ] as const
 
