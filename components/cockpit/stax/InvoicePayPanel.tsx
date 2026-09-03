@@ -124,8 +124,9 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
     } finally { setBusy(null) }
   }
 
+  // Same eyebrow the rest of the billing page uses.
   const LabelCap = ({ children }: { children: any }) => (
-    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>{children}</div>
+    <div className="bp-eyebrow" style={{ marginBottom: 6 }}>{children}</div>
   )
 
   return (
@@ -143,7 +144,9 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
 
         return (
           <div key={inv.id} className="card card-pad bp-card"
-               style={payable ? { border: '1px solid rgba(239,68,68,0.3)', background: 'linear-gradient(135deg,rgba(239,68,68,0.04),transparent)' } : undefined}>
+               // Only the OUTER border is red (Chris). Everything inside uses the same tokens as
+               // the Current Billing Period card so the section does not look bolted on.
+               style={payable ? { border: '1px solid rgba(255,77,79,0.45)' } : undefined}>
             {/* header — description + due date, amount + status */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
               <div>
@@ -166,34 +169,35 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
             )}
 
             {payable && (
-              <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+              <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 16 }}>
                 {/* ── PAY WITH CRYPTO ── */}
-                <div style={{ marginBottom: 16, padding: 20, background: 'linear-gradient(135deg,rgba(212,160,23,0.06),rgba(212,160,23,0.02))', border: '1px solid rgba(212,160,23,0.2)', borderRadius: 12 }}>
+                <div className="bp-cell" style={{ marginBottom: 16, padding: 16 }}>
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700 }}>Pay with Crypto</div>
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>Preferred method · Instant confirmation</div>
                   </div>
 
                   <LabelCap>Coin</LabelCap>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', border: '1px solid var(--gold, #D4A017)', borderRadius: 10, background: 'rgba(212,160,23,0.06)', marginBottom: 14 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>USDT / USDC</span>
+                  <div className="bp-cell" style={{ marginBottom: 14 }}>
+                    <span className="bp-cell-val" style={{ fontSize: 14 }}>USDT / USDC</span>
                   </div>
 
                   <LabelCap>Network</LabelCap>
                   <button type="button" onClick={() => setOpenPicker(openPicker === inv.id ? null : inv.id)}
-                          style={{ width: '100%', textAlign: 'left', padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--card)', color: chosen ? 'var(--text)' : 'var(--muted)', fontSize: 13, cursor: 'pointer' }}>
+                          className="bp-cell"
+                          style={{ width: '100%', textAlign: 'left', color: chosen ? 'var(--text)' : 'var(--muted)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                     {chosen ? `${chosen.name} · ${chosen.chain}` : 'Choose Network'}
                   </button>
                   {openPicker === inv.id && (
-                    <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 10px 10px', background: 'var(--card)' }}>
-                      <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ border: '1px solid var(--line)', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
+                      <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
                         <span style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
                           Make sure the network you select <strong style={{ color: 'var(--text)' }}>matches your wallet</strong> — wrong network = permanent loss.
                         </span>
                       </div>
                       {NETWORKS.filter(n => wallets.some(x => x.network === n.group)).map(n => (
                         <div key={n.code} onClick={() => { setNetFor(m => ({ ...m, [inv.id]: n.code })); setOpenPicker(null) }}
-                             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', cursor: 'pointer', borderTop: '1px solid var(--border)' }}>
+                             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', cursor: 'pointer', borderTop: '1px solid var(--line)' }}>
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 600 }}>
                               {n.name}{n.popular ? <span style={{ fontSize: 10, marginLeft: 6, padding: '1px 6px', borderRadius: 6, background: 'rgba(212,160,23,0.15)', color: 'var(--gold, #D4A017)' }}>Popular</span> : null}
@@ -209,22 +213,22 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                   <div style={{ height: 14 }} />
 
                   <LabelCap>Send this exact amount</LabelCap>
-                  <div style={{ textAlign: 'center', padding: 16, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 16 }}>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--gold, #D4A017)', fontFamily: 'var(--font-mono, JetBrains Mono, monospace)', letterSpacing: 1 }}>{payAmt}</div>
+                  <div className="bp-cell" style={{ textAlign: 'center', marginBottom: 16 }}>
+                    <div className="bp-cell-val bp-tone-gold" style={{ fontFamily: 'var(--font-mono, monospace)' }}>{payAmt}</div>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>⚠️ Amount must match exactly for automatic verification</div>
                     <button type="button" onClick={() => copy(payAmt.replace('$', ''), `amt-${inv.id}`)}
-                            style={{ marginTop: 8, background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 16px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>
+                            style={{ marginTop: 8, background: 'none', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 16px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>
                       {copied === `amt-${inv.id}` ? 'Copied!' : 'Copy Amount'}
                     </button>
                   </div>
 
                   <LabelCap>To this wallet address</LabelCap>
-                  <div style={{ padding: 14, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 16, textAlign: 'center' }}>
+                  <div className="bp-cell" style={{ marginBottom: 16, textAlign: 'center' }}>
                     {w ? (
                       <>
                         <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'var(--font-mono, monospace)' }}>{w.wallet_address}</div>
                         <button type="button" onClick={() => copy(w.wallet_address, `addr-${inv.id}`)}
-                                style={{ marginTop: 8, background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 16px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>
+                                style={{ marginTop: 8, background: 'none', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 16px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>
                           {copied === `addr-${inv.id}` ? 'Copied!' : 'Copy Address'}
                         </button>
                       </>
@@ -233,9 +237,16 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                     )}
                   </div>
 
+                  {/* 2026-09-03 (Chris): this was green with a tick, which reads as "paid" before
+                      the customer has done anything. Green is the SETTLED state, not the action.
+                      Gold primary, and the wording is a declaration, not a confirmation. */}
                   <button type="button" disabled={busy === inv.id || !w} onClick={() => confirmCrypto(inv)}
-                          style={{ width: '100%', background: w ? 'linear-gradient(135deg,#15803d,#22c55e)' : 'var(--card)', color: w ? '#fff' : 'var(--muted)', border: w ? 'none' : '1px solid var(--border)', borderRadius: 10, padding: 14, fontSize: 14, fontWeight: 700, cursor: w ? 'pointer' : 'not-allowed' }}>
-                    {busy === inv.id ? 'Submitting…' : "✓ I've Sent the Payment"}
+                          style={{ width: '100%', background: w ? 'var(--gold, #D4A017)' : 'transparent',
+                                   color: w ? '#08080D' : 'var(--muted)',
+                                   border: w ? 'none' : '1px solid var(--line)',
+                                   borderRadius: 8, padding: 13, fontSize: 14, fontWeight: 700,
+                                   cursor: w ? 'pointer' : 'not-allowed', opacity: w ? 1 : 0.6 }}>
+                    {busy === inv.id ? 'Submitting…' : w ? 'I have sent the payment' : 'Choose a network first'}
                   </button>
                   <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
                     After clicking, we&apos;ll verify the payment. If not received within 72 hours, your card on file will be charged automatically.
@@ -244,14 +255,14 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
 
                 {/* ── OR ── */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
-                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                  <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
                   <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>OR</span>
-                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                  <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
                 </div>
 
                 {/* ── PAY WITH CARD ── */}
                 {card ? (
-                  <div style={{ padding: 16, border: '1px solid var(--border)', borderRadius: 10 }}>
+                  <div className="bp-cell" style={{ padding: 16 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>Pay with Card</div>
@@ -260,13 +271,15 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                         </div>
                       </div>
                       <button type="button" disabled={busy === inv.id} onClick={() => chargeCard(inv)}
-                              style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: 'var(--card)', color: 'var(--text)' }}>
+                              style={{ border: '1px solid var(--gold, #D4A017)', borderRadius: 8, padding: '10px 20px',
+                                       fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                       background: 'rgba(212,160,23,0.10)', color: 'var(--gold, #D4A017)' }}>
                         {busy === inv.id ? 'Charging…' : `Charge ${money(inv.amount_cents)}`}
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ padding: 14, border: '1px solid var(--border)', borderRadius: 10, textAlign: 'center' }}>
+                  <div className="bp-cell" style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                       No card on file — add one in Payout Settings to enable the automatic fallback.
                     </div>
