@@ -1053,8 +1053,11 @@ function BotSettingsWizard({
                   </div>
                   <div className="bw-tier-name">{r.label}</div>
                   <div className="bw-tier-mult">{r.lanes} lanes · {r.leverage}× leverage</div>
+                  {/* 2026-09-03 (EC2): the card said "7 lanes" and stopped there. One of them is a
+                      seat held in reserve for a top-ranked signal and never evicted, which is the
+                      whole point of the re-lock — the customer should be told what they get. */}
                   <div className="bw-tier-sub" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-                    Max {r.lanes} concurrent position{r.lanes > 1 ? 's' : ''}
+                    Max {r.lanes} concurrent position{r.lanes > 1 ? 's' : ''} — {r.ordinary} ordinary + 1 reserved seat
                   </div>
                   <div className="bw-tier-blurb">{r.blurb}</div>
                 </button>

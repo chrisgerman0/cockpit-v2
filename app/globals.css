@@ -163,3 +163,6 @@ textarea {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(320%); }
 }
+
+/* 2026-09-03: sub-line under a tier's "N lanes · Nx leverage", explaining the reserved seat. */
+.bw-tier-sub { font-size: 11px; opacity: .6; margin-top: 2px; }
