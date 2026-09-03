@@ -7,6 +7,7 @@
    markup the design expects. */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { InvoiceDueBanner } from './InvoiceDueBanner'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import './stax-design.css'
@@ -1690,6 +1691,8 @@ export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
   return (
     <div className="stax-page">
       <OnboardingBanner />
+      {/* Ported 2026-09-03: hidden unless something is actually owed. */}
+      <InvoiceDueBanner />
       <Hero data={data} />
       <StatsRow stats={liveStats} />
       <TablesRow positions={livePositions} trades={data.trades} />
