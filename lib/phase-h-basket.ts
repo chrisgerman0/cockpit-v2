@@ -14,17 +14,28 @@
  * 2026-07-05: added HBAR → 19-asset Phase I basket.
  */
 
-export const PHASE_H_BASKET = [
+// 2026-09-03: this is the FOURTH hand-maintained copy of the basket found today, and like the
+// others it had drifted — 19 assets against a 29-asset basket, still listing HYPE (no longer
+// traded) and missing eleven coins that are. It drives the Live Trading pair chips, the coin
+// icons and the symbol filters, so a traded coin missing from here shows a customer the wrong
+// logo and cannot be filtered for. Generated from the basket the engine actually trades.
+import { PHASE_H_BASKET_GENERATED } from './phase-h-basket.generated'
+
+const PHASE_H_BASKET_FALLBACK = [
   'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'LINK',
-  'SUI', 'AVAX', 'ADA', 'TRX', 'ZEC', 'GRAM', 'HYPE',  // 2026-06-17: TON→GRAM rebrand (Option B). One canonical list; propagates to PHASE_H_SYMBOLS/symToShort/COIN_FILTERS/logos.
-  'NEAR', 'OP',
-  'SEI', 'ONDO', 'HBAR',   // 2026-07-05: HBAR → 19-asset Phase I basket (mirror of staxs-landing)
+  'SUI', 'AVAX', 'ADA', 'TRX', 'ZEC', 'GRAM',
+  'NEAR', 'OP', 'SEI', 'ONDO', 'HBAR',
 ] as const
 
-export type PhaseHAsset = typeof PHASE_H_BASKET[number]
+export const PHASE_H_BASKET: readonly string[] =
+  (PHASE_H_BASKET_GENERATED && PHASE_H_BASKET_GENERATED.length)
+    ? PHASE_H_BASKET_GENERATED
+    : PHASE_H_BASKET_FALLBACK
 
-export const PHASE_H_SYMBOLS = PHASE_H_BASKET.map(a => `${a}USDT` as const)
-export type PhaseHSymbol = typeof PHASE_H_SYMBOLS[number]
+export type PhaseHAsset = string
+
+export const PHASE_H_SYMBOLS: readonly string[] = PHASE_H_BASKET.map(a => `${a}USDT`)
+export type PhaseHSymbol = string
 
 // Logo URLs per asset. CDN-hosted SVGs first, local fallback for assets the
 // CDN doesn't carry. If a new asset is added to the basket, add the logo

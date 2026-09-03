@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { PHASE_H_BASKET } from './phase-h-basket'
 import { Icons } from '@/components/cockpit/stax/Icons'
 import type { StaxDashboardData, Position, Trade, CoinSym, TickerAsset, StatCardSpec } from '@/components/cockpit/stax/StaxDashboard'
 
@@ -61,11 +62,11 @@ function symToCoin(sym: string): CoinSym {
   // missing here, so symToCoin('NEARUSDT') fell through to the 'BTC' fallback
   // and the NEAR open position rendered the BTC icon. Keep in lock step with
   // CoinSym (StaxDashboard.tsx) + COIN_ICON_SRC + the publisher's ASSETS list.
-  const KNOWN: ReadonlyArray<CoinSym> = [
-    'BTC', 'ETH', 'SOL', 'XRP', 'SUI', 'DOGE', 'LINK',
-    'ADA', 'AVAX', 'BNB', 'HYPE', 'GRAM', 'TRX', 'ZEC',
-    'NEAR', 'OP', 'SEI', 'ONDO', 'HBAR',   // 2026-07-06: HBAR was missing → symToCoin('HBARUSDT') fell to the 'BTC' icon fallback. 19-asset Phase I.
-  ]
+  // 2026-09-03: this was a third hardcoded 19-coin copy, and an unknown coin fell back to the
+  // BTC icon — so a position on any of the eleven coins missing from it showed the customer a
+  // BITCOIN logo on, say, an AAVE trade. Driven by the generated basket now; the fallback is only
+  // reached for something genuinely outside the book.
+  const KNOWN: readonly string[] = PHASE_H_BASKET
   return (KNOWN as readonly string[]).includes(s) ? s : 'BTC'
 }
 

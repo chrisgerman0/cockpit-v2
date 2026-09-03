@@ -8,12 +8,12 @@ import { useEffect, useState } from 'react'
 // NEAR/OP added 2026-06-01 with the assembled 71-cfg B+D system.
 // Symbols that don't trade on Bitget USDT-FUTURES will silently stay at price=0
 // (rest poll returns null; ws subscribe is a no-op).
-const V1_SYMBOLS = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'SUIUSDT', 'DOGEUSDT', 'LINKUSDT',
-  'ADAUSDT', 'AVAXUSDT', 'BNBUSDT', 'HYPEUSDT', 'GRAMUSDT', 'TRXUSDT', 'ZECUSDT',  // 2026-06-17 TON→GRAM
-  'NEARUSDT', 'OPUSDT', 'SEIUSDT', 'ONDOUSDT', 'HBARUSDT',  // 2026-07-05 Phase I → 19 assets
-] as const
-type V1Symbol = typeof V1_SYMBOLS[number]
+// 2026-09-03: was its own hardcoded 19-symbol copy of the basket, including HYPE which is no
+// longer traded and missing eleven coins that are — so a live position on one of those eleven had
+// no live price and fell back to the server-computed value. Driven by the generated basket now.
+import { PHASE_H_SYMBOLS } from './phase-h-basket'
+const V1_SYMBOLS: readonly string[] = PHASE_H_SYMBOLS
+type V1Symbol = string
 
 export type PublicTickerShort =
   | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
