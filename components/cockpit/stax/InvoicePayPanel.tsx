@@ -22,7 +22,7 @@
  *     receive it. Offering it would take a real payment to an address we do not hold.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useState } from 'react'
 import { authedFetch } from '@/lib/api'
 
 export type Invoice = {
@@ -47,17 +47,58 @@ type Card = { brand?: string; last4?: string } | null
  * so it goes to the cheapest chain we can actually receive on.
  */
 const NETWORKS: Array<{
-  group: string; code: string; name: string; chain: string; time: string; badge?: 'Popular' | 'Lowest fee'
+  group: string; code: string; name: string; chain: string; time: string
+  kind: 'evm' | 'tron' | 'sol'; explorer: string; badge?: 'Popular' | 'Lowest fee'
 }> = [
-  { group: 'EVM',   code: 'BEP20',   name: 'BEP-20',        chain: 'Binance Smart Chain', time: '≈ 1 min · 0.8 USDT', badge: 'Popular' },
-  { group: 'TRC20', code: 'TRC20',   name: 'TRC-20',        chain: 'Tron',                time: '≈ 1 min · 1 USDT',   badge: 'Popular' },
-  { group: 'EVM',   code: 'POLYGON', name: 'POL',           chain: 'Polygon',             time: '≈ 1 min · 0.8 USDT', badge: 'Lowest fee' },
-  { group: 'SOL',   code: 'SOL',     name: 'SOL',           chain: 'Solana',              time: '≈ 1 min · 1 USDT' },
-  { group: 'EVM',   code: 'ARB',     name: 'Arbitrum One',  chain: 'Arbitrum',            time: '≈ 2 min · 0.8 USDT' },
-  { group: 'EVM',   code: 'OP',      name: 'Optimism',      chain: 'OP Mainnet',          time: '≈ 2 min · 0.8 USDT' },
-  { group: 'EVM',   code: 'BASE',    name: 'Base',          chain: 'Coinbase L2',         time: '≈ 2 min · 0.8 USDT' },
-  { group: 'EVM',   code: 'ERC20',   name: 'ERC-20',        chain: 'Ethereum Mainnet',    time: '≈ 5 min · 1.6 USDT' },
+  { group: 'EVM',   code: 'BEP20',   name: 'BEP-20',       chain: 'Binance Smart Chain', time: '≈ 1 min · 0.8 USDT', kind: 'evm',  explorer: 'https://bscscan.com/tx/',             badge: 'Popular' },
+  { group: 'TRC20', code: 'TRC20',   name: 'TRC-20',       chain: 'Tron',                time: '≈ 1 min · 1 USDT',   kind: 'tron', explorer: 'https://tronscan.org/#/transaction/', badge: 'Popular' },
+  { group: 'EVM',   code: 'POLYGON', name: 'POL',          chain: 'Polygon',             time: '≈ 1 min · 0.8 USDT', kind: 'evm',  explorer: 'https://polygonscan.com/tx/',         badge: 'Lowest fee' },
+  { group: 'SOL',   code: 'SOL',     name: 'SOL',          chain: 'Solana',              time: '≈ 1 min · 1 USDT',   kind: 'sol',  explorer: 'https://solscan.io/tx/' },
+  { group: 'EVM',   code: 'ARB',     name: 'Arbitrum One', chain: 'Arbitrum',            time: '≈ 2 min · 0.8 USDT', kind: 'evm',  explorer: 'https://arbiscan.io/tx/' },
+  { group: 'EVM',   code: 'OP',      name: 'Optimism',     chain: 'OP Mainnet',          time: '≈ 2 min · 0.8 USDT', kind: 'evm',  explorer: 'https://optimistic.etherscan.io/tx/' },
+  { group: 'EVM',   code: 'BASE',    name: 'Base',         chain: 'Coinbase L2',         time: '≈ 2 min · 0.8 USDT', kind: 'evm',  explorer: 'https://basescan.org/tx/' },
+  { group: 'EVM',   code: 'ERC20',   name: 'ERC-20',       chain: 'Ethereum Mainnet',    time: '≈ 5 min · 1.6 USDT', kind: 'evm',  explorer: 'https://etherscan.io/tx/' },
 ]
+
+/**
+ * The coins we accept. Every company wallet is stored with coin='ALL' and the lookup matches
+ * [coin, 'ALL'], so USDT and USDC are BOTH payable on every network -- this is not a display
+ * choice, it is what the server does.
+ *
+ * 2026-09-03 (Chris): "I can pay with either USDT or USDC? if so, why is USDC greyed out?" It was
+ * greyed because I rendered the pair as one fixed label with USDC in the muted tone -- it read as
+ * disabled. Worse, the panel then sent coin='ALL' to the API, so the invoice recorded COIN=ALL and
+ * nobody could tell which coin actually arrived. It is a real choice now, and it is recorded.
+ */
+const COINS: Array<{ code: 'USDT' | 'USDC'; name: string; mark: string; tint: string }> = [
+  { code: 'USDT', name: 'Tether USD', mark: '₮', tint: '#26A17B' },
+  { code: 'USDC', name: 'USD Coin',   mark: '$', tint: '#2775CA' },
+]
+
+/**
+ * Pull the hash out of whatever the customer pastes -- a bare hash, or a full explorer link
+ * (bscscan /tx/<hash>, tronscan #/transaction/<hash>, solscan /tx/<hash>). Anything with a
+ * delimiter is split and the longest hash-shaped token wins.
+ */
+function extractTx(raw: string): string {
+  const t = (raw || '').trim()
+  if (!t) return ''
+  if (!/[/:?#]/.test(t)) return t
+  let best = ''
+  for (const part of t.split(/[/#?&=\s]+/)) {
+    if (/^(0x)?[0-9a-zA-Z]{40,90}$/.test(part) && part.length > best.length) best = part
+  }
+  return best
+}
+
+/** Shape check per chain. Not proof the transaction exists -- that is Chris's manual check. */
+function txIsValid(hash: string, kind: 'evm' | 'tron' | 'sol' | undefined): boolean {
+  if (!hash || !kind) return false
+  if (kind === 'evm') return /^0x[0-9a-fA-F]{64}$/.test(hash)
+  if (kind === 'tron') return /^[0-9a-fA-F]{64}$/.test(hash)
+  return /^[1-9A-HJ-NP-Za-km-z]{43,88}$/.test(hash)
+}
+
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   draft: { label: 'Draft', tone: 'var(--muted)' },
@@ -111,6 +152,8 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
   const [wallets, setWallets] = useState<Wallet[]>([])
   const [card, setCard] = useState<Card>(null)
   const [netFor, setNetFor] = useState<Record<string, string>>({})
+  const [coinFor, setCoinFor] = useState<Record<string, 'USDT' | 'USDC'>>({})
+  const [txFor, setTxFor] = useState<Record<string, string>>({})
   const [openPicker, setOpenPicker] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ id: string; text: string; bad?: boolean } | null>(null)
@@ -143,14 +186,23 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
   const confirmCrypto = async (inv: Invoice) => {
     const code = netFor[inv.id]
     const w = code ? walletFor(code) : null
+    const net = NETWORKS.find(n => n.code === code)
+    const hash = extractTx(txFor[inv.id] || '')
     if (!w) { setMsg({ id: inv.id, text: 'Choose a network first.', bad: true }); return }
+    // 2026-09-03 (Chris): "the person paying the invoice has to provide a valid tx link. the button
+    // can only be pressed if a valid link has been placed." The button is disabled without one; this
+    // is the belt to that braces, and the route rejects a missing hash independently.
+    if (!txIsValid(hash, net?.kind)) {
+      setMsg({ id: inv.id, text: 'Paste the transaction link or hash from your wallet.', bad: true }); return
+    }
     setBusy(inv.id); setMsg(null)
     try {
       await authedFetch(`/api/billing/invoices/${inv.id}/pay-crypto`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // network = the wallet GROUP (finds the address); chain = what the customer actually
         // selected, so admin can check the right explorer instead of guessing across six EVM chains.
-        body: JSON.stringify({ coin: w.coin, network: w.network, chain: code }),
+        // coin = the coin they actually sent, not the wallet's catch-all 'ALL'.
+        body: JSON.stringify({ coin: coinFor[inv.id] || 'USDT', network: w.network, chain: code, txHash: hash }),
       })
       await load(); onChange?.()
     } catch (e: any) { setMsg({ id: inv.id, text: humanError(e, 'Something went wrong.'), bad: true }) }
@@ -165,6 +217,11 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
     } catch (e: any) {
       setMsg({ id: inv.id, text: humanError(e, 'The card was declined. Try another card or pay by crypto.'), bad: true })
     } finally { setBusy(null) }
+  }
+
+  const fieldBox: CSSProperties = {
+    border: '1px solid var(--line)', borderRadius: 10, padding: '12px 10px',
+    height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center',
   }
 
   const CopyBtn = ({ on, k }: { on: string; k: string }) => (
@@ -188,6 +245,10 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
         const w = code ? walletFor(code) : null
         const chosen = NETWORKS.find(n => n.code === code)
         const open = openPicker === inv.id
+        const txRaw = txFor[inv.id] || ''
+        const txHash = extractTx(txRaw)
+        const txOk = txIsValid(txHash, chosen?.kind)
+        const canSend = !!w && txOk
         const options = NETWORKS.filter(n => wallets.some(x => x.network === n.group))
 
         return (
@@ -228,22 +289,38 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                     pointerEvents: 'none',
                   }} />
 
-                  {/* ── Step 1 — the coin (always satisfied: we accept USDT/USDC only) ── */}
+                  {/* ── Step 1 — the coin. BOTH are payable: every company wallet is coin='ALL'
+                      and the server matches [coin,'ALL']. Defaulting to USDT keeps the step
+                      satisfied (and ticked) on first paint without hiding the choice. ── */}
                   <div style={{ display: 'flex', marginBottom: 14 }}>
                     <StepDot n={1} done active={false} />
                     <div className="bp-cell" style={{ width: '100%', padding: 16 }}>
                       <StepTitle>Select a coin</StepTitle>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
-                                    background: 'color-mix(in srgb, var(--text) 3%, transparent)',
-                                    border: '1px solid var(--line)', borderRadius: 10, cursor: 'not-allowed' }}>
-                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#26A17B', color: '#fff',
-                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                      fontSize: 15, fontWeight: 800, flexShrink: 0 }}>₮</div>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 700 }}>USDT <span style={{ color: 'var(--muted)', fontWeight: 600 }}>/ USDC</span></div>
-                          <div style={{ fontSize: 11, color: 'var(--muted)' }}>Tether USD · USD Coin</div>
-                        </div>
-                        <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Fixed</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
+                        {COINS.map(c => {
+                          const sel = (coinFor[inv.id] || 'USDT') === c.code
+                          return (
+                            <button key={c.code} type="button" onClick={() => setCoinFor(m => ({ ...m, [inv.id]: c.code }))}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
+                                             borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%',
+                                             background: sel ? `color-mix(in srgb, ${GOLD} 9%, transparent)` : 'transparent',
+                                             border: `1px solid ${sel ? GOLD : 'var(--line)'}` }}>
+                              <div style={{ width: 32, height: 32, borderRadius: '50%', background: c.tint, color: '#fff',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{c.mark}</div>
+                              <div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.code}</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{c.name}</div>
+                              </div>
+                              {sel ? (
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth={3}
+                                     strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              ) : null}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
                   </div>
@@ -322,40 +399,81 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                     </div>
                   </div>
 
-                  {/* ── Step 3 — send it ── */}
+                  {/* ── Step 3 — send it.
+                      Chris, 2026-09-03: "Step number 3 should have 3 fields horizontally, not
+                      vertically as it is now." Amount | Address | Transaction link, side by side.
+                      auto-fit/minmax holds one row on desktop and stacks on a phone without a
+                      media query, which inline styles cannot express. ── */}
                   <div style={{ display: 'flex' }}>
                     <StepDot n={3} done={false} active={!!w} />
                     <div className="bp-cell" style={{ width: '100%', padding: 16, opacity: w ? 1 : 0.55 }}>
                       <StepTitle>Send the payment</StepTitle>
 
-                      <div className="bp-eyebrow" style={{ marginBottom: 6 }}>Send this exact amount</div>
-                      <div style={{ textAlign: 'center', padding: '12px 10px', border: '1px solid var(--line)', borderRadius: 10, marginBottom: 14 }}>
-                        <div className="bp-cell-val bp-tone-gold" style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 22 }}>{payAmt}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Must match exactly so the payment can be matched to this invoice</div>
-                        <CopyBtn on={payAmt.replace('$', '')} k={`amt-${inv.id}`} />
-                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, alignItems: 'stretch' }}>
+                        {/* 1 — amount */}
+                        <div>
+                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>Send this exact amount</div>
+                          <div style={{ ...fieldBox, textAlign: 'center' }}>
+                            <div className="bp-cell-val bp-tone-gold" style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 22 }}>{payAmt}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Must match exactly</div>
+                            <div><CopyBtn on={payAmt.replace('$', '')} k={`amt-${inv.id}`} /></div>
+                          </div>
+                        </div>
 
-                      <div className="bp-eyebrow" style={{ marginBottom: 6 }}>To this wallet address</div>
-                      <div style={{ textAlign: 'center', padding: '12px 10px', border: '1px solid var(--line)', borderRadius: 10, marginBottom: 16 }}>
-                        {w ? (
-                          <>
-                            <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'var(--font-mono, monospace)' }}>{w.wallet_address}</div>
-                            <CopyBtn on={w.wallet_address} k={`addr-${inv.id}`} />
-                          </>
-                        ) : (
-                          <div style={{ fontSize: 12, color: 'var(--muted)', padding: 6 }}>Choose a network in step 2 to reveal the address</div>
-                        )}
+                        {/* 2 — address */}
+                        <div>
+                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>To this wallet address</div>
+                          <div style={{ ...fieldBox, textAlign: 'center' }}>
+                            {w ? (
+                              <>
+                                <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'var(--font-mono, monospace)' }}>{w.wallet_address}</div>
+                                <div><CopyBtn on={w.wallet_address} k={`addr-${inv.id}`} /></div>
+                              </>
+                            ) : (
+                              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Choose a network in step 2</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 3 — the transaction link. REQUIRED: nothing can be verified without it. */}
+                        <div>
+                          <div className="bp-eyebrow" style={{ marginBottom: 6 }}>Transaction link or hash</div>
+                          <div style={{ ...fieldBox, textAlign: 'center' }}>
+                            <input value={txRaw} disabled={!w}
+                                   onChange={e => setTxFor(m => ({ ...m, [inv.id]: e.target.value }))}
+                                   placeholder={chosen ? (chosen.kind === 'evm' ? '0x… or explorer link' : 'hash or explorer link') : 'Choose a network first'}
+                                   style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none',
+                                            textAlign: 'center', fontSize: 12, color: 'var(--text)',
+                                            fontFamily: 'var(--font-mono, monospace)' }} />
+                            <div style={{ fontSize: 11, marginTop: 6,
+                                          color: !txRaw ? 'var(--muted)' : txOk ? 'var(--pos, #22c55e)' : '#ef4444' }}>
+                              {!txRaw
+                                ? 'Required — paste it from your wallet'
+                                : txOk
+                                  ? `Valid ${chosen?.name} transaction`
+                                  : `Not a valid ${chosen?.name || ''} transaction hash`}
+                            </div>
+                            {txOk && chosen ? (
+                              <a href={`${chosen.explorer}${txHash}`} target="_blank" rel="noopener noreferrer"
+                                 style={{ fontSize: 11, marginTop: 6, color: GOLD, textDecoration: 'none' }}>Open in explorer ↗</a>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
 
                       {/* 2026-09-03 (Chris): this was green with a tick, which reads as "paid" before
-                          the customer has done anything. Green is the SETTLED state, not the action. */}
-                      <button type="button" disabled={busy === inv.id || !w} onClick={() => confirmCrypto(inv)}
-                              style={{ width: '100%', background: w ? GOLD : 'transparent',
-                                       color: w ? '#08080D' : 'var(--muted)',
-                                       border: w ? 'none' : '1px solid var(--line)',
+                          the customer has done anything. Green is the SETTLED state, not the action.
+                          It is also now unpressable until a valid transaction hash is present. */}
+                      <button type="button" disabled={busy === inv.id || !canSend} onClick={() => confirmCrypto(inv)}
+                              style={{ width: '100%', marginTop: 16, background: canSend ? GOLD : 'transparent',
+                                       color: canSend ? '#08080D' : 'var(--muted)',
+                                       border: canSend ? 'none' : '1px solid var(--line)',
                                        borderRadius: 8, padding: 13, fontSize: 14, fontWeight: 700,
-                                       cursor: w ? 'pointer' : 'not-allowed', opacity: w ? 1 : 0.6 }}>
-                        {busy === inv.id ? 'Submitting…' : w ? 'I have sent the payment' : 'Choose a network first'}
+                                       cursor: canSend ? 'pointer' : 'not-allowed', opacity: canSend ? 1 : 0.6 }}>
+                        {busy === inv.id ? 'Submitting…'
+                          : !w ? 'Choose a network first'
+                          : !txOk ? 'Paste the transaction link'
+                          : 'I have sent the payment'}
                       </button>
                       <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
                         We verify it manually, then mark the invoice paid. If nothing arrives within 72 hours, your card on file is charged automatically.

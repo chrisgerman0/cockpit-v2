@@ -2070,7 +2070,8 @@ function InvoicesPanel({ active }: { active: boolean }) {
                               <Detail k="Network" v={row.crypto_network || '—'} />
                               <Detail k="Coin" v={row.crypto_coin || '—'} />
                               <Detail k="Submitted" v={row.payment_submitted_at ? new Date(row.payment_submitted_at).toISOString().slice(0, 16).replace('T', ' ') : '—'} />
-                              <Detail k="Tx hash" v={row.crypto_tx_hash || 'not supplied'} mono />
+                              <Detail k="Tx hash" v={row.crypto_tx_hash || 'not supplied'} mono
+                                      href={row.crypto_tx_hash ? INV_EXPLORER[String(row.crypto_network || '').toUpperCase()] : undefined} />
                               <Detail k="Stripe charge" v={row.stripe_charge_id || '—'} mono />
                               <Detail k="Invoice id" v={row.id} mono />
                             </div>
@@ -2089,11 +2090,29 @@ function InvoicesPanel({ active }: { active: boolean }) {
   )
 }
 
-function Detail({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+/** Explorer per chain, so verifying a payment is one click instead of a hunt. */
+const INV_EXPLORER: Record<string, string> = {
+  BEP20: 'https://bscscan.com/tx/',
+  POLYGON: 'https://polygonscan.com/tx/',
+  ARB: 'https://arbiscan.io/tx/',
+  OP: 'https://optimistic.etherscan.io/tx/',
+  BASE: 'https://basescan.org/tx/',
+  ERC20: 'https://etherscan.io/tx/',
+  TRC20: 'https://tronscan.org/#/transaction/',
+  SOL: 'https://solscan.io/tx/',
+}
+
+function Detail({ k, v, mono, href }: { k: string; v: string; mono?: boolean; href?: string }) {
+  const body = (
+    <div style={{ marginTop: 3, fontFamily: mono ? 'var(--font-mono, monospace)' : undefined, wordBreak: 'break-all' }}>{v}</div>
+  )
   return (
     <div>
       <div style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', fontSize: 10, fontWeight: 700 }}>{k}</div>
-      <div style={{ marginTop: 3, fontFamily: mono ? 'var(--font-mono, monospace)' : undefined, wordBreak: 'break-all' }}>{v}</div>
+      {href ? (
+        <a href={`${href}${v}`} target="_blank" rel="noopener noreferrer"
+           style={{ color: 'var(--gold, #D4A017)', textDecoration: 'none' }}>{body}</a>
+      ) : body}
     </div>
   )
 }
