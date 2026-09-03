@@ -436,9 +436,10 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                       </div>
 
                       {/* THE INSTRUCTION — how much, and where. Both large, mono, copyable. */}
-                      <div style={{ border: '1px solid var(--line-2)', borderRadius: 10,
-                                    background: 'var(--card)', overflow: 'hidden' }}>
-                        <div className="stax-payrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px' }}>
+                      <div style={{ border: '1px solid var(--line-2)', borderRadius: 10, overflow: 'hidden',
+                                    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
+                                    gap: 1, background: 'var(--line)' }}>
+                        <div className="stax-payrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px', background: 'var(--card)' }}>
                           <div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>Amount</div>
                             <div style={{ fontSize: 26, fontWeight: 800, color: GOLD, letterSpacing: '-0.02em',
@@ -453,7 +454,7 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                           </button>
                         </div>
                         <div className="stax-payrow" style={{ display: 'flex', alignItems: 'center', gap: 14,
-                                                              padding: '12px 14px', borderTop: '1px solid var(--line)' }}>
+                                                              padding: '12px 14px', background: 'var(--card)' }}>
                           <div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>Wallet address</div>
                             <div style={{ fontSize: 14, fontWeight: 600, wordBreak: 'break-all', lineHeight: 1.35,
@@ -487,32 +488,37 @@ export function InvoicePayPanel({ onChange }: { onChange?: () => void }) {
                         <label htmlFor={`tx-${inv.id}`} style={{ fontSize: 13, fontWeight: 600 }}>Transaction hash</label>
                         <span style={{ fontSize: 11, color: 'var(--muted)' }}>Optional — speeds up verification</span>
                       </div>
-                      <input id={`tx-${inv.id}`} value={txRaw} disabled={!w}
-                             className={`stax-payfield${msg && msg.id === inv.id && msg.bad ? ' bad' : ''}${shakeFor === inv.id ? ' stax-shake' : ''}`}
-                             onChange={e => { setTxFor(m => ({ ...m, [inv.id]: e.target.value })); if (msg?.id === inv.id) setMsg(null) }}
-                             placeholder={chosen ? (chosen.kind === 'evm' ? '0x… or explorer link' : 'hash or explorer link') : 'Choose a network first'} />
-                      <div style={{ fontSize: 12, marginTop: 7, minHeight: 16,
-                                    color: msg && msg.id === inv.id ? (msg.bad ? 'var(--neg, #ef4444)' : 'var(--pos, #22c55e)')
-                                         : txOk ? 'var(--pos, #22c55e)' : 'var(--muted)' }}>
-                        {msg && msg.id === inv.id ? msg.text
-                          : txOk ? `Valid ${chosen?.name} transaction ✓` : ''}
+                      <div className="stax-payactions">
+                        <div className="stax-payfieldwrap">
+                          <input id={`tx-${inv.id}`} value={txRaw} disabled={!w}
+                                 className={`stax-payfield${msg && msg.id === inv.id && msg.bad ? ' bad' : ''}${shakeFor === inv.id ? ' stax-shake' : ''}`}
+                                 onChange={e => { setTxFor(m => ({ ...m, [inv.id]: e.target.value })); if (msg?.id === inv.id) setMsg(null) }}
+                                 placeholder={chosen ? (chosen.kind === 'evm' ? '0x… or explorer link' : 'hash or explorer link') : 'Choose a network first'} />
+                          <div style={{ fontSize: 12, marginTop: 7, minHeight: 16,
+                                        color: msg && msg.id === inv.id ? (msg.bad ? 'var(--neg, #ef4444)' : 'var(--pos, #22c55e)')
+                                             : txOk ? 'var(--pos, #22c55e)' : 'var(--muted)' }}>
+                            {msg && msg.id === inv.id ? msg.text
+                              : txOk ? `Valid ${chosen?.name} transaction ✓` : ''}
+                          </div>
+                          <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button type="button" disabled={busy === inv.id || !w}
+                                    onClick={() => confirmCrypto(inv, true)}
+                                    style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                                             font: 'inherit', fontSize: 12, color: 'var(--muted)',
+                                             textDecoration: 'underline', textUnderlineOffset: 3 }}>
+                              I haven&apos;t got the hash yet — confirm anyway
+                            </button>
+                            {txOk && chosen ? (
+                              <a href={`${chosen.explorer}${txHash}`} target="_blank" rel="noopener noreferrer"
+                                 style={{ fontSize: 12, color: GOLD, textDecoration: 'none' }}>Open in explorer ↗</a>
+                            ) : null}
+                          </div>
+                        </div>
+                        <button type="button" className="stax-paycta" disabled={busy === inv.id || !w}
+                                onClick={() => confirmCrypto(inv)}>
+                          {busy === inv.id ? 'Submitting…' : 'Confirm payment'}
+                        </button>
                       </div>
-                      {txOk && chosen ? (
-                        <a href={`${chosen.explorer}${txHash}`} target="_blank" rel="noopener noreferrer"
-                           style={{ fontSize: 11, color: GOLD, textDecoration: 'none' }}>Open in explorer ↗</a>
-                      ) : null}
-
-                      <button type="button" className="stax-paycta" disabled={busy === inv.id || !w}
-                              onClick={() => confirmCrypto(inv)}>
-                        {busy === inv.id ? 'Submitting…' : 'Confirm payment'}
-                      </button>
-                      <button type="button" disabled={busy === inv.id || !w}
-                              onClick={() => confirmCrypto(inv, true)}
-                              style={{ display: 'block', width: '100%', marginTop: 9, background: 'none', border: 0,
-                                       cursor: 'pointer', font: 'inherit', fontSize: 12, color: 'var(--muted)',
-                                       textDecoration: 'underline', textUnderlineOffset: 3 }}>
-                        I haven&apos;t got the hash yet — confirm anyway
-                      </button>
 
                       {/* FC2: a customer's card gets charged. That is a material term, not a footnote. */}
                       <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 14,

@@ -5781,10 +5781,23 @@ html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(
   border-color: var(--neg);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--neg) 16%, transparent);
 }
+/* 2026-09-03 (Chris): this was width:100% and became a gold slab the full width of the
+   settings column on a wide screen. A primary button is a button, not a banner -- it sits
+   BESIDE the field it submits, at its own size, and only goes full width once the row stacks
+   on a phone. */
+.stax-app .stax-payactions {
+  display: flex; align-items: flex-start; gap: 10px; margin-top: 4px;
+}
+.stax-app .stax-payactions > .stax-payfieldwrap { flex: 1 1 auto; min-width: 0 }
 .stax-app .stax-paycta {
-  width: 100%; height: 50px; margin-top: 13px; border: 0; border-radius: 10px; cursor: pointer;
-  background: var(--gold); color: #08080D; font: inherit; font-size: 15px; font-weight: 800;
+  flex: 0 0 auto; height: 46px; padding: 0 28px; border: 0; border-radius: 9px; cursor: pointer;
+  background: var(--gold); color: #08080D; font: inherit; font-size: 14px; font-weight: 800;
+  white-space: nowrap;
   box-shadow: 0 2px 10px color-mix(in srgb, var(--gold) 32%, transparent);
+}
+@media (max-width: 620px) {
+  .stax-app .stax-payactions { flex-direction: column }
+  .stax-app .stax-paycta { width: 100% }
 }
 .stax-app .stax-paycta:hover { background: var(--gold-hi) }
 .stax-app .stax-paycta:active { transform: translateY(1px) }
