@@ -21,7 +21,7 @@
  * Bearer token. Non-admins get 403; the panel surfaces a clear error.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { authedFetch } from '@/lib/api'
 import { useIsAdmin } from '@/lib/use-is-admin'
@@ -63,7 +63,7 @@ const ExternalLink = (p: IconProps) => <I {...p}><path d="M14 4h6v6M20 4l-9 9M19
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
 type TabId =
-  | 'overview' | 'execution' | 'lanes' | 'alerts' | 'users'
+  | 'overview' | 'execution' | 'lanes' | 'alerts' | 'invoices' | 'users'
   | 'brokers' | 'broker-invoices' | 'broker-payouts' | 'wallets'
   | 'revenue' | 'strategy' | 'social' | 'regime'
 
@@ -76,7 +76,11 @@ const TABS: TabDef[] = [
   // Backtest pages. See SYSTEM_HANDOVER.md §5 Rule 26.
   { id: 'execution',        label: 'Execution',  group: 'Operations', icon: Icons.Signal },
   { id: 'lanes',            label: 'Lane Control', group: 'Operations', icon: Heart },
-  { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
+  // 2026-09-03 (Chris): "the Alerts sub tab is useless, you can have the Invoices there instead."
+  // AlertsPanel is left in the file, not deleted -- same treatment as the parked broker tabs, so
+  // it can come back by uncommenting one line.
+  // { id: 'alerts',           label: 'Alerts',     group: 'Operations', icon: Icons.Bell },
+  { id: 'invoices',         label: 'Invoices',   group: 'Operations', icon: Receipt },
   { id: 'users',            label: 'Users',      group: 'Operations', icon: People },
   // 2026-09-03: Invoices and Wallets were filed under BROKER. With the broker programme parked
   // that group reads as broker-only, so Chris could not find the invoice list at all and thought
@@ -86,7 +90,11 @@ const TABS: TabDef[] = [
   // { id: 'brokers',          label: 'Brokers',    group: 'Broker',     icon: People },
   // { id: 'broker-payouts',   label: 'Payouts',    group: 'Broker',     icon: Dollar },
   { id: 'revenue',          label: 'Revenue',    group: 'Business',   icon: Dollar },
-  { id: 'broker-invoices',  label: 'Invoices',   group: 'Business',   icon: Receipt },
+  // 2026-09-03: this was a SECOND tab also called "Invoices", reading the same invoices table
+  // read-only. It rendered dashes for invoice #, user and amount because it asked for fields the
+  // API has never returned (number / user_email / amount_usd vs amount_cents / profiles.email).
+  // Superseded by the Operations > Invoices tab, which has the real columns and the actions.
+  // { id: 'broker-invoices',  label: 'Invoices',   group: 'Business',   icon: Receipt },
   { id: 'wallets',          label: 'Wallets',    group: 'Business',   icon: Wallet },
   { id: 'strategy',         label: 'Strategy',   group: 'Research',   icon: Icons.Bars },
   { id: 'social',           label: 'Social',     group: 'Research',   icon: Megaphone },
@@ -401,17 +409,14 @@ export function AdminContent() {
                 canonical? That decides whether live can take the trades canonical takes. */}
             <LaneControlPanel active={tab === 'lanes'} />
           </div>
-          <div style={{ display: tab === 'alerts' ? 'block' : 'none' }}>
-            <AlertsPanel active={tab === 'alerts'} />
+          <div style={{ display: tab === 'invoices' ? 'block' : 'none' }}>
+            <InvoicesPanel active={tab === 'invoices'} />
           </div>
           <div style={{ display: tab === 'users' ? 'block' : 'none' }}>
             <UsersPanel active={tab === 'users'} />
           </div>
           <div style={{ display: tab === 'brokers' ? 'block' : 'none' }}>
             <BrokersPanel active={tab === 'brokers'} />
-          </div>
-          <div style={{ display: tab === 'broker-invoices' ? 'block' : 'none' }}>
-            <BrokerInvoicesPanel active={tab === 'broker-invoices'} />
           </div>
           <div style={{ display: tab === 'broker-payouts' ? 'block' : 'none' }}>
             <BrokerPayoutsPanel active={tab === 'broker-payouts'} />
@@ -1808,19 +1813,6 @@ function RevenuePanel({ active }: { active: boolean }) {
 // 7b. Broker invoices panel — promoted from a Revenue sub-tab.
 // ────────────────────────────────────────────────────────────────────────────
 
-function BrokerInvoicesPanel({ active }: { active: boolean }) {
-  return (
-    <div className="stax-page">
-      <PageHeader
-        eyebrow="ADMIN · BROKER"
-        lead="Client"
-        accent="invoices."
-        blurb="Subscription + performance-fee invoices billed to broker-referred clients. Each invoice with a referral_code drives a broker split."
-      />
-      <InvoicesList active={active} />
-    </div>
-  )
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // 7c. Broker payouts panel — promoted from a Revenue sub-tab.
@@ -1879,34 +1871,230 @@ function RevenueList({ active }: { active: boolean }) {
   )
 }
 
-type InvResp = { invoices: Array<{ number?: string; user_email?: string; status?: string; amount_usd: number; issued_at?: string; paid_at?: string }> }
-function InvoicesList({ active }: { active: boolean }) {
-  const inv = usePanelData<InvResp>(active, () => authedFetch('/api/admin/invoices?limit=200'), 60_000)
+/**
+ * ADMIN · INVOICES — 2026-09-03.
+ *
+ * Chris: "Me, as a business owner and admin, had a UI to check all invoices per user, status,
+ * etc... you need to find that and we need to add to the admin."
+ *
+ * There WAS a tab called Invoices, and it was the reason he thought there wasn't one: it asked the
+ * API for `number`, `user_email` and `amount_usd`, and /api/admin/invoices has never returned any
+ * of those -- it returns the raw row (amount_cents) plus a nested `profiles`. So every one of those
+ * three columns rendered a dash on every row. It also had no actions at all, while the route has
+ * supported confirm_paid / reject / void over PUT the whole time.
+ *
+ * This is the desk: filter by state, see who owes what, read the crypto details the customer
+ * submitted, and settle it. Marking paid is the step Chris does by hand after checking the chain.
+ */
+
+type AdminInvoice = {
+  id: string
+  user_id: string
+  amount_cents: number
+  unique_amount_cents?: number | null
+  description?: string | null
+  status?: string
+  issued_at?: string | null
+  due_at?: string | null
+  paid_at?: string | null
+  payment_method?: string | null
+  crypto_coin?: string | null
+  crypto_network?: string | null
+  crypto_tx_hash?: string | null
+  payment_submitted_at?: string | null
+  stripe_charge_id?: string | null
+  is_test?: boolean
+  profiles?: { id: string; email?: string | null; full_name?: string | null } | null
+}
+type InvResp = { invoices: AdminInvoice[] }
+
+const INV_FILTERS: Array<{ key: string; label: string; status: string }> = [
+  { key: 'action',  label: 'Needs action', status: 'pending_verification' },
+  { key: 'open',    label: 'Awaiting payment', status: 'sent' },
+  { key: 'paid',    label: 'Paid', status: 'paid' },
+  { key: 'all',     label: 'All', status: 'all' },
+]
+
+const INV_TONE: Record<string, string> = {
+  sent: 'var(--gold, #D4A017)',
+  pending_verification: '#f59e0b',
+  paid: 'var(--pos, #22c55e)',
+  overdue: '#ef4444',
+  failed: '#ef4444',
+  void: 'var(--muted)',
+  draft: 'var(--muted)',
+}
+const INV_LABEL: Record<string, string> = {
+  sent: 'Awaiting payment',
+  pending_verification: 'Needs verification',
+  paid: 'Paid',
+  overdue: 'Overdue',
+  failed: 'Failed',
+  void: 'Voided',
+  draft: 'Draft',
+}
+
+function InvoicesPanel({ active }: { active: boolean }) {
+  const [filter, setFilter] = useState<string>('action')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [openRow, setOpenRow] = useState<string | null>(null)
+
+  const status = (INV_FILTERS.find(f => f.key === filter) || INV_FILTERS[0]).status
+  const fetcher = useCallback(
+    () => authedFetch<InvResp>(`/api/admin/invoices?status=${encodeURIComponent(status)}&limit=200`),
+    [status])
+  const inv = usePanelData<InvResp>(active, fetcher, 60_000, status)
+
+  const rows = inv.data?.invoices || []
+  const money = (c?: number | null) => (typeof c === 'number' ? `$${(c / 100).toFixed(2)}` : '—')
+  const day = (t?: string | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—')
+
+  async function act(id: string, action: 'confirm_paid' | 'reject' | 'void', confirmText?: string) {
+    if (confirmText && !window.confirm(confirmText)) return
+    setBusy(id); setErr(null)
+    try {
+      await authedFetch('/api/admin/invoices', {
+        method: 'PUT',
+        body: JSON.stringify({ invoiceId: id, action }),
+      })
+      inv.refresh()
+    } catch (e: any) {
+      setErr(String(e?.message || e))
+    } finally { setBusy(null) }
+  }
+
+  // Counts are for the CURRENT filter only -- the endpoint returns one status at a time, so a
+  // "3 awaiting" badge while looking at Paid would be a number this response cannot support.
+  const total = rows.reduce((a, r) => a + (r.amount_cents || 0), 0)
+
   return (
-    <>
-      <ErrorBox msg={inv.error} />
-      <SectionCard title="INVOICES">
-        {(inv.data?.invoices || []).length === 0 ? <EmptyBox>No invoices.</EmptyBox> : (
+    <div className="stax-page">
+      <PageHeader
+        eyebrow="ADMIN · BUSINESS"
+        lead="Customer"
+        accent="invoices."
+        blurb="Every performance-fee invoice, by customer and state. Crypto payments land here as 'needs verification' — check the chain, then mark paid."
+        refreshing={inv.loading}
+        onRefresh={() => inv.refresh()}
+      />
+
+      <ErrorBox msg={err || inv.error} />
+
+      <div className="row row-stats">
+        <StatCard label={INV_FILTERS.find(f => f.key === filter)?.label || 'Invoices'} value={rows.length} tone="gold" />
+        <StatCard label="Value shown" value={money(total)} />
+      </div>
+
+      <SectionCard
+        title="INVOICES"
+        right={
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {INV_FILTERS.map(f => (
+              <button key={f.key} type="button" onClick={() => setFilter(f.key)}
+                      style={{
+                        fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer',
+                        background: filter === f.key ? 'color-mix(in srgb, var(--gold, #D4A017) 16%, transparent)' : 'transparent',
+                        border: `1px solid ${filter === f.key ? 'var(--gold, #D4A017)' : 'var(--line)'}`,
+                        color: filter === f.key ? 'var(--gold, #D4A017)' : 'var(--muted)',
+                      }}>{f.label}</button>
+            ))}
+          </div>
+        }
+      >
+        {rows.length === 0 ? <EmptyBox>No invoices in this state.</EmptyBox> : (
           <div style={{ overflowX: 'auto' }}>
             <table className="adm-table">
-              <thead><tr><th>Invoice #</th><th>User</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th><th>Issued</th><th>Paid</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Customer</th><th>Description</th>
+                  <th style={{ textAlign: 'right' }}>Amount</th>
+                  <th>Method</th><th>Status</th><th>Issued</th><th>Due</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
               <tbody>
-                {inv.data!.invoices.map((row, i) => (
-                  <tr key={i}>
-                    <td className="num">{row.number || '—'}</td>
-                    <td className="adm-truncate" style={{ maxWidth: 240 }}>{row.user_email || '—'}</td>
-                    <td>{row.status || '—'}</td>
-                    <td className="num" style={{ textAlign: 'right' }}>{fmtUsd(row.amount_usd, false, 2)}</td>
-                    <td style={{ color: 'var(--muted)' }}>{row.issued_at ? new Date(row.issued_at).toISOString().slice(0, 10) : '—'}</td>
-                    <td style={{ color: 'var(--muted)' }}>{row.paid_at ? new Date(row.paid_at).toISOString().slice(0, 10) : '—'}</td>
-                  </tr>
-                ))}
+                {rows.map(row => {
+                  const st = row.status || 'draft'
+                  const tone = INV_TONE[st] || 'var(--muted)'
+                  const isOpen = openRow === row.id
+                  const settled = st === 'paid' || st === 'void'
+                  return (
+                    <Fragment key={row.id}>
+                      <tr style={{ cursor: 'pointer' }} onClick={() => setOpenRow(isOpen ? null : row.id)}>
+                        <td className="adm-truncate" style={{ maxWidth: 220 }}>
+                          {row.profiles?.email || row.user_id.slice(0, 8)}
+                          {row.is_test ? (
+                            <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 5,
+                                           background: 'color-mix(in srgb, var(--muted) 20%, transparent)', color: 'var(--muted)' }}>TEST</span>
+                          ) : null}
+                        </td>
+                        <td className="adm-truncate" style={{ maxWidth: 260, color: 'var(--muted)' }}>{row.description || '—'}</td>
+                        <td className="num" style={{ textAlign: 'right' }}>{money(row.amount_cents)}</td>
+                        <td style={{ color: 'var(--muted)' }}>{row.payment_method || '—'}</td>
+                        <td><span style={{ fontSize: 11, fontWeight: 700, color: tone }}>{INV_LABEL[st] || st}</span></td>
+                        <td style={{ color: 'var(--muted)' }}>{day(row.issued_at)}</td>
+                        <td style={{ color: 'var(--muted)' }}>{day(row.due_at)}</td>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                          {settled ? (
+                            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{st === 'paid' ? day(row.paid_at) : '—'}</span>
+                          ) : (
+                            <>
+                              <button type="button" disabled={busy === row.id}
+                                      onClick={() => act(row.id, 'confirm_paid', `Mark ${money(row.amount_cents)} from ${row.profiles?.email || 'this customer'} as PAID?`)}
+                                      style={{ fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                                               border: '1px solid var(--pos, #22c55e)', color: 'var(--pos, #22c55e)',
+                                               background: 'color-mix(in srgb, var(--pos, #22c55e) 12%, transparent)' }}>
+                                {busy === row.id ? '…' : 'Mark paid'}
+                              </button>
+                              {st === 'pending_verification' ? (
+                                <button type="button" disabled={busy === row.id}
+                                        onClick={() => act(row.id, 'reject', 'Reject this payment claim? The invoice goes back to awaiting payment.')}
+                                        style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                                                 border: '1px solid var(--line)', color: 'var(--muted)', background: 'transparent' }}>Reject</button>
+                              ) : (
+                                <button type="button" disabled={busy === row.id}
+                                        onClick={() => act(row.id, 'void', 'Void this invoice? It stops being owed.')}
+                                        style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                                                 border: '1px solid var(--line)', color: 'var(--muted)', background: 'transparent' }}>Void</button>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr>
+                          <td colSpan={8} style={{ background: 'color-mix(in srgb, var(--text) 3%, transparent)' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, padding: '10px 4px', fontSize: 11 }}>
+                              <Detail k="Exact amount expected" v={money(row.unique_amount_cents ?? row.amount_cents)} />
+                              <Detail k="Network" v={row.crypto_network || '—'} />
+                              <Detail k="Coin" v={row.crypto_coin || '—'} />
+                              <Detail k="Submitted" v={row.payment_submitted_at ? new Date(row.payment_submitted_at).toISOString().slice(0, 16).replace('T', ' ') : '—'} />
+                              <Detail k="Tx hash" v={row.crypto_tx_hash || 'not supplied'} mono />
+                              <Detail k="Stripe charge" v={row.stripe_charge_id || '—'} mono />
+                              <Detail k="Invoice id" v={row.id} mono />
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
       </SectionCard>
-    </>
+    </div>
+  )
+}
+
+function Detail({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <div>
+      <div style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', fontSize: 10, fontWeight: 700 }}>{k}</div>
+      <div style={{ marginTop: 3, fontFamily: mono ? 'var(--font-mono, monospace)' : undefined, wordBreak: 'break-all' }}>{v}</div>
+    </div>
   )
 }
 
