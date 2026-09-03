@@ -380,10 +380,11 @@ export function SimulatorContent() {
   const [btcMonthly, setBtcMonthly] = useState<BtcMonth[]>([])
   const [loading, setLoading] = useState(false)  // tier-aware: no mount-time fetch
   // ── 2026-09-03 (Chris) ────────────────────────────────────────────────────────────────────
-  // Inside the app the simulator must behave like every other page: no language question, no
-  // theme question, and no forcing dark. It starts at the first REAL question and inherits the
-  // app's own theme and language, so switching the app to light switches this with it.
-  const [step, setStep] = useState<Step>('capital')
+  // The wizard KEEPS its language and theme questions — Chris asked for them to be PRE-ANSWERED
+  // from the app, not removed. They open already set to whatever the app is using, and the user
+  // can still change either for this session. (I removed them outright first; that was not the
+  // ask.)
+  const [step, setStep] = useState<Step>('lang')
   const [lang, setLang] = useState<Lang>(() => {
     if (typeof window === 'undefined') return 'en'
     try { return localStorage.getItem('stax-lang') === 'PT' ? 'pt' : 'en' } catch { return 'en' }
@@ -469,13 +470,18 @@ export function SimulatorContent() {
     })()
     return () => { cancelled = true }
   }, [tierKey])
+  // 2026-09-03: this scrolled on EVERY run of the effect, including the first paint, so opening
+  // the page jumped it straight down past the header. Scroll only once the wizard has actually
+  // moved — the first view stays at the top, like any other page.
+  const hasAdvanced = useRef(false)
   useEffect(() => {
+    if (!hasAdvanced.current) { hasAdvanced.current = true; return }
     if (step === 'results') { setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150) }
     else { setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 120) }
   }, [step, simLines.length])
   useEffect(() => { if (step === 'capital') setTimeout(() => inputRef.current?.focus(), 500) }, [step])
 
-  const past = (s: Step) => ['capital','tier','sizing','period','sim','results'].indexOf(step) > ['capital','tier','sizing','period','sim','results'].indexOf(s)
+  const past = (s: Step) => ['lang','theme','capital','tier','sizing','period','sim','results'].indexOf(step) > ['lang','theme','capital','tier','sizing','period','sim','results'].indexOf(s)
   const atOrPast = (s: Step) => step === s || past(s)
 
   const pickLang = (l: Lang) => { setLang(l); setStep('theme') }
@@ -585,6 +591,26 @@ export function SimulatorContent() {
           
 
           {/* CAPITAL */}
+          {atOrPast('lang') && (
+            <div className="pt-4 space-y-3 animate-[fadeIn_0.3s_ease-out]">
+              <div className="text-lg" style={{ color: 'var(--sim-text)' }}><Type text={t.langQ} delay={2800} speed={18} /></div>
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => step === 'lang' && pickLang('en')} disabled={step !== 'lang'} className={btn(lang === 'en' && past('lang'), step === 'lang')}>🇬🇧 English</button>
+                <button onClick={() => step === 'lang' && pickLang('pt')} disabled={step !== 'lang'} className={btn(lang === 'pt' && past('lang'), step === 'lang')}>🇧🇷 Português</button>
+              </div>
+            </div>
+          )}
+
+          {atOrPast('theme') && (
+            <div className="pt-2 space-y-3 animate-[fadeIn_0.3s_ease-out]">
+              <div className="text-lg" style={{ color: 'var(--sim-text)' }}><Type text={t.themeQ} delay={200} speed={18} /></div>
+              <div className="flex gap-2">
+                <button onClick={() => step === 'theme' && pickTheme(true)} disabled={step !== 'theme'} className={btn(dark && past('theme'), step === 'theme')}>🌙 {t.dark}</button>
+                <button onClick={() => step === 'theme' && pickTheme(false)} disabled={step !== 'theme'} className={btn(!dark && past('theme'), step === 'theme')}>☀️ {t.light}</button>
+              </div>
+            </div>
+          )}
+
           {atOrPast('capital') && (
             <div className="pt-2 space-y-3 animate-[fadeIn_0.3s_ease-out]">
               <div className="text-lg" style={{ color: 'var(--sim-text)' }}><Type text={t.capitalQ} delay={200} speed={18} /></div>
