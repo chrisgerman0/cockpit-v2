@@ -134,6 +134,10 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
   // action" for a difference that is one cfg in one lane and fully understood. Fixing the API
   // without teaching the panel the word is why this looked unfixed three times.
   const seating = cur.state === 'CONTENDED' || cur.state === 'SEATING_DIVERGENCE'
+  // §OFF-BOOK-POSITION: a lane Chris has declared off the BOOK. Still managed to its exit and
+  // still shown here with its reason — it is simply not counted in lane parity, exactly like a
+  // carried lane. Excluding it from the comparison is the point; hiding it would not be.
+  const offbook: any[] = (cur as any).offbook ?? []
   const tone = ok ? 'var(--pos, #16a34a)'
     : (behind || lag || seating) ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
   const verdictWord = ok ? 'IN SYNC'
@@ -402,10 +406,23 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                           color: 'var(--warn, #d97706)', background: 'transparent',
                         }}>MIRROR</span>
                       )}
+                      {/* §OFF-BOOK-POSITION: managed to its exit, excluded from lane parity.
+                          Shown, not hidden — the exclusion is from the COUNT, not from view. */}
+                      {offbook.some((o: any) => o.cfg_sid === r.live?.cfg_sid) && (
+                        <span title={(offbook.find((o: any) => o.cfg_sid === r.live?.cfg_sid) || {}).reason || ''}
+                          style={{
+                            marginLeft: 6, fontSize: 10, fontWeight: 800, letterSpacing: .6,
+                            padding: '2px 7px', borderRadius: 4,
+                            border: '1px dashed var(--ink-mute, #8a8a8a)',
+                            color: 'var(--ink-mute, #8a8a8a)', background: 'transparent',
+                          }}>OFF-BOOK</span>
+                      )}
                     </td>
                     <td>
                       {r.canon
                         ? <><b>{r.canon.asset}</b> <span className="adm-mono-sm adm-p-muted">{r.canon.cfg_sid}</span></>
+                        : offbook.some((o: any) => o.cfg_sid === r.live?.cfg_sid)
+                          ? <span style={{ color: 'var(--ink-mute)' }}>off the book — not compared</span>
                         : (r.live?.kind === 'PENDING'
                             ? <span style={{ color: 'var(--ink-mute)' }}>
                                 not yet — the limit has not filled, so canonical cannot hold it
