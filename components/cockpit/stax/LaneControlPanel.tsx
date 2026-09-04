@@ -31,7 +31,9 @@ type Tier = {
     // canonical publishes no seat assignment; false means 'render as unknown, never assert'
     super_lane_known?: boolean }
   state: 'MATCH' | 'MATCH_CARRIED_EXCLUDED' | 'CANONICAL_BEHIND' | 'CONTENDED'
-    | 'SEATING_DIVERGENCE' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
+    | 'SEATING_DIVERGENCE' | 'CAPACITY_SHORT' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
+  capacity_short?: boolean
+  capacity_note?: string | null
   not_seen_sids?: string[]
   canon_age_sec?: number | null
   gate?: { computed_at: string | null; age_sec: number | null; holds: string[]; frozen: boolean } | null
@@ -134,13 +136,19 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
   // action" for a difference that is one cfg in one lane and fully understood. Fixing the API
   // without teaching the panel the word is why this looked unfixed three times.
   const seating = cur.state === 'CONTENDED' || cur.state === 'SEATING_DIVERGENCE'
+  // 2026-09-04: the books can AGREE while live still cannot act on them. An off-book position is
+  // real money in a real lane, so it costs capacity until it exits — and a missed entry is a
+  // worse outcome for Chris than a book disagreement. Rendered RED, never green.
+  const capShort = cur.state === 'CAPACITY_SHORT'
   // §OFF-BOOK-POSITION: a lane Chris has declared off the BOOK. Still managed to its exit and
   // still shown here with its reason — it is simply not counted in lane parity, exactly like a
   // carried lane. Excluding it from the comparison is the point; hiding it would not be.
   const offbook: any[] = (cur as any).offbook ?? []
   const tone = ok ? 'var(--pos, #16a34a)'
+    : capShort ? 'var(--neg, #dc2626)'
     : (behind || lag || seating) ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
   const verdictWord = ok ? 'IN SYNC'
+    : capShort ? 'LANE SHORT'
     : behind ? 'CANONICAL BEHIND'
     : seating ? 'SEATING DIVERGENCE'
     : lag ? 'PROPAGATING' : 'DIVERGED'
@@ -209,7 +217,8 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                   {verdictWord}
                 </div>
                 <div className="adm-stat-sub">
-                  {ok ? 'live can take what canonical takes'
+                  {capShort ? (cur.capacity_note ?? 'live has fewer free lanes than canonical — it will miss the next entry')
+                    : ok ? 'live can take what canonical takes'
                     : behind ? `canonical has not seen this bar yet — it last computed ${ageTxt(cur.canon_age_sec)}`
                     : seating ? 'same capacity, different cfg in one lane — live seats by arrival, '
                         + 'canonical by pool index. Both books are correct; nothing to do.'
