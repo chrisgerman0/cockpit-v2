@@ -26,10 +26,15 @@ type Tier = {
   ordinary_lanes?: number
   super_lane?: SuperLane
   live: { occupied: number; free: number; n_lanes: number; ordinary_lanes?: number; occupied_total?: number } | null
-  canon: { occupied: number; free: number; ordinary_lanes?: number; occupied_total?: number; super_lane_occupied?: boolean }
-  state: 'MATCH' | 'MATCH_CARRIED_EXCLUDED' | 'CANONICAL_BEHIND' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
+  canon: { occupied: number; free: number; ordinary_lanes?: number; occupied_total?: number;
+    super_lane_occupied?: boolean;
+    // canonical publishes no seat assignment; false means 'render as unknown, never assert'
+    super_lane_known?: boolean }
+  state: 'MATCH' | 'MATCH_CARRIED_EXCLUDED' | 'CANONICAL_BEHIND' | 'CONTENDED'
+    | 'SEATING_DIVERGENCE' | 'LAG' | 'MISMATCH' | 'NO_LIVE_ACCOUNT'
   not_seen_sids?: string[]
   canon_age_sec?: number | null
+  gate?: { computed_at: string | null; age_sec: number | null; holds: string[]; frozen: boolean } | null
   divergence_age_sec: number | null; maturity_sec: number
   computed_at: string | null; rows: Row[]
 }
@@ -123,10 +128,17 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
   const ok = cur.state === 'MATCH' || cur.state === 'MATCH_CARRIED_EXCLUDED'
   const behind = cur.state === 'CANONICAL_BEHIND'
   const lag = cur.state === 'LAG'
+  // 2026-09-04 (Chris, TB4): a FIFTH state. The API has been returning CONTENDED since the
+  // forward-guard fix, but this component only knew MATCH / CANONICAL_BEHIND / LAG, so CONTENDED
+  // fell through to red DIVERGED and the screen still said "live cannot mirror canonical — needs
+  // action" for a difference that is one cfg in one lane and fully understood. Fixing the API
+  // without teaching the panel the word is why this looked unfixed three times.
+  const seating = cur.state === 'CONTENDED' || cur.state === 'SEATING_DIVERGENCE'
   const tone = ok ? 'var(--pos, #16a34a)'
-    : (behind || lag) ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
+    : (behind || lag || seating) ? 'var(--warn, #d97706)' : 'var(--neg, #dc2626)'
   const verdictWord = ok ? 'IN SYNC'
     : behind ? 'CANONICAL BEHIND'
+    : seating ? 'SEATING DIVERGENCE'
     : lag ? 'PROPAGATING' : 'DIVERGED'
   const ageTxt = (n?: number | null) =>
     (n == null ? 'unknown age'
@@ -195,13 +207,25 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                 <div className="adm-stat-sub">
                   {ok ? 'live can take what canonical takes'
                     : behind ? `canonical has not seen this bar yet — it last computed ${ageTxt(cur.canon_age_sec)}`
+                    : seating ? 'same capacity, different cfg in one lane — live seats by arrival, '
+                        + 'canonical by pool index. Both books are correct; nothing to do.'
                     : lag ? `${cur.divergence_age_sec}s old — inside the ${Math.round(cur.maturity_sec / 60)}m publish window`
                       : 'live cannot mirror canonical — needs action'}
                 </div>
               </div>
             </div>
             <div className="adm-p adm-p-sm adm-p-muted" style={{ marginTop: 10 }}>
-              Comparing against a canonical book computed {ageTxt(cur.canon_age_sec)}
+              {/* GD4: the verdict uses the FORWARD book; the gating surface is shown as its own
+                  line so a frozen gate is a visible fact instead of silently becoming the
+                  comparison — which is exactly what it did on 2026-09-03. */}
+              {cur.gate?.frozen ? (
+                <div style={{ marginBottom: 6, color: 'var(--neg, #dc2626)' }}>
+                  <b>The gating surface is FROZEN</b> — the engine gates on a book computed{' '}
+                  {ageTxt(cur.gate.age_sec)} holding {cur.gate.holds.length} position(s). The forward
+                  book below is current; the gate advances only when a forward publish is accepted.
+                </div>
+              ) : null}
+              Comparing against the FORWARD canonical book computed {ageTxt(cur.canon_age_sec)}
               {cur.computed_at ? ` (${cur.computed_at.replace('T', ' ').slice(0, 19)}Z)` : ''}
               {(cur.not_seen_sids?.length ?? 0) > 0
                 ? ` · canonical has not judged ${cur.not_seen_sids!.length} live lane(s) yet: ${cur.not_seen_sids!.join(', ')}`
@@ -326,9 +350,15 @@ export default function LaneControlPanel({ active }: { active: boolean }) {
                   </td>
                   {/* right-aligned to sit directly above the cfg in the ordinary rows below */}
                   <td style={{ textAlign: 'right', opacity: 0.85 }}>
-                    {cur.canon?.super_lane_occupied
-                      ? <span style={{ color: 'var(--gold)' }}>reserved seat in use</span>
-                      : <span style={{ opacity: 0.6 }}>reserved seat free</span>}
+                    {/* Canonical publishes NO seat assignment — its rows carry no lane id. The
+                        panel used to infer "in use" from the presence of any Tier-S cfg and printed
+                        it above a table listing six canonical holdings while claiming five. An
+                        unknown must render as unknown. */}
+                    {cur.canon?.super_lane_known === false
+                      ? <span style={{ opacity: 0.6 }}>not published by canonical</span>
+                      : cur.canon?.super_lane_occupied
+                        ? <span style={{ color: 'var(--gold)' }}>reserved seat in use</span>
+                        : <span style={{ opacity: 0.6 }}>reserved seat free</span>}
                   </td>
                 </tr>
               )}
