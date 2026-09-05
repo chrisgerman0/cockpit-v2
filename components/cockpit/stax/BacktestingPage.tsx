@@ -23,6 +23,7 @@
  * /data/strategies/satoshi-stacker/(tiers/<tier>/)portfolio-trades.json.
  */
 
+import { coinIconUrl } from '@/lib/coinIcon'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
 import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, LIVEREF_BASE, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
@@ -156,28 +157,15 @@ function tradesPath(tier: Tier, base = LIVE_DATA_BASE): string {
   return `${base}/tiers/${tier}/portfolio-trades.json`
 }
 
-const ASSET_LOGOS: Record<string, string> = {
-  BTCUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETHUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRPUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOLUSDT:  '/coin-icons/sol.png',
-  SUIUSDT:  '/coin-icons/sui.png',
-  DOGEUSDT: '/coin-icons/doge.svg',
-  LINKUSDT: '/coin-icons/link.svg',
-  // Phase H additions — Chris-provided logos live at /coin-icons/<name>.png
-  BNBUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg', // Chris hasn't sent a custom — keep CDN
-  AVAXUSDT: '/coin-icons/avax.png',
-  ADAUSDT:  '/coin-icons/ada.png',
-  TRXUSDT:  '/coin-icons/trx.png',
-  ZECUSDT:  '/coin-icons/zec.png',
-  GRAMUSDT: '/coin-icons/ton.png',  // GRAM = rebranded TON (Option B); reuse the TON logo
-  HYPEUSDT: '/coin-icons/hype.png',
-  NEARUSDT: '/coin-icons/near.png',
-  OPUSDT:   '/coin-icons/op.png',
-  SEIUSDT:  '/coin-icons/sei.png',
-  ONDOUSDT: '/coin-icons/ondo.png',
-  HBARUSDT: '/coin-icons/hbar.svg', // hand-crafted Hedera H mark — cryptocurrency-icons pkg has no HBAR (404)
-}
+// 2026-09-05: was a hand-kept 19-entry map, so AAVE/ATOM/BCH/ETC/FIL/LTC/XLM and others rendered
+// blank. Backed by the ONE shared resolver (lib/coinIcon), which covers every basket asset from
+// vendored files and falls back to the CDN for anything new. A Proxy keeps the ASSET_LOGOS[sym]
+// call sites below unchanged — the lookup is now computed rather than transcribed.
+const ASSET_LOGOS: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_t, k: string) => coinIconUrl(String(k)) ?? '',
+  has: (_t, k: string) => !!coinIconUrl(String(k)),
+})
+
 
 export function BacktestingContent() {
   const t = useT()

@@ -1,3 +1,4 @@
+import { coinIconUrl } from './coinIcon'
 /**
  * Dashboard-side mirror of /staxs-landing/lib/phase-h-basket.ts.
  *
@@ -37,30 +38,23 @@ export type PhaseHAsset = string
 export const PHASE_H_SYMBOLS: readonly string[] = PHASE_H_BASKET.map(a => `${a}USDT`)
 export type PhaseHSymbol = string
 
-// Logo URLs per asset. CDN-hosted SVGs first, local fallback for assets the
-// CDN doesn't carry. If a new asset is added to the basket, add the logo
-// here too — the UI silently shows just the symbol abbreviation if missing.
-export const ASSET_LOGOS: Record<PhaseHSymbol, string> = {
-  BTCUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETHUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  SOLUSDT:  '/coin-icons/sol.png',
-  BNBUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg',
-  XRPUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  DOGEUSDT: '/coin-icons/doge.svg',
-  LINKUSDT: '/coin-icons/link.svg',
-  SUIUSDT:  '/coin-icons/sui.png',
-  AVAXUSDT: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/avax.svg',
-  ADAUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/ada.svg',
-  TRXUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/trx.svg',
-  ZECUSDT:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/zec.svg',
-  GRAMUSDT: '/coin-icons/ton.png',  // 2026-06-17: GRAM = rebranded TON; reuse the TON logo
-  HYPEUSDT: '/coin-icons/hype.png',
-  NEARUSDT: '/coin-icons/near.png',
-  OPUSDT:   '/coin-icons/op.png',
-  SEIUSDT:  '/coin-icons/sei.png',
-  ONDOUSDT: '/coin-icons/ondo.png',
-  HBARUSDT: '/coin-icons/hbar.svg',   // 2026-07-05: drop hbar.png into public/coin-icons/ (UI shows symbol-only until then)
-}
+// Logo URL per asset — RESOLVED, not transcribed (2026-09-05).
+//
+// This block used to be a hand-kept map, and the comment that stood here said exactly what went
+// wrong: "If a new asset is added to the basket, add the logo here too — the UI silently shows
+// just the symbol abbreviation if missing." It was documented and never fixed, across FOUR
+// separate copies of the same map, so AAVE, ATOM, BCH, ETC, FIL, LTC and XLM rendered blank on
+// every page. Silence is the worst failure mode for a lookup: nothing errors, the icon is just
+// absent.
+//
+// Now every symbol is computed by the ONE resolver (lib/coinIcon), which is backed by vendored
+// files for all 29 basket assets and falls back to the CDN for anything new. Adding an asset to
+// the basket needs no icon edit anywhere.
+export const ASSET_LOGOS: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_t, k: string) => coinIconUrl(String(k)) ?? '',
+  has: (_t, k: string) => !!coinIconUrl(String(k)),
+})
+
 
 export type CoinFilter = 'ALL' | PhaseHAsset
 

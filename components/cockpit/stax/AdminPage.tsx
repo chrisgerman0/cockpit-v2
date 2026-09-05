@@ -21,6 +21,7 @@
  * Bearer token. Non-admins get 403; the panel surfaces a clear error.
  */
 
+import { coinIconUrl } from '@/lib/coinIcon'
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { authedFetch } from '@/lib/api'
@@ -1175,14 +1176,10 @@ function fmtCompPx(n: number | null | undefined): string {
 }
 
 function CoinDotMini({ sym }: { sym: string }) {
-  const url: Record<string, string> = {
-    BTC: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-    ETH: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-    XRP: 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-    SOL: '/coin-icons/sol.png',
-    SUI: '/coin-icons/sui.png',
-  }
-  const src = url[sym]
+  // 2026-09-05: was a FIVE-entry map — BTC/ETH/XRP/SOL/SUI — so 24 of the 29 basket assets
+  // rendered no icon at all here. Now the one shared resolver (lib/coinIcon), which covers every
+  // basket asset locally and falls back to the CDN for anything new.
+  const src = coinIconUrl(sym)
   if (!src) return null
   return <img src={src} alt={sym} width={14} height={14} style={{ display: 'inline-block', borderRadius: '50%', verticalAlign: 'middle', marginRight: 4 }} />
 }

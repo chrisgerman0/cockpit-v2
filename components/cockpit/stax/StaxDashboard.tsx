@@ -6,6 +6,7 @@
    stax-design.css (scoped under .stax-app); these components only emit the
    markup the design expects. */
 
+import { coinIconUrl } from '@/lib/coinIcon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { InvoiceDueBanner } from './InvoiceDueBanner'
 import Link from 'next/link'
@@ -1202,31 +1203,15 @@ function StatsRow({ stats }: { stats: StatCardSpec[] }) {
 
 // ─── Tables ─────────────────────────────────────────────────────────────────
 
-// Real coin logos. BTC/ETH/XRP via the cryptocurrency-icons CDN (same set the
-// v1 dashboard uses); SOL/SUI fall back to local PNGs (CDN package doesn't
-// ship SUI). basePath '/v2' is automatically prefixed by Next on relative
-// /coin-icons/ URLs because they're served as plain <img>.
-const COIN_ICON_SRC: Record<CoinSym, string> = {
-  BTC:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/btc.svg',
-  ETH:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/eth.svg',
-  XRP:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/xrp.svg',
-  SOL:  '/coin-icons/sol.png',
-  SUI:  '/coin-icons/sui.png',
-  DOGE: '/coin-icons/doge.svg',
-  LINK: '/coin-icons/link.svg',
-  ADA:  '/coin-icons/ada.png',
-  AVAX: '/coin-icons/avax.png',
-  BNB:  'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/bnb.svg',
-  HYPE: '/coin-icons/hype.png',
-  GRAM: '/coin-icons/ton.png',
-  TRX:  '/coin-icons/trx.png',
-  ZEC:  '/coin-icons/zec.png',
-  NEAR: '/coin-icons/near.png',
-  OP:   '/coin-icons/op.png',
-  SEI:  '/coin-icons/sei.png',
-  ONDO: '/coin-icons/ondo.png',
-  HBAR: '/coin-icons/hbar.svg',
-}
+// Coin logos — RESOLVED by the ONE shared resolver (lib/coinIcon), 2026-09-05.
+// This was a hand-kept map, one of FOUR, which is why AAVE/ATOM/BCH/ETC/FIL/LTC/XLM were blank on
+// every page. All 29 basket assets are now vendored under /coin-icons; the resolver falls back to
+// the CDN for anything new. basePath '/v2' is still applied by Next to the relative URLs.
+const COIN_ICON_SRC: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_t, k: string) => coinIconUrl(String(k)) ?? '',
+  has: (_t, k: string) => !!coinIconUrl(String(k)),
+})
+
 
 function CoinDot({ sym, size = 22 }: { sym: CoinSym; size?: number }) {
   // Wrapper enforces the size — the inner <img> can't break out because the
