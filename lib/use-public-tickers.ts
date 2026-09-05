@@ -12,13 +12,15 @@ import { useEffect, useState } from 'react'
 // longer traded and missing eleven coins that are — so a live position on one of those eleven had
 // no live price and fell back to the server-computed value. Driven by the generated basket now.
 import { PHASE_H_SYMBOLS } from './phase-h-basket'
+import { baseSymbol } from './coinIcon'
 const V1_SYMBOLS: readonly string[] = PHASE_H_SYMBOLS
 type V1Symbol = string
 
-export type PublicTickerShort =
-  | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
-  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP' | 'SEI' | 'ONDO' | 'HBAR'
+// 2026-09-05: was a hardcoded 19-member union while the ticker DATA already covered all 29 basket
+// symbols (fixed 2026-09-03). The 11 it did not name — AAVE, ATOM, BCH, ETC, FIL, LTC, PEPE, RUNE,
+// TAO, WLD, XLM — got `undefined` from the SHORT map, so the topbar rendered them with no icon and
+// no label. Widened to string and DERIVED below, so the basket can never outgrow it again.
+export type PublicTickerShort = string
 
 export type PublicTicker = {
   symbol: V1Symbol
@@ -27,14 +29,12 @@ export type PublicTicker = {
   change: number   // percent (e.g. 2.18 means +2.18%)
 }
 
-const SHORT: Record<V1Symbol, PublicTicker['short']> = {
-  BTCUSDT:  'BTC',  ETHUSDT:  'ETH',  SOLUSDT: 'SOL',  XRPUSDT: 'XRP',  SUIUSDT: 'SUI',
-  DOGEUSDT: 'DOGE', LINKUSDT: 'LINK',
-  ADAUSDT:  'ADA',  AVAXUSDT: 'AVAX', BNBUSDT: 'BNB',  HYPEUSDT: 'HYPE',
-  GRAMUSDT: 'GRAM',  TRXUSDT:  'TRX',  ZECUSDT: 'ZEC',
-  NEARUSDT: 'NEAR', OPUSDT:   'OP',
-  SEIUSDT:  'SEI',  ONDOUSDT: 'ONDO', HBARUSDT: 'HBAR',
-}
+// DERIVED, not transcribed. This was the FIFTH hardcoded copy of the basket list in this app —
+// the same pattern that left icons missing on every page. baseSymbol() strips the pair suffix
+// (BTCUSDT -> BTC), which is exactly what the old map did by hand for 19 of 29 symbols.
+const SHORT: Record<string, string> = Object.fromEntries(
+  V1_SYMBOLS.map(s => [s, baseSymbol(s)]),
+)
 
 // ─── Singleton WebSocket store ──────────────────────────────────────────────
 //

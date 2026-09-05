@@ -43,10 +43,11 @@ function publicToTickerAssets(rows: PublicTicker[]): TickerAsset[] {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type TradeSide = 'LONG' | 'SHORT'
-export type CoinSym =
-  | 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'SUI' | 'DOGE' | 'LINK'
-  | 'ADA' | 'AVAX' | 'BNB' | 'HYPE' | 'GRAM' | 'TRX' | 'ZEC'
-  | 'NEAR' | 'OP' | 'SEI' | 'ONDO' | 'HBAR'
+// 2026-09-05: was a 19-member union against a 29-asset basket, so AAVE, ATOM, BCH, ETC, FIL, LTC,
+// PEPE, RUNE, TAO, WLD and XLM could not even be TYPED here — the topbar ticker rendered them with
+// an empty icon src. Widened to string: the basket is the source of truth, not a union that has to
+// be edited every time Chris adds a coin.
+export type CoinSym = string
 
 export type Position = {
   pair: string

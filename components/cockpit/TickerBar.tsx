@@ -1,4 +1,5 @@
 import { Maximize2, Signal } from 'lucide-react'
+import { coinIconUrl } from '@/lib/coinIcon'
 import { fmtPct, fmtUsd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { TickerAsset } from './mock-data'
@@ -12,7 +13,13 @@ export function TickerBar({ assets }: { assets: TickerAsset[] }) {
       <div className="mx-auto flex max-w-[1440px] items-center overflow-x-auto">
         {assets.map(asset => (
           <div key={asset.symbol} className="flex min-h-11 min-w-36 items-center gap-2 border-r border-border/70 px-3">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-semibold">{asset.symbol[0]}</span>
+            {/* 2026-09-05: was a grey circle with the symbol's FIRST LETTER — never an icon at
+                all. Uses the one shared resolver, which covers every basket asset. */}
+            <span className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold">
+              {coinIconUrl(asset.symbol)
+                ? <img src={coinIconUrl(asset.symbol)!} alt="" className="h-full w-full object-cover" />
+                : asset.symbol[0]}
+            </span>
             <div>
               <div className="num text-xs font-semibold">{asset.symbol} <span className="text-muted-foreground">{fmtUsd(asset.price)}</span></div>
               <div className={cn('num text-xs', asset.change >= 0 ? 'text-positive' : 'text-negative')}>{fmtPct(asset.change, { sign: true })}</div>
