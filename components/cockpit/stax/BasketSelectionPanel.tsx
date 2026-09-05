@@ -12,7 +12,7 @@ const TIERS = ['conservative', 'moderate', 'aggressive', 'kamikaze'] as const
 type Tier = typeof TIERS[number]
 type M = { returnPct: number; netUsd: number; trades: number; winRate: number; profitFactor: number; maxDD: number }
 type Basket = { key: string; label: string; k: number; metrics: Record<Tier, M>; added: string[]; removed: string[]; sids: string[]; source: string }
-type SA = { sid: string; asset: string; tf?: string; trades: number; winRate?: number; profitFactor?: number | null; netUsd?: number; maxDD?: number; error?: string }
+type SA = { sid: string; asset: string; tf?: string; trades: number; winRate?: number; profitFactor?: number | null; rrr?: number | null; netUsd?: number; maxDD?: number; error?: string }
 type Payload = { generated_at_utc?: string; basis?: string; standalone_definition?: string; incumbent?: Record<Tier, M>; baskets?: Basket[]; standalone?: Record<string, SA>; behaviour_duplicates?: Record<string, string[]>; dedup_status?: string; error?: string }
 
 const n2 = (v?: number | null) => (v == null ? '—' : v.toFixed(2))
@@ -310,7 +310,7 @@ export function BasketSelectionPanel({ active }: { active: boolean }) {
                           {([['sid', 'CFG (STANDALONE)'], ['asset', 'asset'], ['tf', 'tf'],
                              ['direction', 'dir'], ['archetype', 'archetype'], ['trades', 'trades'],
                              ['trades_per_year', 'tr/yr'],
-                             ['winRate', 'WIN RATE'], ['profitFactor', 'PF'], ['netUsd', 'net USD'], ['maxDD', 'maxDD']] as const).map(([k, lbl]) => (
+                             ['winRate', 'WIN RATE'], ['profitFactor', 'PF'], ['rrr', 'RRR'], ['netUsd', 'net USD'], ['maxDD', 'maxDD']] as const).map(([k, lbl]) => (
                             <th key={k} onClick={() => setCfgSort(s => ({ k: k as keyof SA, d: s.k === k && s.d === -1 ? 1 : -1 }))}
                                 style={{ cursor: 'pointer', padding: '4px 6px', textAlign: ['sid','asset','tf','direction','archetype'].includes(k as string) ? 'left' : 'right' }}>
                               {lbl}{cfgSort.k === k ? (cfgSort.d === -1 ? ' ▼' : ' ▲') : ''}
@@ -365,6 +365,18 @@ export function BasketSelectionPanel({ active }: { active: boolean }) {
                                   </td>
                                   <td style={{ padding: '3px 6px', textAlign: 'right' }}>{n2(sa.winRate)}</td>
                                   <td style={{ padding: '3px 6px', textAlign: 'right' }}>{n3(sa.profitFactor)}</td>
+                                  {/* RRR per cfg (Chris, 2026-09-05): "I want to know RRR the same
+                                      as WR and PF, stand alone metrics per individual cfg."
+                                      DERIVED from this cfg's OWN standalone PF and win rate —
+                                      avg_win/avg_loss = PF x (1-WR)/WR — the same identity the
+                                      Tier-S R2_rrr rule and the basket objective use, so a member
+                                      RRR and a basket RRR are the same measure. Falls back to
+                                      deriving here if the payload predates the field. */}
+                                  <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 600 }}
+                                      title="reward-to-risk: average win / average loss, standalone">
+                                    {n3(sa.rrr ?? ((sa.profitFactor && sa.winRate && sa.winRate > 0 && sa.winRate < 100)
+                                        ? sa.profitFactor * (100 - sa.winRate) / sa.winRate : undefined))}
+                                  </td>
                                   <td style={{ padding: '3px 6px', textAlign: 'right' }}>{usd(sa.netUsd)}</td>
                                   <td style={{ padding: '3px 6px', textAlign: 'right' }}>{n2(sa.maxDD)}</td>
                                 </tr>,
@@ -372,7 +384,7 @@ export function BasketSelectionPanel({ active }: { active: boolean }) {
                                    every member's actual cfg is the point of the tab. */
                                 (sa as any).params
                                   ? <tr key={sa.sid + '_p'}>
-                                      <td colSpan={11} style={{ padding: '0 6px 6px 18px' }}>
+                                      <td colSpan={12} style={{ padding: '0 6px 6px 18px' }}>
                                         <details>
                                           <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--muted)' }}>
                                             parameters

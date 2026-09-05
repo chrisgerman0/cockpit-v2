@@ -20,11 +20,18 @@
 const ALIAS: Record<string, string> = { GRAM: 'ton', TON: 'ton' }
 
 /** Local files present under public/coin-icons, by lowercase symbol. */
+// 2026-09-05: TAO, PEPE, RUNE, WLD and HBAR moved svg -> png. The five SVGs they replaced were
+// PLACEHOLDERS, not logos — a coloured circle with the ticker typed inside it (`<circle>` + a
+// `<text>` element, ~390 bytes each) — and HBAR was hand-drawn rectangles approximating the
+// Hedera H. Chris spotted it: "Whatever you have used is not the official logo." The real marks
+// are now vendored from the projects' own artwork, masked to a circle so a square JPEG corner
+// never shows as a box on either theme. The originals are kept under
+// public/coin-icons/_retired_placeholders/ rather than deleted.
 const LOCAL: Record<string, string> = {
   aave: 'svg', ada: 'png', atom: 'svg', avax: 'png', bch: 'svg', bnb: 'svg', btc: 'svg',
-  doge: 'svg', etc: 'svg', eth: 'svg', fil: 'svg', hbar: 'svg', hype: 'png', link: 'svg',
-  ltc: 'svg', near: 'png', ondo: 'png', op: 'png', pepe: 'svg', rune: 'svg', sei: 'png',
-  sol: 'png', sui: 'png', tao: 'svg', ton: 'png', trx: 'png', wld: 'svg', xlm: 'svg',
+  doge: 'svg', etc: 'svg', eth: 'svg', fil: 'svg', hbar: 'png', hype: 'png', link: 'svg',
+  ltc: 'svg', near: 'png', ondo: 'png', op: 'png', pepe: 'png', rune: 'png', sei: 'png',
+  sol: 'png', sui: 'png', tao: 'png', ton: 'png', trx: 'png', wld: 'png', xlm: 'svg',
   xrp: 'svg', zec: 'png',
 }
 
