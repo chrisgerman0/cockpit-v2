@@ -161,6 +161,13 @@ export type StaxDashboardData = {
    *  invented line. Omitted => derived from the data (series present ? 'ok' : 'empty'). */
   equityStatus?: 'ok' | 'loading' | 'error' | 'empty'
   equityError?: string
+  /** MEASURED account equity from the live daemon's own snapshots — the authoritative curve. */
+  accountEquitySeries?: Array<{ ts: number; equity: number }> | null
+  accountEquityCoverageStart?: number | null
+  accountEquityCurrent?: number | null
+  accountEquityGaps?: number | null
+  accountEquityReconciliation?: any
+  accountEquityImpliedFlow?: { usd: number | null; derivation: string; caveat: string } | null
   /** The moment the CURRENT wizard configuration became effective — the curve's left edge. */
   equityEffectiveFrom?: string | null
   equityEffectiveFromSource?: string | null
@@ -1146,6 +1153,27 @@ function Hero({ data }: { data: StaxDashboardData }) {
     // `portfolioTrades` — the STRATEGY's backtest — whenever equityTrades was empty, while the
     // caption below still read "Your $X balance". That presented strategy performance as the
     // user's own. A real account NEVER silently borrows the strategy's curve.
+    // ── MEASURED ACCOUNT EQUITY FIRST ───────────────────────────────────────────────────────
+    // When the daemon's own equity snapshots cover the requested range this is not a
+    // reconstruction at all: it is the account's recorded equity, so it ends at the current
+    // balance by construction and needs no assumption about deposits. Everything below it is the
+    // fallback for periods the record does not reach.
+    const acct = data.accountEquitySeries
+    if (acct && acct.length > 1) {
+      const days = RANGE_DAYS[range]
+      const cut = days != null ? Date.now() - days * 86400_000 : 0
+      const inRange = acct.filter(p => p.ts >= cut)
+      const pts = (inRange.length > 1 ? inRange : acct)
+        .map(p => ({ ts: p.ts, value: p.equity, month: '' }))
+      const labelCount = range === '1M' ? 5 : range === '3M' ? 5 : range === '6M' ? 6 : 7
+      const labels: string[] = []
+      for (let i = 0; i < labelCount; i++) {
+        const d = new Date(pts[Math.round((i / (labelCount - 1)) * (pts.length - 1))].ts)
+        labels.push(`${String(d.getDate()).padStart(2, '0')} ${d.toLocaleString('en-US', { month: 'short' })} ${String(d.getFullYear()).slice(2)}`)
+      }
+      return { points: pts, labels, summary: '', isReal: true, isAccount: true,
+               truncated: days != null && acct[0].ts > cut }
+    }
     const isReal = !!data.equityIsReal && !!data.equityTrades && data.equityTrades.length > 0
     const curveBase = (data.equityBase && data.equityBase > 0) ? data.equityBase : data.balanceUsd
     const effMs = data.equityEffectiveFrom ? Date.parse(data.equityEffectiveFrom) : null
@@ -1166,7 +1194,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
       summary: data.equityRangeLabel,
       isReal: false,
     }
-  }, [data.equityTrades, data.equityIsReal, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, data.equityEffectiveFrom, range])
+  }, [data.equityTrades, data.equityIsReal, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, data.equityEffectiveFrom, data.accountEquitySeries, range])
 
   // EXPLICIT, in this order: an author-declared state wins; then a genuine empty; then ok.
   // 'empty' and 'error' are different facts and are never collapsed into one another.
@@ -1286,6 +1314,30 @@ function Hero({ data }: { data: StaxDashboardData }) {
             <>COULD NOT LOAD YOUR EQUITY — this is a read failure, not a zero balance</>
           ) : equityState === 'empty' ? (
             <>NO CLOSED TRADES YET · your curve starts at your first close</>
+          ) : (sim as any).isAccount ? (
+            <>
+              {/* MEASURED ACCOUNT EQUITY. Nothing here is reconstructed: these are the live
+                  daemon's own recorded equity snapshots, so deposits, withdrawals and open-position
+                  P&L are already inside the number and the curve ends at the current balance by
+                  construction. The one thing that must still be said out loud is where the record
+                  BEGINS — a range that reaches further back has no account data behind it, and a
+                  line drawn over that period would be an invention. */}
+              ACCOUNT EQUITY (measured) · ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              {' · '}{range === 'ALL' ? 'all recorded' : `last ${range.toLowerCase()}`}
+              {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
+              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.75 }}>
+                The live engine's own equity record — deposits, withdrawals and open P&amp;L are
+                already in it, which is why it matches Account Balance
+                {data.accountEquityCurrent != null
+                  ? ` ($${data.accountEquityCurrent.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
+                  : ''}.
+                {data.accountEquityCoverageStart
+                  ? ` The account record begins ${new Date(data.accountEquityCoverageStart).toISOString().slice(0, 10)}; there is no equity snapshot before that, so no earlier curve is drawn.`
+                  : ''}
+                {(sim as any).truncated ? ' The selected range reaches further back than the record.' : ''}
+                {data.accountEquityGaps ? ` ${data.accountEquityGaps} gap(s) over 6h in the record.` : ''}
+              </div>
+            </>
           ) : sim.isReal ? (
             <>
               {/* NAME THE QUANTITY AND ITS PERIOD. This curve is the equity recorded when the
@@ -1294,7 +1346,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
                   carries open-position P&L, trades from earlier configurations, and any deposits
                   or withdrawals. They are different quantities and they will not match — saying so
                   is the difference between a reconciliation and a contradiction. */}
-              STRATEGY EQUITY, CURRENT SETTINGS · ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+STRATEGY REALISED EQUITY — NOT ACCOUNT EQUITY · ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
               {' '}= ${(data.equityBase || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} at activation + realised closes
               {data.equityEffectiveFrom ? (
                 <> {' · '}since {new Date(data.equityEffectiveFrom).toISOString().slice(0, 10)}</>

@@ -2618,17 +2618,24 @@ export function ContendersPanel({ active }: { active: boolean }) {
   //    tierS is SEPARATE and must be a subset of picked; unticking a cfg drops it from Tier-S.
   const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [tierS, setTierS] = useState<Record<string, boolean>>({})
-  const [simRun, setSimRun] = useState<any>(null)
-  // ── FULL-PERIOD SEATED SIMULATION (2026-09-26) ──────────────────────────────────────────────
-  // `simRun` above is the contender-sim pass, whose seated metrics cover the SEALED YEAR — which is
-  // what the pool was selected on, and is one year of evidence. This second run walks the COMPLETE
-  // history (pre-seal IS + sealed OOS) in one continuous allocator walk with no reset at the seal,
-  // via /api/admin/basket-sim-full. Both are kept: the sealed-year pass is the selection record,
-  // the full-period pass is what the basket would actually have done.
-  const [fpRun, setFpRun] = useState<any>(null)
-  const [fpMsg, setFpMsg] = useState('')
-  const [fpBusy, setFpBusy] = useState(false)
+  // ── ONE MODE, ONE RESULT, ONE HISTORY (2026-09-26) ─────────────────────────────────────────
+  // The page previously carried two run buttons and three result areas: a green "basket net"
+  // line, a separate ACCOUNT block, and a yellow full-period card — which could be left on screen
+  // together from DIFFERENT runs, with the history table quoting a fourth set of numbers. A reader
+  // could not tell which figure belonged to which run, or which was the account P&L.
+  //
+  // Now: an explicit mode, one RUN button, exactly one authoritative card, and one history whose
+  // rows carry the SAME normalised metrics the card shows. Switching mode CLEARS the result — a
+  // pre-seal card must never sit beside a full-period one.
+  const [simRun, setSimRun] = useState<any>(null)            // raw doc of the loaded run
+  const [simMode, setSimMode] = useState<'PRE_SEAL' | 'FULL_PERIOD'>('FULL_PERIOD')
   const [simHist, setSimHist] = useState<any[]>([])
+  const [fpHist, setFpHist] = useState<any[]>([])
+  // Switching mode discards the loaded result. Two modes' numbers must never be on screen at once.
+  const switchMode = (m: 'PRE_SEAL' | 'FULL_PERIOD') => {
+    if (m === simMode) return
+    setSimMode(m); setSimRun(null); setSimMsg('')
+  }
   const [simMsg, setSimMsg] = useState('')
   const [simBusy, setSimBusy] = useState(false)
 
@@ -2651,6 +2658,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
         // 3-lane book while every number quoted beside it was the 7-lane aggressive figure.
         setTier(prev => prev || (tl.find(t => t.key === 'aggressive')?.key ?? tl[0]?.key ?? ''))
         setSimHist(h?.runs ?? [])
+        try { const fh = await authedFetch<any>('/api/admin/basket-sim-full', { cache: 'no-store' }); setFpHist(fh?.runs ?? []) } catch { /* advisory */ }
       } catch (e) {
         if (typeof window !== 'undefined') console.warn('[contenders] fetch failed:', e)
       } finally { if (!cancelled) setLoading(false) }
@@ -2730,69 +2738,42 @@ export function ContendersPanel({ active }: { active: boolean }) {
   const untickAll = () => { setPicked({}); setTierS({}) }
   const clearTierS = () => setTierS({})
 
-  const runFullPeriod = async () => {
-    if (!pickedIds.length) { setFpMsg('select at least one cfg first'); return }
-    setFpBusy(true); setFpMsg('starting the full-period walk…')
+  // ── ONE RUN PATH ────────────────────────────────────────────────────────────────────────
+  // PRE_SEAL  -> /api/admin/contender-sim   (publisher-rig pass; the sealed year is never read)
+  // FULL_PERIOD -> /api/admin/basket-sim-full (black-box walk, IS + OOS, no reset at the seal)
+  // Both write a run doc; both are normalised by `normaliseRun` into one shape so the card and the
+  // history row cannot disagree.
+  const runSimulation = async () => {
+    if (!pickedIds.length) { setSimMsg('select at least one cfg first'); return }
+    setSimBusy(true); setSimRun(null)
+    const isFull = simMode === 'FULL_PERIOD'
+    const url = isFull ? '/api/admin/basket-sim-full' : '/api/admin/contender-sim'
+    setSimMsg(`starting ${isFull ? 'FULL-PERIOD' : 'PRE-SEAL'} simulation…`)
     try {
-      const r = await authedFetch<any>('/api/admin/basket-sim-full', {
+      const body = isFull
+        ? { sids: pickedIds, selected: pickedIds, tierS: tierSIds, tier: tier || 'aggressive' }
+        : { selected: pickedIds, tierS: tierSIds, tier }
+      const r = await authedFetch<any>(url, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ selected: pickedIds, sids: pickedIds, tierS: tierSIds,
-                               tier: tier || 'aggressive' }),
+        body: JSON.stringify(body),
       })
-      if (!r?.runId) { setFpMsg(`failed: ${JSON.stringify(r)}`); setFpBusy(false); return }
-      setFpMsg(`run ${r.runId} queued — ${r.n} cfgs, ${r.nTierS} Tier-S, ${r.tier}`)
+      if (!r?.runId) { setSimMsg(`failed: ${JSON.stringify(r)}`); setSimBusy(false); return }
       const t0 = Date.now()
-      // The runner writes its own progress string at every stage (booking, policy, seating), so
-      // surface THAT rather than a spinner. On a cold booked-set cache the first run takes minutes.
-      for (let i = 0; i < 150; i++) {
-        await new Promise(res => setTimeout(res, 4000))
-        const d = await authedFetch<any>(`/api/admin/basket-sim-full?runId=${r.runId}`, { cache: 'no-store' })
+      for (let i = 0; i < 160; i++) {
+        await new Promise(res => setTimeout(res, isFull ? 4000 : 2000))
+        const d = await authedFetch<any>(`${url}?runId=${r.runId}`, { cache: 'no-store' })
         const secs = Math.round((Date.now() - t0) / 1000)
         if (d?.status === 'done') {
-          setFpRun(d)
-          setFpMsg(`run ${r.runId} complete in ${secs} s — `
-            + `${d.accounting?.seated_trades}/${d.accounting?.signals_eligible} seated over `
-            + `${d.period?.total_years} years`)
-          setFpBusy(false); return
-        }
-        if (d?.status === 'error') {
-          setFpRun(d); setFpMsg(`run ${r.runId} failed: ${d.error}`); setFpBusy(false); return
-        }
-        setFpMsg(`run ${r.runId} · ${d?.progress || d?.status || 'running'} · ${secs} s`)
-      }
-      setFpMsg(`run ${r.runId} still running — it writes its own result file when it finishes`)
-    } catch (e: any) {
-      setFpMsg(`full-period simulation failed: ${e?.message ?? e}`)
-    }
-    setFpBusy(false)
-  }
-
-  const runSim = async () => {
-    if (!pickedIds.length) { setSimMsg('select at least one cfg first'); return }
-    setSimBusy(true); setSimMsg('starting…')
-    try {
-      const r = await authedFetch<any>('/api/admin/contender-sim', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ selected: pickedIds, tierS: tierSIds, tier }),
-      })
-      setSimMsg(`run ${r.runId} — ${r.selected_count} cfgs, ${r.tier_s_count} Tier-S, ${r.tier}`)
-      // poll until the runner writes its result. The route has no progress channel, so what is
-      // surfaced is what is actually known: the run id, its size, and elapsed seconds. Nothing invented.
-      const t0 = Date.now()
-      for (let i = 0; i < 90; i++) {
-        await new Promise(res => setTimeout(res, 2000))
-        setSimMsg(`run ${r.runId} — ${r.selected_count} cfgs, ${r.tier_s_count} Tier-S, ${r.tier}`
-          + ` · running ${Math.round((Date.now() - t0) / 1000)} s`)
-        const d = await authedFetch<any>(`/api/admin/contender-sim?runId=${r.runId}`, { cache: 'no-store' })
-        if (d?.status === 'done') {
           setSimRun(d)
-          setSimMsg(`run ${r.runId} complete — ${d.seated_trades}/${d.eligible_trades} trades seated `
-            + `(${((d.overall_seat_rate ?? 0) * 100).toFixed(1)} %), basket net `
-            + `${d.seated_basket_metrics?.net_pct_total ?? '—'} %`)
-          const h = await authedFetch<any>('/api/admin/contender-sim', { cache: 'no-store' })
-          setSimHist(h?.runs ?? [])
+          setSimMsg(`run ${r.runId} complete in ${secs} s`)
+          await loadHistories()
           setSimBusy(false); return
         }
+        if (d?.status === 'error') {
+          setSimRun(null)
+          setSimMsg(`run ${r.runId} failed: ${d.error}`); setSimBusy(false); return
+        }
+        setSimMsg(`run ${r.runId} · ${d?.progress || d?.status || 'running'} · ${secs} s`)
       }
       setSimMsg(`run ${r.runId} still running — open it from history when it finishes`)
     } catch (e: any) {
@@ -2801,16 +2782,35 @@ export function ContendersPanel({ active }: { active: boolean }) {
     setSimBusy(false)
   }
 
-  const openRun = async (runId: string) => {
+  const loadHistories = async () => {
     try {
-      const d = await authedFetch<any>(`/api/admin/contender-sim?runId=${runId}`, { cache: 'no-store' })
-      setSimRun(d)
-      setPicked(Object.fromEntries((d.selected_cfgs ?? []).map((x: string) => [x, true])))
-      setTierS(Object.fromEntries((d.tier_s_cfgs ?? []).map((x: string) => [x, true])))
-      if (d.tier) setTier(d.tier)
-      setSimMsg(`loaded ${runId} — ${d.seated_trades}/${d.eligible_trades} seated, tier ${d.tier}`)
-    } catch (e: any) { setSimMsg(`could not open ${runId}: ${e?.message ?? e}`) }
+      const [a, b] = await Promise.all([
+        authedFetch<any>('/api/admin/contender-sim', { cache: 'no-store' }).catch(() => null),
+        authedFetch<any>('/api/admin/basket-sim-full', { cache: 'no-store' }).catch(() => null),
+      ])
+      setSimHist(a?.runs ?? []); setFpHist(b?.runs ?? [])
+    } catch { /* history is advisory; a failure must not blank the card */ }
   }
+
+  // Clicking a history row reloads THAT EXACT RESULT — including switching the page into the
+  // mode the run belongs to, so the card's period label always matches the numbers under it.
+  const openRun = async (runId: string, mode: 'PRE_SEAL' | 'FULL_PERIOD') => {
+    const url = mode === 'FULL_PERIOD' ? '/api/admin/basket-sim-full' : '/api/admin/contender-sim'
+    try {
+      const d = await authedFetch<any>(`${url}?runId=${runId}`, { cache: 'no-store' })
+      setSimMode(mode)
+      setSimRun(d)
+      const sel: string[] = d.selected_cfgs ?? d.members ?? []
+      const ts: string[] = d.tier_s_cfgs ?? d.tier_s ?? []
+      setPicked(Object.fromEntries(sel.map((x: string) => [x, true])))
+      setTierS(Object.fromEntries(ts.map((x: string) => [x, true])))
+      if (d.tier) setTier(d.tier)
+      setSimMsg(`loaded ${runId} (${mode === 'FULL_PERIOD' ? 'full period' : 'pre-seal'})`)
+    } catch (e: any) {
+      setSimMsg(`could not open ${runId}: ${e?.message ?? e}`)
+    }
+  }
+
 
   const exportSelection = () => {
     const payload = {
@@ -2967,9 +2967,21 @@ export function ContendersPanel({ active }: { active: boolean }) {
               ))}
             </select>
           </label>
-          {/* PRIMARY ACTION. simBusy is set before the fetch and cleared in its finally, so the
-              disabled attribute is what prevents a duplicate submission — not a debounce. */}
-          <button onClick={runSim} disabled={simBusy || !pickedIds.length}
+          {/* ── MODE, THEN ONE RUN BUTTON ────────────────────────────────────────────────
+              Two buttons produced two result cards that could disagree and both stay on screen.
+              The period is now a mode the reader picks BEFORE running, it is printed on the card,
+              and changing it clears the previous result. */}
+          <div className="csim-modes" role="radiogroup" aria-label="simulation period">
+            {([['PRE_SEAL', 'PRE-SEAL (IS ONLY)'], ['FULL_PERIOD', 'FULL PERIOD (IS + OOS)']] as const)
+              .map(([m, lab]) => (
+                <button key={m} type="button" role="radio" aria-checked={simMode === m}
+                        onClick={() => switchMode(m)} disabled={simBusy}
+                        className={'csim-mode' + (simMode === m ? ' on' : '')}>
+                  {lab}
+                </button>
+              ))}
+          </div>
+          <button onClick={runSimulation} disabled={simBusy || !pickedIds.length}
                   aria-busy={simBusy}
                   style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, padding: '7px 16px',
                            borderRadius: 5, border: 'none', display: 'inline-flex', alignItems: 'center',
@@ -2982,43 +2994,14 @@ export function ContendersPanel({ active }: { active: boolean }) {
                              border: '2px solid rgba(6,20,11,0.28)', borderTopColor: '#06140b',
                              animation: 'staxsSpin 0.7s linear infinite' }} />
             )}
-            {simBusy ? 'RUNNING SIMULATION…' : 'RUN SIMULATION'}
+            {simBusy ? 'RUNNING…' : 'RUN SIMULATION'}
           </button>
           <style>{'@keyframes staxsSpin{to{transform:rotate(360deg)}}'}</style>
-          {/* FULL-PERIOD WALK. The green button beside this one seats the SEALED YEAR — the period
-              the pool was selected on, and one year of evidence. This one walks the complete
-              history in one continuous allocator pass with no reset at the seal. Two buttons, not
-              one with a toggle, because the two answer different questions and a reader must be
-              able to see which result they are looking at. */}
-          <button onClick={runFullPeriod} disabled={fpBusy || !pickedIds.length}
-                  aria-busy={fpBusy}
-                  title="Seat this basket across the COMPLETE history — pre-seal IS + sealed OOS as one continuous allocator walk, no reset at the seal. Aggressive tier: 6 ordinary + 1 reserved Tier-S lane."
-                  style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, padding: '7px 16px',
-                           borderRadius: 5, border: 'none', display: 'inline-flex', alignItems: 'center',
-                           gap: 8, color: '#1a1206',
-                           background: fpBusy ? 'rgba(217,164,65,0.45)'
-                                      : (!pickedIds.length ? 'rgba(255,255,255,0.18)' : '#d9a441'),
-                           cursor: (fpBusy || !pickedIds.length) ? 'not-allowed' : 'pointer' }}>
-            {fpBusy && (
-              <span style={{ width: 11, height: 11, borderRadius: '50%', display: 'inline-block',
-                             border: '2px solid rgba(26,18,6,0.28)', borderTopColor: '#1a1206',
-                             animation: 'staxsSpin 0.7s linear infinite' }} />
-            )}
-            {fpBusy ? 'WALKING FULL PERIOD…' : 'FULL PERIOD (IS + OOS)'}
-          </button>
           <button onClick={exportSelection} disabled={!pickedIds.length} style={{ fontSize: 12 }}>
             export selection
           </button>
         </div>
         {simMsg && <div style={{ fontSize: 11, opacity: 0.85 }}>{simMsg}</div>}
-        {fpMsg && <div style={{ fontSize: 11, opacity: 0.85, color: '#d9a441' }}>{fpMsg}</div>}
-        {fpRun?.status === 'done' && <FullPeriodResult r={fpRun} />}
-        {fpRun?.status === 'error' && (
-          <div style={{ fontSize: 11.5, color: '#f0b429', marginTop: 4 }}>
-            ⚠ the full-period walk failed — {fpRun.error}. No partial result is shown: a basket
-            metric from an incomplete walk would be indistinguishable from a real one.
-          </div>
-        )}
         <div style={{ fontSize: 11, opacity: 0.7 }}>
           Tier-S is always a subset of the selected basket — unticking a cfg drops it from Tier-S. The
           simulation replays each contender&apos;s authoritative standalone ledger through the live
@@ -3067,86 +3050,6 @@ export function ContendersPanel({ active }: { active: boolean }) {
       )}
 
       {/* ── GREEN SECTION HEADER ────────────────────────────────────────────────────────── */}
-      <div style={{ background: SE_BG, border: '1px solid rgba(16,185,129,0.35)', borderRadius: 6,
-                    padding: '8px 10px', margin: '0 0 10px' }}>
-        <b style={{ fontSize: 12 }}>
-          SEATED SIMULATION — {sel ? `${sel.label.toUpperCase()} (${sel.total_lanes} LANES)` : 'no tier'}
-        </b>
-        {simRun ? (
-          <span style={{ fontSize: 12, marginLeft: 12 }}>
-            run <b>{simRun.runId}</b> · {simRun.seated_trades}/{simRun.eligible_trades} trades seated
-            ({((simRun.overall_seat_rate ?? 0) * 100).toFixed(1)} %) · basket net{' '}
-            <b>{simRun.seated_basket_metrics?.net_pct_total ?? '—'} %</b> · WR{' '}
-            {simRun.seated_basket_metrics?.wr_pct ?? '—'} % · PF {simRun.seated_basket_metrics?.pf ?? '—'}
-            {simRun.provenance_invariant && (
-              <span style={{ marginLeft: 10, opacity: 0.8 }}>
-                · basket ⊆ standalone: <b>{simRun.provenance_invariant.holds ? 'OK' : 'VIOLATED'}</b>
-                {' '}({simRun.provenance_invariant.omitted_by_competition} omitted by competition)
-              </span>
-            )}
-          </span>
-        ) : (
-          null
-        )}
-        {/* ── THE MONEY ACCOUNT ────────────────────────────────────────────────────────────
-            Deliberately a SEPARATE block from the research percentages above. The line above
-            answers "is the edge real"; this one answers "what would it have done to an account",
-            and the two must never be read as the same number. Sizing is the live engine's own
-            tier_s.risk_per_lane_notional off each trade's entry-time stop. */}
-        {simRun?.account_simulation ? (
-          <div style={{ fontSize: 12, marginTop: 6, paddingTop: 6,
-                        borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-            <b>ACCOUNT</b>{' '}
-            ${Number(simRun.account_simulation.start_balance).toLocaleString()} →{' '}
-            <b>${Number(simRun.account_simulation.final_balance).toLocaleString(undefined,
-              { maximumFractionDigits: 2 })}</b>{' '}
-            · PnL <b>${Number(simRun.account_simulation.pnl_usd).toLocaleString(undefined,
-              { maximumFractionDigits: 2 })}</b>{' '}
-            ({simRun.account_simulation.return_pct} %) · trades {simRun.account_simulation.trades}
-            {' '}· WR {simRun.account_simulation.wr_pct} % · PF {simRun.account_simulation.pf}
-            {' '}· RRR {simRun.account_simulation.realised_rrr}
-            <br />
-            maxDD <b>${Number(simRun.account_simulation.max_dd_usd).toLocaleString(undefined,
-              { maximumFractionDigits: 2 })}</b> / <b>{simRun.account_simulation.max_dd_pct} %</b>
-            {' '}· risk ${Number(simRun.account_simulation.risk_usd_per_trade_nominal).toLocaleString()}/trade
-            {' '}· max simultaneous risk ${Number(simRun.account_simulation.max_simultaneous_risk_usd).toLocaleString()}
-            {' '}· max notional ${Number(simRun.account_simulation.max_notional_usd).toLocaleString(undefined,
-              { maximumFractionDigits: 0 })}
-            {' '}· max margin ${Number(simRun.account_simulation.max_margin_usd).toLocaleString(undefined,
-              { maximumFractionDigits: 0 })}
-            {simRun.account_simulation.compounding ? ' · COMPOUNDING' : ' · non-compounding'}
-            <br />
-            <span style={{ opacity: 0.85 }}>
-              rejects — lanes full {simRun.rejection_reasons?.lanes_full ?? 0}
-              {' '}· asset already open {simRun.rejection_reasons?.asset_already_open ?? 0}
-              {' '}· cfg already open {simRun.rejection_reasons?.cfg_already_open ?? 0}
-              {' '}· funding {simRun.account_simulation.fundability?.enforced
-                ? (simRun.account_simulation.fundability?.entries_over_leverage_ceiling ?? 0)
-                : 'not enforced'}
-            </span>
-            {simRun.account_simulation.fundability
-              && !simRun.account_simulation.fundability.enforced
-              && (simRun.account_simulation.fundability.entries_over_leverage_ceiling ?? 0) > 0 && (
-              /* Live STAXS applies no per-trade funding gate, so nothing is rejected here either —
-                 but a run whose peak margin exceeds the account must say so on its face. */
-              <div style={{ marginTop: 4, color: '#fbbf24' }}>
-                ⚠ peak margin {simRun.account_simulation.fundability.peak_margin_pct_of_capital} % of capital —
-                {' '}{simRun.account_simulation.fundability.entries_over_leverage_ceiling} entries opened above the
-                {' '}{sel ? sel.label : ''} leverage ceiling
-                {' '}(${Number(simRun.account_simulation.fundability.max_fundable_notional_at_tier_leverage)
-                  .toLocaleString()} notional).
-                {' '}Live enforces no funding gate, so these were NOT rejected — treat the top of this curve as optimistic.
-              </div>
-            )}
-          </div>
-        ) : simRun ? null : (
-          <span style={{ fontSize: 12, marginLeft: 12, opacity: 0.75 }}>
-            no simulation loaded — select cfgs, choose a tier and press RUN SIMULATION. Green cells stay
-            blank until a basket is actually simulated; nothing is estimated.
-          </span>
-        )}
-      </div>
-
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
           <thead>
@@ -3304,47 +3207,80 @@ export function ContendersPanel({ active }: { active: boolean }) {
       </div>
 
       {/* ── RUN HISTORY ─────────────────────────────────────────────────────────────────── */}
+
+      {/* ── EXACTLY ONE AUTHORITATIVE RESULT CARD ──────────────────────────────────────────
+          It renders only the loaded run, in the mode that run belongs to. There is no second
+          P&L: the risk-sized ACCOUNT simulation is the authoritative figure, and the unweighted
+          per-trade percentage sum is shown once, beneath it, with its formula and an explicit
+          non-account label. */}
+      <SimResultCard run={simRun} mode={simMode} busy={simBusy} sel={sel} />
+
+      {/* ── ONE HISTORY, SAME METRICS AS THE CARD ────────────────────────────────────────
+          Rows previously quoted "basket net %" while the card quoted an account P&L, so the same
+          run appeared to have two different results. Every row now shows the ACCOUNT figures the
+          card shows, tagged with the mode the run belongs to, and opening a row switches the page
+          into that mode and reloads that exact document. */}
       <div style={{ marginTop: 14 }}>
         <b style={{ fontSize: 12 }}>SIMULATION RUN HISTORY</b>
-        {simHist.length === 0 ? (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>no runs yet</div>
-        ) : (
-          <div style={{ overflowX: 'auto', marginTop: 6 }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
-              <thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
-                {['run ID', 'label', 'when', 'tier', 'lanes', 'cfgs', 'Tier-S', 'eligible', 'seated', 'seat %',
-                  'basket net %', 'basket WR %', 'basket PF', '⊆ invariant', 'data cutoff', '']
-                  .map(h => <th key={h} style={{ padding: '3px 6px', textAlign: 'left' }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {simHist.map((x: any) => (
-                  <tr key={x.runId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <td style={{ padding: '3px 6px' }}>{x.runId}</td>
-                    <td style={{ padding: '3px 6px', maxWidth: 220, fontSize: 10, opacity: 0.8 }}>
-                      {x.label ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.when}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.tier}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.lanes_total}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.selected_count}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.tier_s_count}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.eligible_trades ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.seated_trades ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>
-                      {x.overall_seat_rate == null ? '—' : (x.overall_seat_rate * 100).toFixed(1)}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.net_pct_total ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.wr_pct ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.pf ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>
-                      {x.provenance_invariant_holds == null ? '—' : x.provenance_invariant_holds ? 'OK' : 'VIOLATED'}</td>
-                    <td style={{ padding: '3px 6px', fontSize: 10, opacity: 0.75 }}>{x.data_cutoff ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>
-                      <button onClick={() => openRun(x.runId)} style={{ fontSize: 11 }}>open</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <span style={{ fontSize: 10.5, opacity: 0.7, marginLeft: 8 }}>
+          account P&amp;L, identical to the card above · open a row to reload that exact run
+        </span>
+        {(() => {
+          const rows = [
+            ...fpHist.map((x: any) => ({ mode: 'FULL_PERIOD' as const, x })),
+            ...simHist.map((x: any) => ({ mode: 'PRE_SEAL' as const, x })),
+          ].sort((a, b) => String(b.x.created_at ?? b.x.when ?? '').localeCompare(String(a.x.created_at ?? a.x.when ?? '')))
+          if (!rows.length) return <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>no runs yet</div>
+          return (
+            <div style={{ overflowX: 'auto', marginTop: 6 }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+                <thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
+                  {['mode', 'run ID', 'when', 'tier', 'cfgs', 'Tier-S', 'account P&L', 'return %',
+                    'trades', 'WR %', 'PF', 'status', ''].map(h => (
+                      <th key={h} style={{ padding: '3px 6px', textAlign: 'left' }}>{h}</th>))}
+                </tr></thead>
+                <tbody>
+                  {rows.map(({ mode: m, x }) => {
+                    const isFull = m === 'FULL_PERIOD'
+                    // The summary endpoints return different fields; both are mapped to the SAME
+                    // account quantities the card renders, so a row can never disagree with it.
+                    const pnl = isFull ? x.net_usd : (x.account_simulation?.pnl_usd ?? null)
+                    // Read the served field rather than re-deriving it — a second derivation is
+                    // a second chance to disagree with the card.
+                    const ret = isFull ? (x.return_pct ?? null) : (x.account_simulation?.return_pct ?? null)
+                    const trd = isFull ? (x.trades ?? null) : (x.account_simulation?.trades ?? x.seated_trades ?? null)
+                    const wr = isFull ? (x.wr ?? null) : (x.account_simulation?.wr_pct ?? null)
+                    const p = isFull ? (x.pf ?? null) : (x.account_simulation?.pf ?? null)
+                    const loaded = simRun?.runId === x.runId
+                    return (
+                      <tr key={`${m}:${x.runId}`}
+                          style={{ borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                   background: loaded ? 'rgba(217,164,65,0.10)' : undefined }}>
+                        <td style={{ padding: '3px 6px', color: isFull ? '#d9a441' : '#7ee787', fontWeight: 700 }}>
+                          {isFull ? 'FULL' : 'PRE-SEAL'}</td>
+                        <td style={{ padding: '3px 6px' }}>{x.runId}</td>
+                        <td style={{ padding: '3px 6px' }}>{String(x.created_at ?? x.when ?? '—').replace('T', ' ').slice(0, 16)}</td>
+                        <td style={{ padding: '3px 6px' }}>{x.tier ?? '—'}</td>
+                        <td style={{ padding: '3px 6px' }}>{x.n_members ?? x.selected_count ?? '—'}</td>
+                        <td style={{ padding: '3px 6px' }}>{x.n_tier_s ?? x.tier_s_count ?? '—'}</td>
+                        <td style={{ padding: '3px 6px' }}>
+                          {pnl == null ? '—' : `${pnl < 0 ? '-' : ''}$${Math.abs(pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</td>
+                        <td style={{ padding: '3px 6px' }}>{ret == null ? '—' : `${Number(ret).toFixed(2)}`}</td>
+                        <td style={{ padding: '3px 6px' }}>{trd == null ? '—' : Number(trd).toLocaleString()}</td>
+                        <td style={{ padding: '3px 6px' }}>{wr == null ? '—' : Number(wr).toFixed(2)}</td>
+                        <td style={{ padding: '3px 6px' }}>{p == null ? '—' : Number(p).toFixed(3)}</td>
+                        <td style={{ padding: '3px 6px', opacity: 0.75 }}>{x.status ?? 'done'}</td>
+                        <td style={{ padding: '3px 6px' }}>
+                          <button onClick={() => openRun(x.runId, m)} style={{ fontSize: 11 }}>
+                            {loaded ? 'reload' : 'open'}</button></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        })()}
       </div>
 
       {meta?.not_admitted?.length > 0 && (
@@ -3493,6 +3429,213 @@ function FullPeriodResult({ r }: { r: any }) {
         </div>
         <div style={{ marginTop: 2, opacity: 0.7 }}>{r.execution}</div>
       </div>
+    </div>
+  )
+}
+
+
+// ─── ONE SHAPE FOR BOTH SIMULATION MODES ───────────────────────────────────
+/**
+ * The two run types write different documents. Normalising them here is what makes it impossible
+ * for the result card and the history row to quote different numbers for the same run: both read
+ * this function.
+ *
+ * THE AUTHORITATIVE P&L IS THE RISK-SIZED ACCOUNT SIMULATION. In PRE-SEAL that is
+ * `account_simulation`, produced by the live engine's own risk_per_lane_notional off each trade's
+ * entry-time stop. In FULL-PERIOD it is the walk itself, which sizes every seated signal the same
+ * way against a $10,000 non-compounding account.
+ *
+ * `basket net %` IS NOT AN ACCOUNT RETURN and is never presented as one. Its formula, from
+ * cfgbook/ledger_basket_sim.py, is the UNWEIGHTED SUM OF PER-TRADE PERCENTAGE RETURNS:
+ *     net_pct_total = Σ (trade.net × 100)
+ * A trade risking $500 and a trade risking $10,000 contribute equally, and nothing compounds. It
+ * is a research statistic about the edge, useful for comparing baskets on equal footing, and it
+ * will not agree with the account figure. It is shown once, labelled, with that formula attached.
+ */
+type SimNorm = {
+  mode: 'PRE_SEAL' | 'FULL_PERIOD'
+  runId: string | null; when: string | null; tier: string | null; lanes: number | null
+  periodLabel: string; startIso: string | null; endIso: string | null
+  nCfgs: number | null; nTierS: number | null; tierS: string[]
+  startEquity: number | null; endEquity: number | null; pnlUsd: number | null; returnPct: number | null
+  trades: number | null; wr: number | null; pf: number | null; pfStatus: string | null
+  rrr: number | null; maxDdUsd: number | null; maxDdPct: number | null
+  eligible: number | null; seated: number | null; seatPct: number | null
+  rejections: Record<string, number>
+  perLane: Record<string, number>; ordinarySeated: number | null; reservedSeated: number | null
+  reservedPct: number | null
+  tierSContribution: number | null; tierSVerdict: string | null
+  basketNetPct: number | null
+  isNet: number | null; oosNet: number | null
+  reconciliation: string | null
+  dataCutoff: string | null
+}
+
+function normaliseRun(d: any, mode: 'PRE_SEAL' | 'FULL_PERIOD'): SimNorm | null {
+  if (!d || d.status !== 'done') return null
+  if (mode === 'FULL_PERIOD') {
+    const c = d.full_period ?? {}
+    const a = d.accounting ?? {}
+    const L = d.lanes ?? {}
+    const rec = d.reconciliation ?? {}
+    const p = d.period ?? {}
+    return {
+      mode, runId: d.runId ?? null, when: d.created_at ?? null, tier: d.tier ?? null,
+      lanes: L.total ?? null,
+      periodLabel: 'FULL PERIOD — pre-seal IS + sealed OOS, one continuous allocator walk, no reset at the seal',
+      startIso: p.first_entry ?? null, endIso: p.last_exit ?? null,
+      nCfgs: d.n_members ?? null, nTierS: d.n_tier_s ?? null, tierS: d.tier_s ?? [],
+      startEquity: rec.starting_equity ?? null,
+      endEquity: rec.ending_equity_realised_basis ?? null,
+      pnlUsd: c.net_usd ?? null, returnPct: c.return_pct_on_capital ?? null,
+      trades: c.trades ?? null, wr: c.wr ?? null, pf: c.pf ?? null, pfStatus: c.pf_status ?? null,
+      rrr: c.rrr ?? null, maxDdUsd: c.max_dd_usd ?? null, maxDdPct: c.max_dd_pct ?? null,
+      eligible: a.signals_eligible ?? null, seated: a.seated_trades ?? null,
+      seatPct: a.seat_pct ?? null, rejections: a.rejection_reasons ?? {},
+      perLane: L.ordinary_lane_seated_counts ?? {},
+      ordinarySeated: L.ordinary_lane_seated_counts
+        ? Object.values<number>(L.ordinary_lane_seated_counts).reduce((x, y) => x + y, 0) : null,
+      reservedSeated: L.reserved_lane_seated ?? null,
+      reservedPct: L.reserved_lane_utilisation_pct ?? null,
+      tierSContribution: d.tier_s_designation_incremental_net_usd ?? null,
+      tierSVerdict: d.tier_s_designation_note ?? null,
+      basketNetPct: null,
+      isNet: null, oosNet: null,
+      reconciliation: rec.proof ?? null,
+      dataCutoff: null,
+    }
+  }
+  const acc = d.account_simulation ?? {}
+  const bm = d.seated_basket_metrics ?? {}
+  const seated: any[] = Array.isArray(d.seated) ? d.seated : []
+  const ts = seated.map(r => Number(r?.exit_ms)).filter(Number.isFinite)
+  const en = seated.map(r => Number(r?.entry_ms)).filter(Number.isFinite)
+  const lanes: Record<string, number> = {}
+  for (const r of seated) { const k = String(r?.lane ?? '?'); lanes[k] = (lanes[k] ?? 0) + 1 }
+  const nLanes = d.lanes_total ?? null
+  return {
+    mode, runId: d.runId ?? null, when: d.when ?? d.created_at ?? null, tier: d.tier ?? null,
+    lanes: nLanes,
+    periodLabel: 'PRE-SEAL ONLY — the sealed year is never read by this pass',
+    startIso: en.length ? new Date(Math.min(...en)).toISOString() : null,
+    endIso: ts.length ? new Date(Math.max(...ts)).toISOString() : null,
+    nCfgs: d.selected_count ?? null, nTierS: d.tier_s_count ?? null, tierS: d.tier_s_cfgs ?? [],
+    startEquity: acc.start_balance ?? null, endEquity: acc.final_balance ?? null,
+    pnlUsd: acc.pnl_usd ?? null, returnPct: acc.return_pct ?? null,
+    trades: acc.trades ?? d.seated_trades ?? null, wr: acc.wr_pct ?? null,
+    pf: acc.pf ?? null, pfStatus: null, rrr: acc.realised_rrr ?? null,
+    maxDdUsd: acc.max_dd_usd ?? null, maxDdPct: acc.max_dd_pct ?? null,
+    eligible: d.eligible_trades ?? null, seated: d.seated_trades ?? null,
+    seatPct: d.overall_seat_rate == null ? null : Math.round(d.overall_seat_rate * 1000) / 10,
+    rejections: d.rejection_reasons ?? {},
+    perLane: lanes,
+    ordinarySeated: nLanes ? Object.entries(lanes).filter(([k]) => Number(k) !== nLanes)
+      .reduce((x, [, v]) => x + v, 0) : null,
+    reservedSeated: nLanes ? (lanes[String(nLanes)] ?? 0) : null,
+    reservedPct: nLanes && seated.length
+      ? Math.round(((lanes[String(nLanes)] ?? 0) / seated.length) * 10000) / 100 : null,
+    tierSContribution: null,
+    tierSVerdict: null,
+    basketNetPct: bm.net_pct_total ?? null,
+    isNet: null, oosNet: null,
+    reconciliation: acc.start_balance != null && acc.pnl_usd != null && acc.final_balance != null
+      ? `${acc.start_balance} + ${acc.pnl_usd} = ${acc.final_balance}` : null,
+    dataCutoff: d.data_cutoff ?? null,
+  }
+}
+
+function SimResultCard({ run, mode, busy, sel }: { run: any; mode: 'PRE_SEAL' | 'FULL_PERIOD'; busy: boolean; sel: any }) {
+  const n = normaliseRun(run, mode)
+  const N = (v: any, d = 2, suf = '') => (v == null || !Number.isFinite(Number(v)) ? '—' : `${Number(v).toFixed(d)}${suf}`)
+  const U = (v: any) => (v == null || !Number.isFinite(Number(v))
+    ? '—' : `${Number(v) < 0 ? '-' : ''}$${Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 2 })}`)
+  const PF = () => (n?.pfStatus === 'NO_LOSSES'
+    ? <span style={{ color: '#4ade80', fontWeight: 700 }} title="no losing trade — the ratio is undefined because the denominator is zero, which is the best case">∞</span>
+    : n?.pfStatus === 'NO_ECONOMIC_OBSERVATIONS' ? 'n/a' : N(n?.pf, 3))
+  const head = mode === 'FULL_PERIOD' ? 'FULL-PERIOD SIMULATION (IS + OOS)' : 'PRE-SEAL SIMULATION (IS ONLY)'
+  const accent = mode === 'FULL_PERIOD' ? '#d9a441' : '#7ee787'
+  const box = {
+    marginTop: 8, padding: '10px 12px', borderRadius: 6,
+    background: mode === 'FULL_PERIOD' ? 'rgba(217,164,65,0.07)' : 'rgba(126,231,135,0.06)',
+    border: `1px solid ${mode === 'FULL_PERIOD' ? 'rgba(217,164,65,0.30)' : 'rgba(126,231,135,0.28)'}`,
+  } as React.CSSProperties
+  const cell = (k: string, v: React.ReactNode, t?: string) => (
+    <div title={t} style={{ minWidth: 100 }}>
+      <div style={{ fontSize: 9, letterSpacing: 0.6, textTransform: 'uppercase', opacity: 0.6 }}>{k}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{v}</div>
+    </div>
+  )
+  if (!n) {
+    return (
+      <div style={box}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.7, color: accent }}>{head}</div>
+        <div style={{ fontSize: 11.5, opacity: 0.75, marginTop: 4 }}>
+          {busy ? 'running — no figure is shown until the run completes'
+                : `no ${mode === 'FULL_PERIOD' ? 'full-period' : 'pre-seal'} result loaded. Pick cfgs and press RUN SIMULATION, or open one from the history below.`}
+        </div>
+      </div>
+    )
+  }
+  const d10 = (iso: string | null) => (iso ? iso.slice(0, 10) : '—')
+  return (
+    <div style={box}>
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.7, color: accent }}>{head}</div>
+      <div style={{ fontSize: 10.5, opacity: 0.82, marginTop: 2 }}>{n.periodLabel}</div>
+      <div style={{ fontSize: 10.5, opacity: 0.82, marginTop: 2 }}>
+        run <b>{n.runId ?? '—'}</b> · {d10(n.startIso)} → {d10(n.endIso)} · {n.nCfgs ?? '—'} cfgs ·{' '}
+        {n.nTierS ?? 0} Tier-S · {n.tier ?? '—'} tier{n.lanes ? ` · ${n.lanes} lanes` : ''}
+        {n.dataCutoff ? ` · cutoff ${n.dataCutoff}` : ''}
+      </div>
+      <div style={{ fontSize: 9.5, letterSpacing: 0.5, textTransform: 'uppercase', opacity: 0.6, marginTop: 8 }}>
+        account simulation — risk-sized, the authoritative P&amp;L
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', marginTop: 4 }}>
+        {cell('starting equity', U(n.startEquity))}
+        {cell('ending equity', U(n.endEquity))}
+        {cell('P&L', U(n.pnlUsd))}
+        {cell('return', N(n.returnPct, 2, ' %'))}
+        {cell('trades', n.trades == null ? '—' : n.trades.toLocaleString())}
+        {cell('WR', N(n.wr, 2, ' %'))}
+        {cell('PF', <PF />)}
+        {cell('RRR', N(n.rrr, 3))}
+        {cell('max DD', `${N(n.maxDdPct, 2, ' %')} / ${U(n.maxDdUsd)}`)}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', marginTop: 8,
+                    paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.10)' }}>
+        {cell('eligible', n.eligible == null ? '—' : n.eligible.toLocaleString())}
+        {cell('seated', n.seated == null ? '—' : n.seated.toLocaleString())}
+        {cell('seat rate', N(n.seatPct, 1, ' %'))}
+        {cell('ordinary lanes', n.ordinarySeated == null ? '—' : n.ordinarySeated.toLocaleString(),
+              `per-lane seated: ${JSON.stringify(n.perLane)}`)}
+        {cell('reserved lane', `${n.reservedSeated ?? '—'} (${N(n.reservedPct, 2, ' %')})`,
+              'the reserved seat is reachable only when a Tier-S cfg signals while every ordinary lane is full')}
+        {cell('Tier-S contribution', n.tierSContribution == null ? '—' : U(n.tierSContribution),
+              n.tierSVerdict ?? 'measured by rerunning the identical basket with no designation')}
+        {cell('rejected', Object.values(n.rejections).reduce((a, b) => a + b, 0).toLocaleString(),
+              Object.entries(n.rejections).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'none')}
+      </div>
+      {n.reconciliation && (
+        <div style={{ fontSize: 10.5, opacity: 0.85, marginTop: 8 }}>
+          <b>Reconciliation:</b> {n.reconciliation} — starting equity + realised P&amp;L = ending equity.
+          {mode === 'FULL_PERIOD'
+            ? ' Every seated trade in a completed historical replay carries a recorded exit, so terminal unrealised is 0 by construction.'
+            : ''}
+        </div>
+      )}
+      {n.basketNetPct != null && (
+        <div style={{ fontSize: 10, opacity: 0.7, marginTop: 6, paddingTop: 6,
+                      borderTop: '1px dashed rgba(255,255,255,0.14)' }}>
+          <b>NON-ACCOUNT DIAGNOSTIC</b> — basket net {n.basketNetPct} %. Formula:
+          {' '}<code>Σ (per-trade net return × 100)</code> over seated trades
+          (cfgbook/ledger_basket_sim.py). It is UNWEIGHTED and does not compound: a trade risking
+          $500 counts the same as one risking $10,000. It is a research statistic for comparing
+          baskets on equal footing and will not agree with the account figures above. It is not a
+          return on any account.
+        </div>
+      )}
+      {n.tierS.length > 0 && (
+        <div style={{ fontSize: 10, opacity: 0.7, marginTop: 4 }}>Tier-S: {n.tierS.join(', ')}</div>
+      )}
     </div>
   )
 }

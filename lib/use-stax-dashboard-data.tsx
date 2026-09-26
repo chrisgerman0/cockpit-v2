@@ -583,6 +583,14 @@ export function useStaxDashboardData(): StaxLoadState {
         // and a genuinely new account renders as "no closed trades yet".
         let equityReadFailed = false
         let equityReadError: string | undefined
+        // ── THE AUTHORITATIVE ACCOUNT-EQUITY SERIES (2026-09-26) ─────────────────────────────
+        // The curve was "activation balance + realised closes", which is a STRATEGY curve and
+        // cannot reconcile with the exchange balance: it omits deposits, withdrawals and open
+        // P&L. /api/account-equity serves the live daemon's own measured equity snapshots, which
+        // contain all three by construction, plus a reconciliation table naming the components
+        // that have no source on this host. See that route for what is and is not available.
+        const acctEq = await authedFetch<any>('/api/account-equity', { cache: 'no-store' })
+          .catch(() => null)
         const portfolio = await fetchPortfolioTrades(tier).catch((e: Error) => {
           equityReadFailed = true
           equityReadError = `Strategy trade history could not be read (${e?.message || 'fetch failed'}).`
@@ -932,6 +940,14 @@ export function useStaxDashboardData(): StaxLoadState {
           balanceAgeSeconds: (balanceRes as { ageSeconds?: number })?.ageSeconds,
           equityTrades: realEquityTrades,
           equityIsReal: realEquityTrades.length > 0,
+          // Measured account equity — deposits and withdrawals included, because a measured
+          // equity curve already contains them.
+          accountEquitySeries: acctEq?.available ? acctEq.series : null,
+          accountEquityCoverageStart: acctEq?.available ? acctEq.coverage.first_ts : null,
+          accountEquityCurrent: acctEq?.available ? acctEq.current_equity : null,
+          accountEquityGaps: acctEq?.available ? acctEq.coverage.gaps_over_6h : null,
+          accountEquityReconciliation: acctEq?.available ? acctEq.reconciliation : null,
+          accountEquityImpliedFlow: acctEq?.available ? acctEq.implied_external_flow_in_window : null,
           equityEffectiveFrom: botRes?.effective_from ?? null,
           equityEffectiveFromSource: botRes?.effective_from_source ?? null,
           equityBaseSource: botRes?.activation_balance_source ?? null,

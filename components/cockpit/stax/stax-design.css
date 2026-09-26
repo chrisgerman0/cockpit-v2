@@ -5960,3 +5960,20 @@ html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(
   }
   .stax-app .topbar-tk-end { min-width: 0; flex: 0 1 auto; overflow: hidden; }
 }
+
+/* ─── CONTENDER SIMULATION MODE SELECTOR — 2026-09-26 ─────────────────────────────────────────
+   Two run buttons produced two result cards that could disagree and both stay on screen. The
+   period is now a mode chosen BEFORE the run, so there is one button, one card, and the card
+   always states which period it belongs to. */
+.stax-app .csim-modes { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.stax-app .csim-mode {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 6px 12px;
+  background: transparent; border: 0; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.stax-app .csim-mode + .csim-mode { border-left: 1px solid var(--line); }
+.stax-app .csim-mode.on { background: rgba(217,164,65,.16); color: var(--gold); }
+.stax-app .csim-mode:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .stax-app .csim-modes { display: flex; width: 100%; }
+  .stax-app .csim-mode { flex: 1 1 0; padding: 8px 6px; font-size: 10px; }
+}
