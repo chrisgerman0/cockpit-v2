@@ -14,6 +14,7 @@
 import type React from 'react'
 import { Fragment, useEffect, useState } from 'react'
 import { authedFetch } from '@/lib/api'
+import { familyInfo } from '@/lib/strategy-families'
 
 // ─── Local helpers ────────────────────────────────────────────────────────
 
@@ -1884,7 +1885,14 @@ type CoRow = {
   [k: string]: any
 }
 
-export function ContendersPanel({ active }: { active: boolean }) {
+// 2026-09-16 (Chris, Part A1/A5): this panel rendered the LEGACY 626-row contender population and
+// its hand-built-basket tooling. It is KEPT, not deleted — it is simply no longer mounted. The
+// population it read is archived at
+// research_scratch/ui_archive/LEGACY_CONTENDERS_ARCHIVE_20260916T074940Z (manifest carries every
+// sha256 and the restore steps), and its payload file is still on disk, now served under
+// ?strategy=contenders-legacy. To bring this back: mount ContendersPanelLegacy instead of
+// ContendersPanel and point its fetch at that key.
+export function ContendersPanelLegacy({ active }: { active: boolean }) {
   const [rows, setRows] = useState<CoRow[]>([])
   const [meta, setMeta] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -1920,7 +1928,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
     let cancelled = false
     const load = async () => {
       try {
-        const d = await authedFetch<any>('/api/admin/msga-leaderboard?strategy=contenders',
+        const d = await authedFetch<any>('/api/admin/msga-leaderboard?strategy=contenders-legacy',
           { cache: 'no-store' })
         if (cancelled) return
         setRows(d.rows ?? []); setMeta(d)
@@ -2375,8 +2383,12 @@ export function ContendersPanel({ active }: { active: boolean }) {
                 </tr></thead>
                 <tbody>
                   {simHist.map(h => (
-                    <tr key={h.runId}>
-                      <td>{String(h.created_at ?? '').replace('T', ' ').slice(0, 16)}</td>
+                    <tr key={h.runId} style={h.causal_provenance?.state && h.causal_provenance.state !== 'CLEAN'
+                      ? { opacity: 0.55 } : undefined}
+                        title={h.causal_provenance?.state === 'CLEAN'
+                          ? 'CLEAN — every cfg holds a current causal certificate'
+                          : `${h.causal_provenance?.state ?? 'UNKNOWN'} — ${h.causal_provenance?.certified_cfgs ?? 0}/${h.causal_provenance?.total_cfgs ?? 0} cfgs certified`}>
+                      <td>{String(h.created_at ?? h.when ?? '').replace('T', ' ').slice(0, 16)}</td>
                       <td>{h.label}</td>
                       <td style={{ textAlign: 'center' }}>{h.status}</td>
                       <td style={{ textAlign: 'right' }}>{h.metrics ? fmtI(h.metrics.netUsd) : '—'}</td>
@@ -2503,6 +2515,711 @@ export function ContendersPanel({ active }: { active: boolean }) {
         </table>
         {!sorted.length && <div style={{ padding: 16, color: 'var(--ink-mute)' }}>No rows match the filters.</div>}
       </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// 7b. CONTENDERS — the quality-admitted view of the research-PASS library (Chris, 2026-09-16).
+//
+// RESEARCH PASS is statistically validated research evidence. CONTENDER ADMISSION is Chris's
+// standalone quality preference. They are NOT the same thing: every PASS cfg stays preserved in
+// the authoritative library whether or not it appears here, and the library is never pruned.
+//
+// TWO METRIC AREAS AND NOTHING ELSE:
+//   BLUE  — STANDALONE: the cfg alone, no lane competition. Tier-independent by construction:
+//           these fields live on row.standalone and are never read through the tier selector.
+//   GREEN — SEATED SIMULATION: one section, one tier dropdown. Changing the tier reads a different
+//           key of row.seated and touches nothing blue. The four parallel per-tier blocks that
+//           used to sit on the right are gone.
+//
+// The tier list comes from public/data/canonical-tiers.json, generated from the live engine's
+// tier_sizing.py — no duplicate hard-coded tier table lives in this file.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+type CanonTier = {
+  key: string; label: string; ordinary_lanes: number; total_lanes: number
+  leverage: number; reserve_pct: number; base_pct: number
+}
+type ConRow = {
+  candidate_id: string; sid: string; quality_band: string; strategy_family: string
+  family_lifecycle_status: string | null; role: string | null; robust_label: boolean | null
+  mechanism: string; version: string | null; asset: string; tf: string; direction: string | null
+  standalone: {
+    trades: number | null; wr_pct: number | null; pf: number | null; realised_rrr: number | null
+    net_pct_total: number | null; annualized_net_pct: number | null
+    trades_per_year: number | null; years: number | null
+  }
+  seated: Record<string, any>
+  admission_reason: string
+  economics_flags_for_review: string[]
+  research_classification: string
+  cfg: Record<string, any>
+  cfg_fingerprint: string | null; cfg_sha256: string | null; cfg_variant: string | null
+  table_candidate_version: string | null; data_fingerprint: string | null
+  standalone_ledger: string | null; standalone_ledger_sha256: string | null
+  source_verdict_artifact: string | null
+  historical_cutoff: string | null; fees: number | null
+}
+
+const BAND_COLOR: Record<string, string> = {
+  // 2026-09-26 OOS pool tiers. Gold / green / grey mirror the contender PDF so the two surfaces
+  // cannot drift apart, and SPARSE is amber because it is deliberately NOT in the deployable pool.
+  TIER_A: '#eab308', TIER_B: '#10b981', TIER_C: '#94a3b8', SPARSE: '#f59e0b',
+  CORE: '#10b981', FLEX: '#3b82f6', EXCEPTIONAL: '#a855f7',
+  // no QUALITY_FAIL band exists: no PASS winner disappears (WINNER SELECTION rule 3, 2026-09-16)
+  MANUAL_REVIEW: '#f59e0b',
+}
+
+export function ContendersPanel({ active }: { active: boolean }) {
+  const [rows, setRows] = useState<ConRow[]>([])
+  const [meta, setMeta] = useState<any>(null)
+  const [tiers, setTiers] = useState<CanonTier[]>([])
+  const [tier, setTier] = useState<string>('')
+  const [loading, setLoading] = useState(true)
+  const [fAsset, setFAsset] = useState('all')
+  const [fTf, setFTf] = useState('all')
+  const [fBand, setFBand] = useState('all')
+  const [fFam, setFFam] = useState('all')
+  const [showFamInfo, setShowFamInfo] = useState(false)
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'wr_pct', dir: 'desc' })
+  const [openCfg, setOpenCfg] = useState<string | null>(null)
+  const [showNotAdmitted, setShowNotAdmitted] = useState(false)
+  // OOS_SPARSE_SUPPORTIVE is preserved and selectable, but OFF by default: these met every economic
+  // requirement and missed ONLY the trade-count floor, so they are not part of the strict deployable
+  // pool unless Chris/Codex rule otherwise.
+  const [inclSparse, setInclSparse] = useState(false)
+  const [sparseRows, setSparseRows] = useState<ConRow[]>([])
+  // ── basket construction. `picked` is the source of truth — nothing is ticked by default.
+  //    tierS is SEPARATE and must be a subset of picked; unticking a cfg drops it from Tier-S.
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [tierS, setTierS] = useState<Record<string, boolean>>({})
+  const [simRun, setSimRun] = useState<any>(null)
+  const [simHist, setSimHist] = useState<any[]>([])
+  const [simMsg, setSimMsg] = useState('')
+  const [simBusy, setSimBusy] = useState(false)
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [d, t, h] = await Promise.all([
+          authedFetch<any>('/api/admin/msga-leaderboard?strategy=contenders', { cache: 'no-store' }),
+          authedFetch<any>('/api/admin/msga-leaderboard?strategy=canonical-tiers', { cache: 'no-store' }),
+          authedFetch<any>('/api/admin/contender-sim', { cache: 'no-store' }).catch(() => ({ runs: [] })),
+        ])
+        if (cancelled) return
+        setRows(d.rows ?? []); setMeta(d); setSparseRows(d.sparse_rows ?? [])
+        const tl: CanonTier[] = t?.tiers ?? []
+        setTiers(tl)
+        setTier(prev => prev || (tl[0]?.key ?? ''))
+        setSimHist(h?.runs ?? [])
+      } catch (e) {
+        if (typeof window !== 'undefined') console.warn('[contenders] fetch failed:', e)
+      } finally { if (!cancelled) setLoading(false) }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [active])
+
+  if (!active) return null
+
+  const SA_BG = 'rgba(59,130,246,0.10)'
+  const SE_BG = 'rgba(16,185,129,0.10)'
+  const uniq = (f: (r: ConRow) => string | null) =>
+    Array.from(new Set(rows.map(f).filter(Boolean) as string[])).sort()
+
+  // The strict pool is the default simulator universe; sparse-supportive folds in only on request.
+  const pool = inclSparse ? [...rows, ...sparseRows] : rows
+  let view = pool.filter(r =>
+    (fAsset === 'all' || r.asset === fAsset) &&
+    (fTf === 'all' || r.tf === fTf) &&
+    (fBand === 'all' || r.quality_band === fBand) &&
+    (fFam === 'all' || r.strategy_family === fFam))
+
+  // GREEN comes from the CURRENT simulation's per-cfg result. No simulation -> no seated numbers.
+  const seatedOf = (id: string) => simRun?.per_cfg?.[id]?.seated ?? null
+  const seatRateOf = (id: string) => simRun?.per_cfg?.[id]?.seat_rate ?? null
+
+  const val = (r: ConRow, k: string): any => {
+    if (k in r.standalone) return (r.standalone as any)[k]
+    if (k.startsWith('seated.')) {
+      const s = seatedOf(r.candidate_id)
+      return k === 'seated.seat_rate' ? seatRateOf(r.candidate_id) : (s ? s[k.slice(7)] : null)
+    }
+    return (r as any)[k]
+  }
+  view = [...view].sort((a, b) => {
+    const x = val(a, sort.key), y = val(b, sort.key)
+    if (x == null && y == null) return 0
+    if (x == null) return 1
+    if (y == null) return -1
+    const c = typeof x === 'string' ? x.localeCompare(y) : (x as number) - (y as number)
+    return sort.dir === 'asc' ? c : -c
+  })
+
+  const th = (key: string, label: string, bg?: string) => (
+    <th
+      onClick={() => setSort(s => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }))}
+      style={{ padding: '4px 6px', cursor: 'pointer', whiteSpace: 'nowrap', background: bg,
+               textAlign: 'right', fontWeight: sort.key === key ? 700 : 500 }}
+      title="click to sort"
+    >{label}{sort.key === key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}</th>
+  )
+  const n = (v: any, d = 2) => (v == null ? '—' : typeof v === 'number' ? v.toFixed(d) : String(v))
+
+  const pickedIds = Object.keys(picked).filter(k => picked[k])
+  const tierSIds = Object.keys(tierS).filter(k => tierS[k] && picked[k])
+  const sel = tiers.find(t => t.key === tier)
+  const c = meta?.counts ?? {}
+  // TWO POPULATIONS, NEVER ONE HEADLINE (SOL, 2026-09-19). SELECTABLE is counted here from `rows`,
+  // the same deduplicated array "tick all" acts on, so the headline cannot disagree with what a tick
+  // selects. PRESERVED RESEARCH is the research classification of every PASS row, duplicate aliases
+  // included — a different population, read from the publisher and never mixed with the first.
+  const selBand = (b: string) => rows.filter(r => r.quality_band === b).length
+  const selCore = selBand('CORE'), selFlex = selBand('FLEX'), selExc = selBand('EXCEPTIONAL')
+  const selOutside = rows.length - selCore - selFlex - selExc
+  const pres = meta?.preserved_research_classifications
+  const presBands = pres?.bands_including_duplicate_aliases ?? c
+
+  const togglePick = (id: string) => setPicked(p => {
+    const next = { ...p, [id]: !p[id] }
+    if (!next[id]) setTierS(t => ({ ...t, [id]: false }))   // Tier-S is always a subset of picked
+    return next
+  })
+  const tickAllShown = () => setPicked(p => {
+    const next = { ...p }; view.forEach(r => { next[r.candidate_id] = true }); return next
+  })
+  const untickAll = () => { setPicked({}); setTierS({}) }
+  const clearTierS = () => setTierS({})
+
+  const runSim = async () => {
+    if (!pickedIds.length) { setSimMsg('select at least one cfg first'); return }
+    setSimBusy(true); setSimMsg('starting…')
+    try {
+      const r = await authedFetch<any>('/api/admin/contender-sim', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ selected: pickedIds, tierS: tierSIds, tier }),
+      })
+      setSimMsg(`run ${r.runId} — ${r.selected_count} cfgs, ${r.tier_s_count} Tier-S, ${r.tier}`)
+      // poll until the runner writes its result. The route has no progress channel, so what is
+      // surfaced is what is actually known: the run id, its size, and elapsed seconds. Nothing invented.
+      const t0 = Date.now()
+      for (let i = 0; i < 90; i++) {
+        await new Promise(res => setTimeout(res, 2000))
+        setSimMsg(`run ${r.runId} — ${r.selected_count} cfgs, ${r.tier_s_count} Tier-S, ${r.tier}`
+          + ` · running ${Math.round((Date.now() - t0) / 1000)} s`)
+        const d = await authedFetch<any>(`/api/admin/contender-sim?runId=${r.runId}`, { cache: 'no-store' })
+        if (d?.status === 'done') {
+          setSimRun(d)
+          setSimMsg(`run ${r.runId} complete — ${d.seated_trades}/${d.eligible_trades} trades seated `
+            + `(${((d.overall_seat_rate ?? 0) * 100).toFixed(1)} %), basket net `
+            + `${d.seated_basket_metrics?.net_pct_total ?? '—'} %`)
+          const h = await authedFetch<any>('/api/admin/contender-sim', { cache: 'no-store' })
+          setSimHist(h?.runs ?? [])
+          setSimBusy(false); return
+        }
+      }
+      setSimMsg(`run ${r.runId} still running — open it from history when it finishes`)
+    } catch (e: any) {
+      setSimMsg(`simulation failed: ${e?.message ?? e}`)
+    }
+    setSimBusy(false)
+  }
+
+  const openRun = async (runId: string) => {
+    try {
+      const d = await authedFetch<any>(`/api/admin/contender-sim?runId=${runId}`, { cache: 'no-store' })
+      setSimRun(d)
+      setPicked(Object.fromEntries((d.selected_cfgs ?? []).map((x: string) => [x, true])))
+      setTierS(Object.fromEntries((d.tier_s_cfgs ?? []).map((x: string) => [x, true])))
+      if (d.tier) setTier(d.tier)
+      setSimMsg(`loaded ${runId} — ${d.seated_trades}/${d.eligible_trades} seated, tier ${d.tier}`)
+    } catch (e: any) { setSimMsg(`could not open ${runId}: ${e?.message ?? e}`) }
+  }
+
+  const exportSelection = () => {
+    const payload = {
+      exported_at: new Date().toISOString(), tier,
+      selected: pickedIds, tierS: tierSIds,
+      rows: rows.filter(r => picked[r.candidate_id]).map(r => ({
+        candidate_id: r.candidate_id, family: r.strategy_family, asset: r.asset, tf: r.tf,
+        direction: r.direction, quality_band: r.quality_band, role: r.role, robust: r.robust_label,
+        cfg: r.cfg, cfg_sha256: r.cfg_sha256, standalone: r.standalone,
+        standalone_ledger: r.standalone_ledger, standalone_ledger_sha256: r.standalone_ledger_sha256,
+      })),
+      simulation: simRun ? { runId: simRun.runId, tier: simRun.tier, metrics: simRun.seated_basket_metrics } : null,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `contender-selection-${tier}-${pickedIds.length}cfgs.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0 }}>Contenders 🎯</h3>
+        <span style={{ opacity: 0.7, fontSize: 12 }}>
+          {loading ? 'loading…' : `${view.length} of ${rows.length} active`}
+          {meta?.updatedAt ? ` · generated ${meta.updatedAt}` : ''}
+        </span>
+      </div>
+
+      <p style={{ fontSize: 12, opacity: 0.85, margin: '8px 0 4px', maxWidth: 1100 }}>
+        <b>This page is a quality-admitted VIEW of the authoritative research-PASS library.</b>{' '}
+        Research PASS is statistically validated research evidence; contender admission is Chris&apos;s
+        standalone quality preference. Every PASS cfg stays preserved in the library whether or not it
+        appears here. ROBUST is a label, never a gate; role is provenance, never a filter; prior
+        visibility of the data is provenance, never contamination; and a cfg that clears the gate belongs
+        here even if its strategy family is still undergoing research.
+      </p>
+
+      {/* ── OOS POOL HEADER (2026-09-26). The simulator universe is the STRICT survivors; sparse
+           supportive is a separate, clearly-labelled opt-in and is never on by default. ── */}
+      {meta?.counts?.strict_survivors != null && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12,
+                      margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6,
+                      border: '1px solid rgba(148,163,184,0.35)' }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <b>CONTENDERS — OOS SCREENED</b>
+            <span>Strict Survivors <b>{meta.counts.strict_survivors}</b></span>
+            <span style={{ color: BAND_COLOR.TIER_A }}>Tier A <b>{meta.counts.tier_A}</b></span>
+            <span style={{ color: BAND_COLOR.TIER_B }}>Tier B <b>{meta.counts.tier_B}</b></span>
+            <span style={{ color: BAND_COLOR.TIER_C }}>Tier C <b>{meta.counts.tier_C}</b></span>
+            <span>clusters <b>{meta.counts.economic_clusters}</b></span>
+            <span>newly discovered <b>{meta.counts.newly_discovered}</b></span>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer',
+                            color: BAND_COLOR.SPARSE }}>
+              <input type="checkbox" checked={inclSparse}
+                     onChange={e => setInclSparse(e.target.checked)} />
+              <span>INCLUDE SPARSE SUPPORTIVE <b>{meta.counts.sparse_supportive}</b></span>
+            </label>
+            <span style={{ opacity: 0.75 }}>
+              positive OOS, insufficient trade count — preserved and monitored, NOT part of the
+              strict deployable pool
+            </span>
+          </div>
+          <div style={{ opacity: 0.7 }}>
+            default simulator universe: <b>STRICT SURVIVORS ONLY</b> · generated{' '}
+            {String(meta.generated_at ?? '')} · <b>{meta.label}</b>
+          </div>
+          <div style={{ opacity: 0.6 }}>
+            archived research (preserved, excluded from the selector):{' '}
+            universe <b>{meta.archived_research?.universe_total}</b> ·{' '}
+            quarantined exec-disagreement <b>{meta.archived_research?.quarantined_exec_disagreement}</b> ·{' '}
+            invalidated OOS results <b>{meta.archived_research?.invalidated_oos_results}</b>
+          </div>
+        </div>
+      )}
+
+      {meta?.counts && meta?.counts?.strict_survivors == null && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, margin: '6px 0 10px' }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <b>SELECTABLE</b>
+            <span style={{ color: BAND_COLOR.CORE }}>CORE <b>{selCore}</b></span>
+            <span style={{ color: BAND_COLOR.FLEX }}>FLEX <b>{selFlex}</b></span>
+            <span style={{ color: BAND_COLOR.EXCEPTIONAL }}>EXCEPTIONAL <b>{selExc}</b></span>
+            <span>TOTAL <b>{rows.length}</b></span>
+            {selOutside !== 0 && (
+              <span style={{ color: '#ef4444' }}>outside the three bands <b>{selOutside}</b> — publisher defect</span>
+            )}
+            {meta?.selectable?.total != null && meta.selectable.total !== rows.length && (
+              <span style={{ color: '#ef4444' }}>publisher&apos;s selectable total says <b>{meta.selectable.total}</b></span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', opacity: 0.75 }}>
+            <b>PRESERVED RESEARCH</b>
+            <span>PASS <b>{pres?.total_pass_library ?? c.total_pass_library}</b></span>
+            <span style={{ color: BAND_COLOR.CORE }}>CORE <b>{presBands.CORE}</b></span>
+            <span style={{ color: BAND_COLOR.FLEX }}>FLEX <b>{presBands.FLEX}</b></span>
+            <span style={{ color: BAND_COLOR.EXCEPTIONAL }}>EXCEPTIONAL <b>{presBands.EXCEPTIONAL}</b></span>
+            <span style={{ color: BAND_COLOR.MANUAL_REVIEW }}>MANUAL REVIEW <b>{presBands.MANUAL_REVIEW}</b></span>
+            <span>duplicate aliases <b>{pres?.duplicate_aliases ?? '—'}</b></span>
+            <span>· every research row incl. aliases — not separately selectable</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── BASKET CONTROLS ─────────────────────────────────────────────────────────────── */}
+      <div style={{ border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6, padding: '10px 12px',
+                    margin: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 12 }}>BASKET</b>
+          <span style={{ fontSize: 12 }}>selected <b>{pickedIds.length}</b></span>
+          <span style={{ fontSize: 12 }}>Tier-S <b>{tierSIds.length}</b></span>
+          <button onClick={tickAllShown} style={{ fontSize: 12 }}>tick all shown ({view.length})</button>
+          <button onClick={untickAll} style={{ fontSize: 12 }}>untick all</button>
+          <button onClick={clearTierS} style={{ fontSize: 12 }}>clear Tier-S</button>
+          <label style={{ fontSize: 12 }}>
+            tier{' '}
+            <select value={tier} onChange={e => setTier(e.target.value)} style={{ fontSize: 12 }}>
+              {tiers.map(t => (
+                <option key={t.key} value={t.key}>
+                  {t.label} — {t.total_lanes} lanes ({t.ordinary_lanes} ordinary + 1 reserved Tier-S)
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* PRIMARY ACTION. simBusy is set before the fetch and cleared in its finally, so the
+              disabled attribute is what prevents a duplicate submission — not a debounce. */}
+          <button onClick={runSim} disabled={simBusy || !pickedIds.length}
+                  aria-busy={simBusy}
+                  style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, padding: '7px 16px',
+                           borderRadius: 5, border: 'none', display: 'inline-flex', alignItems: 'center',
+                           gap: 8, color: '#06140b',
+                           background: simBusy ? 'rgba(126,231,135,0.45)'
+                                      : (!pickedIds.length ? 'rgba(255,255,255,0.18)' : '#7ee787'),
+                           cursor: (simBusy || !pickedIds.length) ? 'not-allowed' : 'pointer' }}>
+            {simBusy && (
+              <span style={{ width: 11, height: 11, borderRadius: '50%', display: 'inline-block',
+                             border: '2px solid rgba(6,20,11,0.28)', borderTopColor: '#06140b',
+                             animation: 'staxsSpin 0.7s linear infinite' }} />
+            )}
+            {simBusy ? 'RUNNING SIMULATION…' : 'RUN SIMULATION'}
+          </button>
+          <style>{'@keyframes staxsSpin{to{transform:rotate(360deg)}}'}</style>
+          <button onClick={exportSelection} disabled={!pickedIds.length} style={{ fontSize: 12 }}>
+            export selection
+          </button>
+        </div>
+        {simMsg && <div style={{ fontSize: 11, opacity: 0.85 }}>{simMsg}</div>}
+        <div style={{ fontSize: 11, opacity: 0.7 }}>
+          Tier-S is always a subset of the selected basket — unticking a cfg drops it from Tier-S. The
+          simulation replays each contender&apos;s authoritative standalone ledger through the live
+          engine&apos;s canonical FCFS allocator: chronological ordering, lane availability and release,
+          one lane per asset, one lane per cfg, and the reserved Tier-S seat.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '4px 0 10px' }}>
+        {[['family', fFam, setFFam, uniq(r => r.strategy_family)],
+          ['asset', fAsset, setFAsset, uniq(r => r.asset)],
+          ['tf', fTf, setFTf, uniq(r => r.tf)],
+          ['band', fBand, setFBand, uniq(r => r.quality_band)]].map(([lab, v, set, opts]: any) => (
+          <label key={lab} style={{ fontSize: 12 }}>
+            {lab}{' '}
+            <select value={v} onChange={e => set(e.target.value)} style={{ fontSize: 12 }}>
+              <option value="all">all</option>
+              {opts.map((o: string) => (
+                <option key={o} value={o}>
+                  {lab === 'family' && familyInfo(o) ? `${o} — ${familyInfo(o)!.nickname}` : o}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+        {/* STRATEGY EXPLANATIONS — nickname + plain-English mechanism, from the single map in lib/strategy-families.ts */}
+        <button onClick={() => setShowFamInfo(x => !x)} style={{ fontSize: 12 }}
+                title="what does each strategy family do?" aria-expanded={showFamInfo}>
+          ⓘ {showFamInfo ? 'hide' : fFam === 'all' ? 'what are these families?' : 'what is this family?'}
+        </button>
+      </div>
+      {showFamInfo && (
+        <div style={{ border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6, padding: '8px 10px',
+                      margin: '-4px 0 10px', fontSize: 12, maxWidth: 1100, display: 'grid', gap: 6 }}>
+          {(fFam === 'all' ? uniq(r => r.strategy_family) : [fFam]).map(name => {
+            const fi = familyInfo(name)
+            return (
+              <div key={name}>
+                <b>{name}</b>
+                {fi ? <> — <i>&ldquo;{fi.nickname}&rdquo;</i><div style={{ opacity: 0.85 }}>{fi.explanation}</div></>
+                    : <span style={{ opacity: 0.7 }}> — no explanation recorded yet</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── GREEN SECTION HEADER ────────────────────────────────────────────────────────── */}
+      <div style={{ background: SE_BG, border: '1px solid rgba(16,185,129,0.35)', borderRadius: 6,
+                    padding: '8px 10px', margin: '0 0 10px' }}>
+        <b style={{ fontSize: 12 }}>
+          SEATED SIMULATION — {sel ? `${sel.label.toUpperCase()} (${sel.total_lanes} LANES)` : 'no tier'}
+        </b>
+        {simRun ? (
+          <span style={{ fontSize: 12, marginLeft: 12 }}>
+            run <b>{simRun.runId}</b> · {simRun.seated_trades}/{simRun.eligible_trades} trades seated
+            ({((simRun.overall_seat_rate ?? 0) * 100).toFixed(1)} %) · basket net{' '}
+            <b>{simRun.seated_basket_metrics?.net_pct_total ?? '—'} %</b> · WR{' '}
+            {simRun.seated_basket_metrics?.wr_pct ?? '—'} % · PF {simRun.seated_basket_metrics?.pf ?? '—'}
+            {simRun.provenance_invariant && (
+              <span style={{ marginLeft: 10, opacity: 0.8 }}>
+                · basket ⊆ standalone: <b>{simRun.provenance_invariant.holds ? 'OK' : 'VIOLATED'}</b>
+                {' '}({simRun.provenance_invariant.omitted_by_competition} omitted by competition)
+              </span>
+            )}
+          </span>
+        ) : (
+          null
+        )}
+        {/* ── THE MONEY ACCOUNT ────────────────────────────────────────────────────────────
+            Deliberately a SEPARATE block from the research percentages above. The line above
+            answers "is the edge real"; this one answers "what would it have done to an account",
+            and the two must never be read as the same number. Sizing is the live engine's own
+            tier_s.risk_per_lane_notional off each trade's entry-time stop. */}
+        {simRun?.account_simulation ? (
+          <div style={{ fontSize: 12, marginTop: 6, paddingTop: 6,
+                        borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+            <b>ACCOUNT</b>{' '}
+            ${Number(simRun.account_simulation.start_balance).toLocaleString()} →{' '}
+            <b>${Number(simRun.account_simulation.final_balance).toLocaleString(undefined,
+              { maximumFractionDigits: 2 })}</b>{' '}
+            · PnL <b>${Number(simRun.account_simulation.pnl_usd).toLocaleString(undefined,
+              { maximumFractionDigits: 2 })}</b>{' '}
+            ({simRun.account_simulation.return_pct} %) · trades {simRun.account_simulation.trades}
+            {' '}· WR {simRun.account_simulation.wr_pct} % · PF {simRun.account_simulation.pf}
+            {' '}· RRR {simRun.account_simulation.realised_rrr}
+            <br />
+            maxDD <b>${Number(simRun.account_simulation.max_dd_usd).toLocaleString(undefined,
+              { maximumFractionDigits: 2 })}</b> / <b>{simRun.account_simulation.max_dd_pct} %</b>
+            {' '}· risk ${Number(simRun.account_simulation.risk_usd_per_trade_nominal).toLocaleString()}/trade
+            {' '}· max simultaneous risk ${Number(simRun.account_simulation.max_simultaneous_risk_usd).toLocaleString()}
+            {' '}· max notional ${Number(simRun.account_simulation.max_notional_usd).toLocaleString(undefined,
+              { maximumFractionDigits: 0 })}
+            {' '}· max margin ${Number(simRun.account_simulation.max_margin_usd).toLocaleString(undefined,
+              { maximumFractionDigits: 0 })}
+            {simRun.account_simulation.compounding ? ' · COMPOUNDING' : ' · non-compounding'}
+            <br />
+            <span style={{ opacity: 0.85 }}>
+              rejects — lanes full {simRun.rejection_reasons?.lanes_full ?? 0}
+              {' '}· asset already open {simRun.rejection_reasons?.asset_already_open ?? 0}
+              {' '}· cfg already open {simRun.rejection_reasons?.cfg_already_open ?? 0}
+              {' '}· funding {simRun.account_simulation.fundability?.enforced
+                ? (simRun.account_simulation.fundability?.entries_over_leverage_ceiling ?? 0)
+                : 'not enforced'}
+            </span>
+            {simRun.account_simulation.fundability
+              && !simRun.account_simulation.fundability.enforced
+              && (simRun.account_simulation.fundability.entries_over_leverage_ceiling ?? 0) > 0 && (
+              /* Live STAXS applies no per-trade funding gate, so nothing is rejected here either —
+                 but a run whose peak margin exceeds the account must say so on its face. */
+              <div style={{ marginTop: 4, color: '#fbbf24' }}>
+                ⚠ peak margin {simRun.account_simulation.fundability.peak_margin_pct_of_capital} % of capital —
+                {' '}{simRun.account_simulation.fundability.entries_over_leverage_ceiling} entries opened above the
+                {' '}{sel ? sel.label : ''} leverage ceiling
+                {' '}(${Number(simRun.account_simulation.fundability.max_fundable_notional_at_tier_leverage)
+                  .toLocaleString()} notional).
+                {' '}Live enforces no funding gate, so these were NOT rejected — treat the top of this curve as optimistic.
+              </div>
+            )}
+          </div>
+        ) : simRun ? null : (
+          <span style={{ fontSize: 12, marginLeft: 12, opacity: 0.75 }}>
+            no simulation loaded — select cfgs, choose a tier and press RUN SIMULATION. Green cells stay
+            blank until a basket is actually simulated; nothing is estimated.
+          </span>
+        )}
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
+          <thead>
+            <tr>
+              <th colSpan={10} style={{ padding: '4px 6px', textAlign: 'left' }}>
+                IDENTITY — role and ROBUST are COLUMNS, never filters
+              </th>
+              <th colSpan={7} style={{ padding: '4px 6px', background: SA_BG, textAlign: 'left' }}>
+                STANDALONE — CFG ALONE, NO LANE COMPETITION
+              </th>
+              <th colSpan={5} style={{ padding: '4px 6px', background: SE_BG, textAlign: 'left' }}>
+                SEATED SIMULATION — {sel ? `${sel.label.toUpperCase()} (${sel.total_lanes} LANES)` : '—'}
+              </th>
+            </tr>
+            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
+              <th style={{ padding: '4px 6px' }} title="include in the basket">keep</th>
+              <th style={{ padding: '4px 6px' }} title="designate as Tier-S (subset of keep)">Tier-S</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>band</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>candidate ID</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>family</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>asset</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>tf</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>dir</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>role</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>ROBUST</th>
+              {th('trades', 'trades', SA_BG)}
+              {th('wr_pct', 'WR %', SA_BG)}
+              {th('pf', 'PF', SA_BG)}
+              {th('realised_rrr', 'realised RRR', SA_BG)}
+              {th('annualized_net_pct', 'ann net %', SA_BG)}
+              {th('net_pct_total', 'total net %', SA_BG)}
+              {th('years', 'years', SA_BG)}
+              {th('seated.n', 'seated trades', SE_BG)}
+              {th('seated.wr_pct', 'seated WR %', SE_BG)}
+              {th('seated.pf', 'seated PF', SE_BG)}
+              {th('seated.net_pct_total', 'seated net %', SE_BG)}
+              {th('seated.seat_rate', 'seat %', SE_BG)}
+            </tr>
+          </thead>
+          <tbody>
+            {view.map(r => {
+              const s = r.standalone
+              const g = seatedOf(r.candidate_id)
+              const sr = seatRateOf(r.candidate_id)
+              const open = openCfg === r.candidate_id
+              return (
+                <Fragment key={r.candidate_id}>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <td style={{ padding: '3px 6px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={!!picked[r.candidate_id]}
+                             onChange={() => togglePick(r.candidate_id)} />
+                    </td>
+                    <td style={{ padding: '3px 6px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={!!tierS[r.candidate_id]}
+                             disabled={!picked[r.candidate_id]}
+                             title={picked[r.candidate_id] ? 'designate Tier-S' : 'select the cfg first'}
+                             onChange={() => setTierS(t => ({ ...t, [r.candidate_id]: !t[r.candidate_id] }))} />
+                    </td>
+                    <td style={{ padding: '3px 6px', color: BAND_COLOR[r.quality_band] ?? undefined, fontWeight: 700 }}>
+                      {r.quality_band}
+                    </td>
+                    <td style={{ padding: '3px 6px', cursor: 'pointer', textDecoration: 'underline dotted' }}
+                        onClick={() => setOpenCfg(open ? null : r.candidate_id)}
+                        title="show the resolved configuration and its provenance">
+                      {r.candidate_id}
+                    </td>
+                    <td style={{ padding: '3px 6px' }}
+                        title={familyInfo(r.strategy_family) ? `${familyInfo(r.strategy_family)!.nickname} — ${familyInfo(r.strategy_family)!.explanation}` : undefined}>
+                      {r.strategy_family}
+                    </td>
+                    <td style={{ padding: '3px 6px' }}>{r.asset}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.tf}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.direction ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.role ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.robust_label == null ? '—' : r.robust_label ? 'yes' : 'no'}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{s.trades ?? '—'}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.wr_pct)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.pf, 3)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.realised_rrr, 3)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.annualized_net_pct, 1)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.net_pct_total, 1)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.years, 1)}</td>
+                    <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{g?.n ?? '—'}</td>
+                    <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{n(g?.wr_pct)}</td>
+                    <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{n(g?.pf, 3)}</td>
+                    <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{n(g?.net_pct_total, 1)}</td>
+                    <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>
+                      {sr == null ? '—' : (sr * 100).toFixed(1)}</td>
+                  </tr>
+                  {open && (
+                    <tr>
+                      <td colSpan={22} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.03)' }}>
+                        <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                          <div><b>admission</b> — {r.admission_reason}</div>
+                          <div><b>research classification</b> — {r.research_classification} · <b>family lifecycle</b> — {r.family_lifecycle_status}</div>
+                          <div><b>cfg fingerprint (sha256)</b> {r.cfg_sha256} · <b>variant</b> {r.cfg_variant ?? '—'}</div>
+                          <div><b>data fingerprint (tape sha256)</b> {r.data_fingerprint}</div>
+                          <div><b>history cutoff</b> {r.historical_cutoff} · <b>fees</b> {r.fees}% round trip</div>
+                          <div><b>standalone ledger</b> {r.standalone_ledger} · sha256 {r.standalone_ledger_sha256}</div>
+                          <div><b>source verdict artifact</b> {r.source_verdict_artifact}</div>
+                          <pre style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 11 }}>
+                            {JSON.stringify(r.cfg, null, 1)}
+                          </pre>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── RUN HISTORY ─────────────────────────────────────────────────────────────────── */}
+      <div style={{ marginTop: 14 }}>
+        <b style={{ fontSize: 12 }}>SIMULATION RUN HISTORY</b>
+        {simHist.length === 0 ? (
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>no runs yet</div>
+        ) : (
+          <div style={{ overflowX: 'auto', marginTop: 6 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+              <thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
+                {['run ID', 'label', 'when', 'tier', 'lanes', 'cfgs', 'Tier-S', 'eligible', 'seated', 'seat %',
+                  'basket net %', 'basket WR %', 'basket PF', '⊆ invariant', 'data cutoff', '']
+                  .map(h => <th key={h} style={{ padding: '3px 6px', textAlign: 'left' }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {simHist.map((x: any) => (
+                  <tr key={x.runId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '3px 6px' }}>{x.runId}</td>
+                    <td style={{ padding: '3px 6px', maxWidth: 220, fontSize: 10, opacity: 0.8 }}>
+                      {x.label ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.when}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.tier}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.lanes_total}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.selected_count}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.tier_s_count}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.eligible_trades ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.seated_trades ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>
+                      {x.overall_seat_rate == null ? '—' : (x.overall_seat_rate * 100).toFixed(1)}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.net_pct_total ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.wr_pct ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{x.seated_basket_metrics?.pf ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>
+                      {x.provenance_invariant_holds == null ? '—' : x.provenance_invariant_holds ? 'OK' : 'VIOLATED'}</td>
+                    <td style={{ padding: '3px 6px', fontSize: 10, opacity: 0.75 }}>{x.data_cutoff ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>
+                      <button onClick={() => openRun(x.runId)} style={{ fontSize: 11 }}>open</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {meta?.not_admitted?.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <button onClick={() => setShowNotAdmitted(v => !v)} style={{ fontSize: 12 }}>
+            {showNotAdmitted ? 'hide' : 'show'} the {meta.not_admitted.length} PASS winners preserved but not admitted
+          </button>
+          {showNotAdmitted && (
+            <div style={{ overflowX: 'auto', marginTop: 8 }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+                <thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
+                  {['band', 'candidate ID', 'family', 'asset', 'tf', 'WR %', 'PF', 'RRR', 'ann net %', 'reason not admitted']
+                    .map(h => <th key={h} style={{ padding: '3px 6px', textAlign: 'left' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {meta.not_admitted.map((x: any) => (
+                    <tr key={x.candidate_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '3px 6px', color: BAND_COLOR[x.quality_band] ?? undefined }}>{x.quality_band}</td>
+                      <td style={{ padding: '3px 6px' }}>{x.candidate_id}</td>
+                      <td style={{ padding: '3px 6px' }}>{x.family ?? '—'}</td>
+                      <td style={{ padding: '3px 6px' }}>{x.asset}</td>
+                      <td style={{ padding: '3px 6px' }}>{x.tf}</td>
+                      <td style={{ padding: '3px 6px' }}>{n(x.wr_pct)}</td>
+                      <td style={{ padding: '3px 6px' }}>{n(x.pf, 3)}</td>
+                      <td style={{ padding: '3px 6px' }}>{n(x.realised_rrr, 3)}</td>
+                      <td style={{ padding: '3px 6px' }}>{n(x.annualized_net_pct, 1)}</td>
+                      <td style={{ padding: '3px 6px', maxWidth: 520 }}>{x.reason_not_admitted}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {meta?.admission?.stamped_pool_thresholds && (
+        <p style={{ fontSize: 11, opacity: 0.7, marginTop: 12, maxWidth: 1100 }}>
+          <b>Stamped global admission thresholds</b> (computed from ALL verified PASS winners at admission
+          time, so this decision stays reproducible): pool {meta.admission.stamped_pool_thresholds.pool_size} ·
+          mean PF {meta.admission.stamped_pool_thresholds.global_mean_pf} ·
+          mean realised RRR {meta.admission.stamped_pool_thresholds.global_mean_realised_rrr} ·
+          mean annualized net {meta.admission.stamped_pool_thresholds.global_mean_annualized_net_pct}% ·
+          p75 {meta.admission.stamped_pool_thresholds.global_p75_pf} /
+          {meta.admission.stamped_pool_thresholds.global_p75_realised_rrr} /
+          {meta.admission.stamped_pool_thresholds.global_p75_annualized_net_pct}%.
+        </p>
       )}
     </div>
   )
