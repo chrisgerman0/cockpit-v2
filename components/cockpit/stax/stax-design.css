@@ -5939,3 +5939,24 @@ html.light .stax-app .adm-parity-table tbody td { border-bottom: 1px solid rgba(
 @media (max-width: 480px) {
   .stax-app .bt-rerun-grid { grid-template-columns: 1fr; }
 }
+
+/* ─── TOPBAR AT 360px — the menu button was clipped off the screen. 2026-09-26 ────────────────
+   Measured on a 343px CSS viewport (a 360px device): .topbar clientWidth 343, scrollWidth 354.
+   The row's fixed items — brand, tk-end, the BTC pill and four 32px icon buttons — plus six 10px
+   gaps and 40px of horizontal padding summed to 354, so the right-most control (.menu-wrap, the
+   hamburger) sat at right:354 and was cut off by 11px. The page itself does not scroll sideways,
+   so there was no way to reach the hidden part: the primary navigation affordance on the narrowest
+   supported device was simply unreachable.
+
+   The fix recovers the 11px from padding, gap and the BTC pill rather than removing anything. The
+   pill is the ONLY BTC price on mobile (.topbar-ticker is display:none below 900px), so hiding it
+   would cost real information to solve a layout problem; `min-width: 0` lets it shrink instead,
+   which is the flexbox default that `min-width: auto` overrides on flex children. */
+@media (max-width: 430px) {
+  .stax-app .topbar { gap: 5px; padding: 10px 8px; }
+  .stax-app .topbar-btc-pill {
+    min-width: 0; flex: 0 1 auto; overflow: hidden;
+    padding-left: 6px; padding-right: 6px; font-size: 11px;
+  }
+  .stax-app .topbar-tk-end { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+}
