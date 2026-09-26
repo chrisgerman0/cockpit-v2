@@ -1252,10 +1252,17 @@ function Hero({ data }: { data: StaxDashboardData }) {
             <>NO CLOSED TRADES YET · your curve starts at your first close</>
           ) : sim.isReal ? (
             <>
-              REAL ACCOUNT EQUITY · ending ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              {/* NAME THE QUANTITY, not just the number. This curve is starting capital plus
+                  REALISED closes; the balance card above it is the live exchange equity, which also
+                  carries open-position P&L and any deposits or withdrawals. They are different
+                  quantities and they will not match. A bare "ending $2,484" beside a balance
+                  reading "$8,408" reads as a contradiction or a bug — the same confusion that made
+                  this card present the strategy's curve as the user's own in September. */}
+              REAL ACCOUNT EQUITY · curve ends at ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              {' '}(starting capital + realised closes)
               {' · '}{range === 'ALL' ? 'all time' : `last ${range.toLowerCase()}`}
               {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
-              {' · '}realised closes, non-compounding basis
+              {' · '}non-compounding basis · excludes open P&L and any deposits or withdrawals
             </>
           ) : (
             <>ILLUSTRATIVE BACKTEST — NO LIVE TRADES YET · not your account history · $
