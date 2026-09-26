@@ -2549,6 +2549,16 @@ type ConRow = {
     trades: number | null; wr_pct: number | null; pf: number | null; realised_rrr: number | null
     net_pct_total: number | null; annualized_net_pct: number | null
     trades_per_year: number | null; years: number | null
+    // 2026-09-26 — the metrics now cover the COMPLETE period (pre-seal IS + sealed OOS as one
+    // continuous series), not the sealed year alone. `pf_status` travels WITH `pf` because
+    // `pf: null` is ambiguous on its own: NO_LOSSES is the best possible outcome and
+    // NO_ECONOMIC_OBSERVATIONS is the absence of any, and rendering both as '—' hides the
+    // difference. The sealed-year figures remain on `oos_only_standalone`.
+    pf_status?: string | null
+    net_usd?: number | null
+    max_dd_pct?: number | null; max_dd_usd?: number | null
+    first_ts?: string | null; last_ts?: string | null
+    period?: string | null
   }
   seated: Record<string, any>
   admission_reason: string
@@ -2595,6 +2605,15 @@ export function ContendersPanel({ active }: { active: boolean }) {
   const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [tierS, setTierS] = useState<Record<string, boolean>>({})
   const [simRun, setSimRun] = useState<any>(null)
+  // ── FULL-PERIOD SEATED SIMULATION (2026-09-26) ──────────────────────────────────────────────
+  // `simRun` above is the contender-sim pass, whose seated metrics cover the SEALED YEAR — which is
+  // what the pool was selected on, and is one year of evidence. This second run walks the COMPLETE
+  // history (pre-seal IS + sealed OOS) in one continuous allocator walk with no reset at the seal,
+  // via /api/admin/basket-sim-full. Both are kept: the sealed-year pass is the selection record,
+  // the full-period pass is what the basket would actually have done.
+  const [fpRun, setFpRun] = useState<any>(null)
+  const [fpMsg, setFpMsg] = useState('')
+  const [fpBusy, setFpBusy] = useState(false)
   const [simHist, setSimHist] = useState<any[]>([])
   const [simMsg, setSimMsg] = useState('')
   const [simBusy, setSimBusy] = useState(false)
@@ -2613,7 +2632,10 @@ export function ContendersPanel({ active }: { active: boolean }) {
         setRows(d.rows ?? []); setMeta(d); setSparseRows(d.sparse_rows ?? [])
         const tl: CanonTier[] = t?.tiers ?? []
         setTiers(tl)
-        setTier(prev => prev || (tl[0]?.key ?? ''))
+        // AGGRESSIVE BY DEFAULT (Chris, 2026-09-26). This defaulted to `tl[0]`, which is
+        // CONSERVATIVE — the canonical tier list is ordered by risk — so the panel opened on a
+        // 3-lane book while every number quoted beside it was the 7-lane aggressive figure.
+        setTier(prev => prev || (tl.find(t => t.key === 'aggressive')?.key ?? tl[0]?.key ?? ''))
         setSimHist(h?.runs ?? [])
       } catch (e) {
         if (typeof window !== 'undefined') console.warn('[contenders] fetch failed:', e)
@@ -2693,6 +2715,43 @@ export function ContendersPanel({ active }: { active: boolean }) {
   })
   const untickAll = () => { setPicked({}); setTierS({}) }
   const clearTierS = () => setTierS({})
+
+  const runFullPeriod = async () => {
+    if (!pickedIds.length) { setFpMsg('select at least one cfg first'); return }
+    setFpBusy(true); setFpMsg('starting the full-period walk…')
+    try {
+      const r = await authedFetch<any>('/api/admin/basket-sim-full', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ selected: pickedIds, sids: pickedIds, tierS: tierSIds,
+                               tier: tier || 'aggressive' }),
+      })
+      if (!r?.runId) { setFpMsg(`failed: ${JSON.stringify(r)}`); setFpBusy(false); return }
+      setFpMsg(`run ${r.runId} queued — ${r.n} cfgs, ${r.nTierS} Tier-S, ${r.tier}`)
+      const t0 = Date.now()
+      // The runner writes its own progress string at every stage (booking, policy, seating), so
+      // surface THAT rather than a spinner. On a cold booked-set cache the first run takes minutes.
+      for (let i = 0; i < 150; i++) {
+        await new Promise(res => setTimeout(res, 4000))
+        const d = await authedFetch<any>(`/api/admin/basket-sim-full?runId=${r.runId}`, { cache: 'no-store' })
+        const secs = Math.round((Date.now() - t0) / 1000)
+        if (d?.status === 'done') {
+          setFpRun(d)
+          setFpMsg(`run ${r.runId} complete in ${secs} s — `
+            + `${d.accounting?.seated_trades}/${d.accounting?.signals_eligible} seated over `
+            + `${d.period?.total_years} years`)
+          setFpBusy(false); return
+        }
+        if (d?.status === 'error') {
+          setFpRun(d); setFpMsg(`run ${r.runId} failed: ${d.error}`); setFpBusy(false); return
+        }
+        setFpMsg(`run ${r.runId} · ${d?.progress || d?.status || 'running'} · ${secs} s`)
+      }
+      setFpMsg(`run ${r.runId} still running — it writes its own result file when it finishes`)
+    } catch (e: any) {
+      setFpMsg(`full-period simulation failed: ${e?.message ?? e}`)
+    }
+    setFpBusy(false)
+  }
 
   const runSim = async () => {
     if (!pickedIds.length) { setSimMsg('select at least one cfg first'); return }
@@ -2884,11 +2943,40 @@ export function ContendersPanel({ active }: { active: boolean }) {
             {simBusy ? 'RUNNING SIMULATION…' : 'RUN SIMULATION'}
           </button>
           <style>{'@keyframes staxsSpin{to{transform:rotate(360deg)}}'}</style>
+          {/* FULL-PERIOD WALK. The green button beside this one seats the SEALED YEAR — the period
+              the pool was selected on, and one year of evidence. This one walks the complete
+              history in one continuous allocator pass with no reset at the seal. Two buttons, not
+              one with a toggle, because the two answer different questions and a reader must be
+              able to see which result they are looking at. */}
+          <button onClick={runFullPeriod} disabled={fpBusy || !pickedIds.length}
+                  aria-busy={fpBusy}
+                  title="Seat this basket across the COMPLETE history — pre-seal IS + sealed OOS as one continuous allocator walk, no reset at the seal. Aggressive tier: 6 ordinary + 1 reserved Tier-S lane."
+                  style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, padding: '7px 16px',
+                           borderRadius: 5, border: 'none', display: 'inline-flex', alignItems: 'center',
+                           gap: 8, color: '#1a1206',
+                           background: fpBusy ? 'rgba(217,164,65,0.45)'
+                                      : (!pickedIds.length ? 'rgba(255,255,255,0.18)' : '#d9a441'),
+                           cursor: (fpBusy || !pickedIds.length) ? 'not-allowed' : 'pointer' }}>
+            {fpBusy && (
+              <span style={{ width: 11, height: 11, borderRadius: '50%', display: 'inline-block',
+                             border: '2px solid rgba(26,18,6,0.28)', borderTopColor: '#1a1206',
+                             animation: 'staxsSpin 0.7s linear infinite' }} />
+            )}
+            {fpBusy ? 'WALKING FULL PERIOD…' : 'FULL PERIOD (IS + OOS)'}
+          </button>
           <button onClick={exportSelection} disabled={!pickedIds.length} style={{ fontSize: 12 }}>
             export selection
           </button>
         </div>
         {simMsg && <div style={{ fontSize: 11, opacity: 0.85 }}>{simMsg}</div>}
+        {fpMsg && <div style={{ fontSize: 11, opacity: 0.85, color: '#d9a441' }}>{fpMsg}</div>}
+        {fpRun?.status === 'done' && <FullPeriodResult r={fpRun} />}
+        {fpRun?.status === 'error' && (
+          <div style={{ fontSize: 11.5, color: '#f0b429', marginTop: 4 }}>
+            ⚠ the full-period walk failed — {fpRun.error}. No partial result is shown: a basket
+            metric from an incomplete walk would be indistinguishable from a real one.
+          </div>
+        )}
         <div style={{ fontSize: 11, opacity: 0.7 }}>
           Tier-S is always a subset of the selected basket — unticking a cfg drops it from Tier-S. The
           simulation replays each contender&apos;s authoritative standalone ledger through the live
@@ -3048,7 +3136,11 @@ export function ContendersPanel({ active }: { active: boolean }) {
               {th('realised_rrr', 'realised RRR', SA_BG)}
               {th('annualized_net_pct', 'ann net %', SA_BG)}
               {th('net_pct_total', 'total net %', SA_BG)}
+              {th('net_usd', 'total net $', SA_BG)}
+              {th('max_dd_pct', 'max DD %', SA_BG)}
               {th('years', 'years', SA_BG)}
+              {th('first_ts', 'first', SA_BG)}
+              {th('last_ts', 'last', SA_BG)}
               {th('seated.n', 'seated trades', SE_BG)}
               {th('seated.wr_pct', 'seated WR %', SE_BG)}
               {th('seated.pf', 'seated PF', SE_BG)}
@@ -3094,11 +3186,23 @@ export function ContendersPanel({ active }: { active: boolean }) {
                     <td style={{ padding: '3px 6px' }}>{r.robust_label == null ? '—' : r.robust_label ? 'yes' : 'no'}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{s.trades ?? '—'}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.wr_pct)}</td>
-                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.pf, 3)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}
+                        title={s.pf_status ? `profit factor status: ${s.pf_status}` : undefined}>
+                      {s.pf_status === 'NO_LOSSES'
+                        ? <span style={{ color: '#4ade80', fontWeight: 700 }} title="no losing trade in the whole period — the profit factor is undefined because the denominator is zero, which is the BEST case, not the worst">∞</span>
+                        : s.pf_status === 'NO_ECONOMIC_OBSERVATIONS'
+                        ? <span style={{ color: 'var(--muted)' }} title="no economic observations">n/a</span>
+                        : n(s.pf, 3)}
+                    </td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.realised_rrr, 3)}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.annualized_net_pct, 1)}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.net_pct_total, 1)}</td>
-                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.years, 1)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>
+                      {s.net_usd == null ? '—' : `$${Math.round(s.net_usd).toLocaleString()}`}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.max_dd_pct, 2)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.years, 2)}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right', fontSize: 9.5 }}>{s.first_ts ?? '—'}</td>
+                    <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right', fontSize: 9.5 }}>{s.last_ts ?? '—'}</td>
                     <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{g?.n ?? '—'}</td>
                     <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{n(g?.wr_pct)}</td>
                     <td style={{ padding: '3px 6px', background: SE_BG, textAlign: 'right' }}>{n(g?.pf, 3)}</td>
@@ -3221,6 +3325,106 @@ export function ContendersPanel({ active }: { active: boolean }) {
           {meta.admission.stamped_pool_thresholds.global_p75_annualized_net_pct}%.
         </p>
       )}
+    </div>
+  )
+}
+
+
+// ─── FULL-PERIOD SEATED RESULT ──────────────────────────────────────────────
+/**
+ * The complete seated field set for a hand-built basket over the whole history.
+ *
+ * FOUR THINGS THIS BLOCK IS CAREFUL ABOUT.
+ *
+ * 1. `pf: null` is rendered from its STATUS, not as a dash. NO_LOSSES is the best possible outcome
+ *    and shows as ∞; NO_ECONOMIC_OBSERVATIONS shows as n/a. Collapsing both to "—" loses the
+ *    distinction that matters most for exactly the strongest rows.
+ *
+ * 2. The reserved lane's own P&L and the VALUE of the Tier-S designation are shown as two separate
+ *    numbers. They differ, and the first version of this measurement conflated them: the reserved
+ *    lane seated nothing in every basket while the designation was worth thousands, because Tier-S
+ *    also confers priority in the ORDINARY lanes. One number for both made the seat look useless
+ *    and the designation look free.
+ *
+ * 3. Realised and unrealised are never summed. Terminal open positions are counted and their
+ *    unrealised P&L is left explicitly unpriced rather than imputed, and the reconciliation line
+ *    states the identity it actually proves.
+ *
+ * 4. The contamination label is rendered, not just recorded in the artifact. This pool was selected
+ *    on sealed-year results and then measured over a period that includes them, so the number is a
+ *    diagnostic ceiling and the panel says so where the number is read.
+ */
+function FullPeriodResult({ r }: { r: any }) {
+  const c = r.full_period ?? {}
+  const a = r.accounting ?? {}
+  const L = r.lanes ?? {}
+  const p = r.period ?? {}
+  const rec = r.reconciliation ?? {}
+  const num = (v: any, d = 2) => (v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(d))
+  const usd = (v: any) => (v == null || !Number.isFinite(Number(v))
+    ? '—' : `${Number(v) >= 0 ? '' : '-'}$${Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+  const pf = c.pf_status === 'NO_LOSSES' ? '∞ (no losing trade)'
+    : c.pf_status === 'NO_ECONOMIC_OBSERVATIONS' ? 'n/a' : num(c.pf, 3)
+  const cell = (k: string, v: any, t?: string) => (
+    <div title={t} style={{ minWidth: 104 }}>
+      <div style={{ fontSize: 9, letterSpacing: 0.6, textTransform: 'uppercase', opacity: 0.6 }}>{k}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{v}</div>
+    </div>
+  )
+  return (
+    <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 6,
+                  background: 'rgba(217,164,65,0.07)', border: '1px solid rgba(217,164,65,0.28)' }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.7, color: '#d9a441' }}>
+        FULL PERIOD — ONE CONTINUOUS ALLOCATOR WALK, NO RESET AT THE SEAL
+      </div>
+      <div style={{ fontSize: 10, opacity: 0.75, marginTop: 2 }}>
+        {(r.labels ?? []).join(' · ')}
+      </div>
+      <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 4 }}>
+        {p.first_entry} → {p.last_exit} · {num(p.total_years, 2)} years · {r.n_members} cfgs ·{' '}
+        {r.n_tier_s} Tier-S · {r.tier} tier · ${Number(r.capital ?? 10000).toLocaleString()} start
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', marginTop: 8 }}>
+        {cell('seated trades', (a.seated_trades ?? '—').toLocaleString?.() ?? a.seated_trades)}
+        {cell('net', usd(c.net_usd))}
+        {cell('return', `${num(c.return_pct_on_capital, 1)} %`)}
+        {cell('WR', `${num(c.wr, 2)} %`)}
+        {cell('PF', pf, `profit factor status: ${c.pf_status}`)}
+        {cell('realised RRR', num(c.rrr, 3))}
+        {cell('max DD', `${num(c.max_dd_pct, 2)} % / ${usd(c.max_dd_usd)}`)}
+        {cell('ending equity', usd(rec.ending_equity_realised_basis))}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', marginTop: 8,
+                    paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.10)' }}>
+        {cell('profitable yrs', `${r.profitable_years}/${r.years_active}`)}
+        {cell('profitable Q', `${r.profitable_quarters}/${r.quarters_active}`)}
+        {cell('seat rate', `${num(a.seat_pct, 1)} %`,
+              `${a.seated_trades} seated of ${a.signals_eligible} eligible signals`)}
+        {cell('rejected', (a.rejected_signals ?? '—'),
+              Object.entries(a.rejection_reasons ?? {}).map(([k, v]) => `${k}: ${v}`).join(' · '))}
+        {cell('ordinary lanes', `${num(L.ordinary_lane_utilisation_pct, 1)} %`,
+              `per-lane seated counts: ${JSON.stringify(L.ordinary_lane_seated_counts ?? {})}`)}
+        {cell('reserved lane', `${num(L.reserved_lane_utilisation_pct, 1)} % (${L.reserved_lane_seated ?? 0})`,
+              r.reserved_lane_note)}
+        {cell('Tier-S designation', usd(r.tier_s_designation_incremental_net_usd),
+              r.tier_s_designation_note)}
+        {cell('open at end', r.terminal_open_positions?.count ?? '—',
+              'positions the tape never closed — counted, never given an imputed exit')}
+      </div>
+      <div style={{ fontSize: 10.5, opacity: 0.85, marginTop: 8, lineHeight: 1.6 }}>
+        <div>
+          <strong>Reconciliation:</strong> {rec.proof}
+          {rec.identity_holds === true ? ' ✓' : ` — ${rec.identity_holds}`} · seal-crossing positions{' '}
+          {r.seal_crossing_positions?.count ?? 0} (carried across the boundary by the single walk,
+          never closed and reopened)
+        </div>
+        <div style={{ marginTop: 2, opacity: 0.8 }}>
+          Unrealised P&amp;L on the {r.terminal_open_positions?.count ?? 0} terminal open position
+          {(r.terminal_open_positions?.count ?? 0) === 1 ? '' : 's'} is <strong>not</strong> included
+          in net, return, PF, WR or drawdown above, and no exit is imputed for any of them.
+        </div>
+        <div style={{ marginTop: 2, opacity: 0.7 }}>{r.execution}</div>
+      </div>
     </div>
   )
 }
