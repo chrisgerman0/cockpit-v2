@@ -26,7 +26,7 @@
 import { coinIconUrl } from '@/lib/coinIcon'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useT, getCurrentLang } from '@/lib/i18n'
-import { fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, LIVEREF_BASE, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
+import { adminFrozenAtFor, fetchPortfolioTrades, fetchAdminPortfolioTrades, fetchShadowFeed, mergePublisherAndShadow, fetchClosedTrades, fetchForwardOpens, LIVEREF_BASE, isEodMarker, prettyExitReason, prewarmAllTiers, isTierCached, type PortfolioTrade, type Tier } from '@/lib/use-portfolio-trades'
 import { usePublicTickers } from '@/lib/use-public-tickers'
 import { COIN_FILTERS, type CoinFilter, canonicalAsset } from '@/lib/phase-h-basket'
 import { useIsAdmin } from '@/lib/use-is-admin'
@@ -51,6 +51,9 @@ type Stats = {
   biggestLoss?: number
   breakdown?: Record<string, AssetBreakdown>
   longShort?: { winRate: number; profitFactor: number }
+  // Published by candidate-basket namespaces (?basket=), read by the candidate banner.
+  cfgCount?: number
+  tierSCount?: number
 }
 
 type AssetBreakdown = {
@@ -146,6 +149,12 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
 // (display), compound OFF (display). Numbers: PF 1.97/2.13/2.10, maxDD ~-10%,
 // Calmar 5.0/6.1/7.1 (cons/mod/aggr) — corrected exit-order maxDD.
 const LIVE_DATA_BASE = '/data/strategies/phase-h-risk'
+
+// Candidate baskets reviewable via ?basket=<key>. ALLOW-LIST, deliberately: an arbitrary
+// ?basket= would let a crafted link render unknown JSON as our own published numbers.
+const CANDIDATE_BASKETS: Record<string, string> = {
+  prelim80: '/data/strategies/phase-h-prelim80',
+}
 function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
   // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
@@ -179,14 +188,27 @@ export function BacktestingContent() {
   // once on mount; used to highlight the matching tab and show a "Your active
   // tier" indicator. Null until resolved or for non-activated users.
   const [activeTier, setActiveTier] = useState<Tier | null>(null)
-  const [stats, setStats] = useState<Stats | null>(null)
+  const [pubStats, setStats] = useState<Stats | null>(null)
   // `trades` is CLOSED only — every metric on this page is computed against
   // it. `allTrades` is the raw set (closed + the strategy's currently-open
   // eod markers) — passed to the List of Trades so users can see what the
   // strategy is holding right now and compare with their own Bitget positions.
-  const [trades, setTrades] = useState<PortfolioTrade[]>([])
-  const [allTrades, setAllTrades] = useState<PortfolioTrade[]>([])
+  const [pubTrades, setTrades] = useState<PortfolioTrade[]>([])
+  const [pubAllTrades, setAllTrades] = useState<PortfolioTrade[]>([])
   const [view, setView] = useState<'metrics' | 'trades'>('metrics')
+  // ── CUSTOM RERUN (2026-09-26) ───────────────────────────────────────────────────────────────
+  // A rerun replaces the PUBLISHED trade set and stats wholesale, and every section downstream
+  // recomputes from those two values. That is deliberate: the equity curve, BTC comparison,
+  // monthly and weekly tables, per-asset breakdown, headline cards and trade list are all derived
+  // from `trades`/`stats`, so swapping the pair refreshes the whole page ATOMICALLY and no section
+  // can be left showing the previous window. Clearing the rerun restores the published view with
+  // no refetch.
+  const [rerun, setRerun] = useState<RerunResult | null>(null)
+  const [rerunBusy, setRerunBusy] = useState(false)
+  const [rerunErr, setRerunErr] = useState<string | null>(null)
+  const stats: Stats | null = rerun ? (rerun.stats as unknown as Stats) : pubStats
+  const trades: PortfolioTrade[] = rerun ? (rerun.closedTrades as PortfolioTrade[]) : pubTrades
+  const allTrades: PortfolioTrade[] = rerun ? (rerun.closedTrades as PortfolioTrade[]) : pubAllTrades
   // 2026-06-12: compounding toggle (OFF by default = the canonical compound-off
   // display the producer serves). ON recomputes the headline metrics + equity curve
   // client-side by reinvesting each trade's flat-base return on the running equity.
@@ -195,6 +217,7 @@ export function BacktestingContent() {
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
   const [updatedAgoMins, setUpdatedAgoMins] = useState<number | null>(null)
   const { isAdmin } = useIsAdmin()
+  const [frozenAt, setFrozenAt] = useState<string | null>(null)
 
   // 2026-06-01 71-cfg cutover PREVIEW: ?preview=1 points the page at the
   // staging publisher output (/data/strategies/phase-h-preview) so the full
@@ -205,7 +228,24 @@ export function BacktestingContent() {
     () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1',
     [],
   )
-  const dataBase = previewMode ? '/data/strategies/phase-h-preview' : LIVE_DATA_BASE
+
+  // 2026-09-22 CANDIDATE REVIEW: ?basket=<key> points the page at a candidate
+  // basket that is NOT the one the account is trading, so it can be reviewed in
+  // full — metrics, breakdown, every trade — without overwriting the live files
+  // or implying the account is running it. The allow-list is the whole point: an
+  // arbitrary ?basket= would let a crafted link render unknown JSON as if it were
+  // our own published numbers. No param => byte-identical to live traffic.
+  const candidateBasket = useMemo(() => {
+    if (typeof window === 'undefined') return null
+    const k = new URLSearchParams(window.location.search).get('basket')
+    return k && Object.prototype.hasOwnProperty.call(CANDIDATE_BASKETS, k) ? k : null
+  }, [])
+
+  const dataBase = candidateBasket
+    ? CANDIDATE_BASKETS[candidateBasket]
+    : previewMode
+      ? '/data/strategies/phase-h-preview'
+      : LIVE_DATA_BASE
 
   // Resolve the user's active live tier once on mount. Default the tier picker
   // to that tier so customers see their own performance first, with a "Your
@@ -286,7 +326,11 @@ export function BacktestingContent() {
       // every row (its closed source carries provenance the public immutable
       // store strips); preview shows raw publisher output. Both retain the
       // single-forward-source behavior unchanged.
-      const useTwoStore = !wantAdmin && !previewMode
+      // A candidate basket is a STATIC book: its closed history is the whole story. Blending in
+      // the LIVE open positions (LIVEREF_BASE) would show the account's real open trades under a
+      // basket the account is not running — so candidate mode takes the same path as preview.
+      const staticBasket = previewMode || !!candidateBasket
+      const useTwoStore = !wantAdmin && !staticBasket
       const tradesFetcher = wantAdmin && adminToken
         ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
         : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
@@ -324,12 +368,12 @@ export function BacktestingContent() {
             // only the live open rows switch source. This restores opens showing ~minutes after
             // signal on ANY tier, instead of depending on the aggressive-only shadow bridge.
             ? fetchForwardOpens(tier, LIVEREF_BASE).catch(() => [] as PortfolioTrade[])
-            : previewMode
+            : staticBasket
               ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
                   .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
                   .catch(() => [] as PortfolioTrade[])
               : tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
-          previewMode
+          staticBasket
             ? Promise.resolve({ trades: [] as PortfolioTrade[], lastEventTs: 0 })
             : fetchShadowFeed().catch(() => ({ trades: [] as PortfolioTrade[], lastEventTs: 0 })),
         ])
@@ -345,14 +389,14 @@ export function BacktestingContent() {
         //   • admin/preview (or two-store fallback when the immutable store is
         //     missing): the single forward set, closed via isEodMarker — the
         //     prior behavior, unchanged.
-        let pubTrades: PortfolioTrade[]
+        let pubSet: PortfolioTrade[]
         let metricsClosed: PortfolioTrade[]
         if (useTwoStore && immutableClosed && immutableClosed.length) {
-          pubTrades = [...immutableClosed, ...(fwdTrades as PortfolioTrade[])]
+          pubSet = [...immutableClosed, ...(fwdTrades as PortfolioTrade[])]
           metricsClosed = immutableClosed
         } else {
           const fwdAll = fwdTrades as PortfolioTrade[]
-          pubTrades = fwdAll
+          pubSet = fwdAll
           // 2026-06-27 (Chris, authoritative): LIVE-FORWARD metrics. The admin
           // route appends a live-forward tail (trades closed since the last full
           // regen, flagged `_liveTail`, RISK-SIZED natively by the route from the
@@ -379,11 +423,15 @@ export function BacktestingContent() {
         // kept both, inflating the list past the metric count. Metrics were
         // never affected (they derive from metricsClosed/route), but the count
         // seam was real. Customer path keeps the shadow bridge unchanged.
-        const rawTrades = wantAdmin ? pubTrades : mergePublisherAndShadow(pubTrades, shadowTrades, tier)
+        const rawTrades = wantAdmin ? pubSet : mergePublisherAndShadow(pubSet, shadowTrades, tier)
         // 2026-06-12 (a): display-cap the open book at the tier's lane count
         // (2/4/6) so the LIST never shows more concurrent opens than the tier
         // can hold (publisher over-fill = issue (c), under investigation).
         setAllTrades(capOpensForTier(rawTrades, tier))
+        // 2026-09-07 SSB5: surface how old the FROZEN half of the admin feed is. It is written
+        // ONLY on a publisher validation PASS; when the publisher halted 2026-09-06 12:45Z it sat
+        // at 12:05Z for 19h18m while the live tail kept moving, and the page looked current.
+        if (wantAdmin) setFrozenAt(adminFrozenAtFor(tier))
         // METRICS source — frozen immutable closed (two-store) → no flicker.
         setTrades(metricsClosed)
 
@@ -531,6 +579,20 @@ export function BacktestingContent() {
           ⚠ PREVIEW — 71-cfg + Tier-S staging output (NOT live). Pinned 2026-05-29 · flat-notional · pure publisher, no shadow merge.
         </div>
       )}
+      {/* A candidate basket is not the one the account is trading. Say so before any number is
+          read, not in a footnote — these figures are in-sample over the selection window. */}
+      {candidateBasket && (
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 50, marginBottom: 16,
+          padding: '10px 16px', background: '#422006', color: '#fde68a',
+          border: '1px solid #ca8a04', borderRadius: 8, fontSize: 13,
+          fontWeight: 600, textAlign: 'center', letterSpacing: '0.02em',
+        }}>
+          ⚠ CANDIDATE BASKET — NOT ACTIVATED. Your account is not trading this.
+          {stats?.cfgCount ? ` ${stats.cfgCount} cfgs · ${stats.tierSCount} Tier-S.` : ''}
+          {' '}In-sample over the selection window (to 2025-09-09), no open positions shown.
+        </div>
+      )}
       {/* Header */}
       <div className="bt-header">
         <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET'}</div>
@@ -585,6 +647,38 @@ export function BacktestingContent() {
 
       {/* 2026-06-12: compounding toggle — OFF by default (the canonical compound-off
           display the producer serves). ON recomputes headline metrics + curve client-side. */}
+      <CustomRerunControls
+        tier={tier}
+        setTier={setTier}
+        rerun={rerun}
+        busy={rerunBusy}
+        error={rerunErr}
+        isPt={isPt}
+        onRun={async (from, to, capital, t) => {
+          setRerunBusy(true); setRerunErr(null)
+          try {
+            // POST + no-store: a rerun is never served from cache, so the controls can never
+            // display a previous window's numbers.
+            const r = await fetch('/api/strategies/phase-h/rerun', {
+              method: 'POST', cache: 'no-store',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tier: t, from, to, startCapital: capital }),
+            })
+            const j = await r.json().catch(() => null)
+            if (!r.ok) {
+              throw new Error(j?.problems ? j.problems.join('; ') : (j?.detail || j?.error || `HTTP ${r.status}`))
+            }
+            setRerun(j as RerunResult)
+            setView('metrics')
+          } catch (e: any) {
+            setRerunErr(e?.message || 'the rerun failed')
+            setRerun(null)
+          } finally {
+            setRerunBusy(false)
+          }
+        }}
+        onClear={() => { setRerun(null); setRerunErr(null) }}
+      />
       <div className="bt-controls-row" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         <button
           type="button"
@@ -677,9 +771,24 @@ export function BacktestingContent() {
       </div>
 
       {view === 'metrics' ? (
-        <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} compound={compound} />
+        <MetricsView stats={stats} trades={trades} loading={loading} tier={tier} isPt={isPt} compound={compound} rerun={rerun} />
       ) : (
+        <>
+        {isAdmin === true && frozenAt && (() => {
+          const ageH = (Date.now() - new Date(frozenAt).getTime()) / 3_600_000
+          const stale = ageH > 2
+          return (
+            <div style={{ margin: '0 0 8px', fontSize: 11, fontWeight: stale ? 700 : 400,
+                          color: stale ? '#b45309' : 'var(--muted)' }}
+                 title="The closed history comes from phase-h-risk, which the publisher rewrites ONLY on a validation PASS. If this age grows, the publisher is halted and the history below is frozen — the live tail keeps moving regardless.">
+              {stale ? '⚠ ' : ''}closed history frozen at {new Date(frozenAt).toISOString().replace('T', ' ').slice(0, 16)}Z
+              {' '}({ageH < 1 ? `${Math.round(ageH * 60)}m` : `${ageH.toFixed(1)}h`} old)
+              {stale ? ' — publisher may be halted' : ''}
+            </div>
+          )
+        })()}
         <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} compound={compound} compoundRows={compoundRows} />
+        </>
       )}
     </div>
   )
@@ -687,13 +796,14 @@ export function BacktestingContent() {
 
 // ─── Metrics view (all sections) ────────────────────────────────────────────
 
-function MetricsView({ stats, trades, loading, tier, isPt, compound }: {
+function MetricsView({ stats, trades, loading, tier, isPt, compound, rerun }: {
   stats: Stats | null
   trades: PortfolioTrade[]
   loading: boolean
   tier: Tier
   isPt: boolean
   compound: boolean
+  rerun?: RerunResult | null
 }) {
   if (loading) return <div className="card card-pad">Loading…</div>
   if (!trades.length) return <div className="card card-pad">No trade data.</div>
@@ -715,6 +825,7 @@ function MetricsView({ stats, trades, loading, tier, isPt, compound }: {
         <RiskAdjusted trades={trades} stats={stats} isPt={isPt} />
       </div>
       <PeriodReturns trades={trades} isPt={isPt} />
+      <OpenPositionsSection tier={tier} rerun={rerun} />
     </>
   )
 }
@@ -2006,6 +2117,402 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>{cur + 1} / {totalPages}</span>
         <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={cur >= totalPages - 1} className="settings-btn-secondary">Next ›</button>
       </div>
+    </div>
+  )
+}
+
+
+// ─── TERMINAL OPEN POSITIONS ────────────────────────────────────────────────
+/**
+ * WHAT THE BACKTEST IS STILL HOLDING, 2026-09-26.
+ *
+ * The page could say a position was OPEN and nothing else — "OPEN · strategy holding" with no size,
+ * no lane, no stop, no unrealised figure — because the canonical artifact carried only cfg_sid,
+ * asset, direction, timeframe, entry bar, entry price and the stop. Lane, Tier-S status, notional,
+ * mark, unrealised P&L, return and age all had to be joined from elsewhere. That join now lives in
+ * /api/strategies/phase-h/open-positions, and this table renders its rows.
+ *
+ * TWO THINGS THIS TABLE REFUSES TO DO.
+ *
+ * It never adds unrealised P&L to a realised total. The unrealised sum has its own row and its own
+ * label, and the note beneath it says so in words, because the single most damaging thing a panel
+ * like this can do is let a reader add the two columns together.
+ *
+ * It never fills a missing number with zero. No live price for an asset means mark, return and
+ * unrealised read "—" for that row and it is counted as UNPRICED in the footer. A stop that could
+ * not be read reads "—". A lane the allocator state does not know reads "—" with the reason on
+ * hover. Zero is a real value these fields can legitimately take, so a zero standing in for "not
+ * known" would be indistinguishable from a flat position or a lane-0 seat.
+ */
+type CanonOpen = {
+  open: boolean; cfg_sid: string | null; asset: string; symbol: string; tf: string | null
+  dir: number; side: string; entryTs: number | null; entryPx: number | null
+  mark: number | null; markSource: string; notional: number | null; units: number | null
+  lane: number | null; laneSource: string; tierS: boolean | null; tierSSource: string
+  stop: number | null; initialSl: number | null; stopMovedFromInitial: boolean | null
+  target: number | null; targetNote: string
+  unrealisedPnl: number | null; returnPct: number | null
+  ageMs: number | null; ageHours: number | null; reason: string | null
+}
+
+function fmtAge(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return '—'
+  const h = ms / 3_600_000
+  if (h < 24) return `${h.toFixed(1)}h`
+  const d = h / 24
+  return d < 60 ? `${d.toFixed(1)}d` : `${(d / 30.44).toFixed(1)}mo`
+}
+
+function OpenPositionsSection({ tier, rerun }: { tier: Tier; rerun?: RerunResult | null }) {
+  const [rows, setRows] = useState<CanonOpen[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [meta, setMeta] = useState<{ updated_at: string | null; n_lanes: number | null } | null>(null)
+  const tickers = usePublicTickers()
+
+  const priceBySymbol = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const t of tickers) {
+      if (t.symbol && Number.isFinite(t.price)) {
+        m.set(t.symbol, t.price)
+        m.set(String(t.symbol).replace(/USDT$/, ''), t.price)
+      }
+    }
+    return m
+  }, [tickers])
+
+  // A RERUN THAT DOES NOT REACH THE END OF THE RECORD HAS NO TERMINAL OPEN BOOK. The endpoint says
+  // so in `edge.open_positions_included`, and showing today's open book against a window that ended
+  // in March would attribute positions to a period that never held them.
+  const rerunEnded = !!rerun && !rerun.edge.open_positions_included
+
+  useEffect(() => {
+    let cancelled = false
+    setRows(null); setErr(null)
+    if (rerunEnded) { setRows([]); return }
+    fetch(`/api/strategies/phase-h/open-positions?tier=${tier}`, { cache: 'no-store' })
+      .then(async r => {
+        const j = await r.json().catch(() => null)
+        if (!r.ok) throw new Error(j?.detail || j?.error || `HTTP ${r.status}`)
+        return j
+      })
+      .then(j => {
+        if (cancelled) return
+        setRows(Array.isArray(j?.positions) ? j.positions : [])
+        setMeta({ updated_at: j?.updated_at ?? null, n_lanes: j?.n_lanes ?? null })
+      })
+      .catch((e: Error) => { if (!cancelled) setErr(e.message || 'could not load the open book') })
+    return () => { cancelled = true }
+  }, [tier, rerunEnded])
+
+  // Price in the browser, from the same ticker feed the closed table uses for its OPEN rows.
+  const priced = useMemo(() => (rows || []).map(p => {
+    const mark = priceBySymbol.get(p.symbol) ?? priceBySymbol.get(p.asset) ?? null
+    const returnPct = mark != null && p.entryPx ? ((mark - p.entryPx) / p.entryPx) * 100 * (p.dir || 1) : null
+    const unrealised = returnPct != null && p.notional != null ? p.notional * (returnPct / 100) : null
+    return { ...p, mark, returnPct, unrealised }
+  }), [rows, priceBySymbol])
+
+  const pricedRows = priced.filter(p => p.unrealised != null)
+  const unrealisedTotal = pricedRows.length
+    ? pricedRows.reduce((s, p) => s + (p.unrealised as number), 0)
+    : null
+
+  if (err) {
+    return (
+      <div className="card card-pad bt-open-card">
+        <div className="bt-card-head"><div className="bt-card-title"><span className="bt-card-bar" /> OPEN POSITIONS</div></div>
+        <div style={{ fontSize: 12.5, color: '#f0b429' }}>
+          ⚠ The canonical open book could not be read — {err}. This is a load failure, not an empty
+          book: no position count is shown because none is known.
+        </div>
+      </div>
+    )
+  }
+  if (rows === null) {
+    return (
+      <div className="card card-pad bt-open-card">
+        <div className="bt-card-head"><div className="bt-card-title"><span className="bt-card-bar" /> OPEN POSITIONS</div></div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Reading the canonical open book…</div>
+      </div>
+    )
+  }
+  if (!rows.length) {
+    return (
+      <div className="card card-pad bt-open-card">
+        <div className="bt-card-head"><div className="bt-card-title"><span className="bt-card-bar" /> OPEN POSITIONS</div></div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          {rerunEnded
+            ? rerun!.edge.open_positions_note
+            : `Flat at the terminal timestamp — the strategy holds nothing on ${tier}.`}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card card-pad bt-open-card">
+      <div className="bt-card-head">
+        <div className="bt-card-title">
+          <span className="bt-card-bar" /> OPEN POSITIONS
+          <span className="bt-open-count">{rows.length}</span>
+        </div>
+        <div className="bt-open-sub">
+          held at the terminal timestamp
+          {meta?.n_lanes ? ` · ${meta.n_lanes} lanes` : ''}
+          {meta?.updated_at ? ` · book ${new Date(meta.updated_at).toISOString().slice(0, 16).replace('T', ' ')}Z` : ''}
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="bt-open-table">
+          <thead>
+            <tr>
+              <th>Asset</th><th>Strategy</th><th>Side</th><th className="num">Entry</th>
+              <th className="num">Mark</th><th className="num">Size</th><th className="num">Lane</th>
+              <th className="num">Stop</th><th className="num">Target</th>
+              <th className="num">Unrealised</th><th className="num">Return</th>
+              <th className="num">Age</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {priced.map((p, i) => (
+              <tr key={`${p.cfg_sid}|${p.entryTs}|${i}`}>
+                <td>
+                  <span className="num">{p.asset}</span>
+                  {p.tf ? <span className="sub">{p.tf}</span> : null}
+                </td>
+                <td style={{ fontFamily: 'monospace', fontSize: 10.5, color: 'var(--muted)' }}>
+                  {p.cfg_sid || '—'}
+                  {p.tierS === true ? <span className="bt-tiers-pill" title="Tier-S — eligible for the reserved lane">TIER-S</span> : null}
+                  {p.tierS === null ? <span className="sub" title={p.tierSSource}>Tier-S unknown</span> : null}
+                </td>
+                <td><span className={'badge ' + (p.dir > 0 ? 'badge-long' : 'badge-short')}>{p.side}</span></td>
+                <td className="num bt-price-cell">
+                  {p.entryPx != null ? `$${p.entryPx.toFixed(p.entryPx < 1 ? 4 : 2)}` : '—'}
+                  <span className="ts">{p.entryTs ? fmtTradeTs(p.entryTs) : '—'}</span>
+                </td>
+                <td className="num bt-price-cell">
+                  {p.mark != null ? `$${p.mark.toFixed(p.mark < 1 ? 4 : 2)}` : '—'}
+                  <span className="ts" style={{ color: 'var(--muted)' }}>
+                    {p.mark != null ? 'live' : 'no live price'}
+                  </span>
+                </td>
+                <td className="num bt-price-cell">
+                  {p.notional != null ? `$${p.notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+                  {p.units != null ? <span className="sub">{p.units.toFixed(p.units < 1 ? 4 : 2)} {p.asset}</span> : null}
+                </td>
+                <td className="num" title={p.laneSource}>{p.lane != null ? p.lane : '—'}</td>
+                <td className="num bt-price-cell">
+                  {p.stop != null ? `$${p.stop.toFixed(p.stop < 1 ? 4 : 2)}` : '—'}
+                  {p.stopMovedFromInitial ? <span className="sub" title="the stop has moved from its initial level">trailed</span> : null}
+                </td>
+                <td className="num" title={p.targetNote} style={{ color: 'var(--muted)' }}>none</td>
+                <td className={'num ' + (p.unrealised == null ? '' : p.unrealised > 0 ? 'pos-text' : 'neg-text')}>
+                  {p.unrealised == null ? '—' : `${p.unrealised >= 0 ? '+' : ''}$${p.unrealised.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+                </td>
+                <td className={'num ' + (p.returnPct == null ? '' : p.returnPct > 0 ? 'pos-text' : 'neg-text')}>
+                  {p.returnPct == null ? '—' : `${p.returnPct.toFixed(2)}%`}
+                </td>
+                <td className="num">{fmtAge(p.ageMs)}</td>
+                <td><span className="bt-open-label"><span className="dot" />OPEN</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="bt-open-foot">
+        <div className="bt-open-foot-row">
+          <span>Unrealised P&amp;L on the open book</span>
+          <strong className={unrealisedTotal == null ? '' : unrealisedTotal > 0 ? 'pos-text' : 'neg-text'}>
+            {unrealisedTotal == null
+              ? '— not priced'
+              : `${unrealisedTotal >= 0 ? '+' : ''}$${unrealisedTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          </strong>
+        </div>
+        <div className="bt-open-note">
+          Unrealised, and reported separately: it is <strong>not</strong> included in the realised
+          P&amp;L, return, win rate, profit factor or drawdown above, and no exit is imputed for an
+          open position. {pricedRows.length}/{priced.length} priced from the live feed
+          {priced.length - pricedRows.length > 0
+            ? ` · ${priced.length - pricedRows.length} unpriced, shown as "—" rather than $0`
+            : ''}. These strategies carry no fixed take-profit, so Target reads "none" — exits are
+          stop, bar-close trail or signal.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ─── CUSTOM RERUN ───────────────────────────────────────────────────────────
+/**
+ * START DATE · END DATE · STARTING CAPITAL · TIER · BACKTEST. 2026-09-26.
+ *
+ * The page previously showed exactly one window at exactly one basis: whatever the publisher had
+ * last written, on $10,000. A visitor could not ask "what would this have done on my $25k from
+ * January?" — the question the page exists to answer.
+ *
+ * PRESSING BACKTEST ALWAYS COMPUTES. The request is a POST with `cache: 'no-store'` against an
+ * endpoint that re-reads the canonical record from disk on every call and stamps the response with
+ * a `run_id` derived from the inputs. Nothing on this path can serve a previous window's numbers,
+ * which is the failure that matters: stale results under changed controls are worse than no
+ * results, because they look right.
+ *
+ * WHAT THE RESULT IS, STATED ON THE PAGE. The endpoint re-derives the portfolio from the canonical
+ * engine's own trade record over the requested window and capital; it does not re-execute the
+ * engine in a web request. Because canonical sizing is risk-based and NON-COMPOUNDING — each
+ * notional comes from that trade's own stop distance against the initial capital, never the running
+ * balance — the re-derivation is exact rather than an approximation. The one genuine difference
+ * from a literal replay is lane contention at the window's left edge, and the response reports the
+ * straddling trades instead of hiding them. The provenance line under the controls says all of
+ * this in the UI, not only in this comment.
+ */
+type RerunResult = {
+  run_id: string
+  computed_at: string
+  identity: {
+    basket: string; tier: string
+    range: { from: string; to: string }
+    startCapital: number
+    execution_policy: string
+    source: string; source_mtime: string | null; basis: string
+  }
+  stats: Record<string, unknown> & { startCapital: number; breakdown?: unknown }
+  equityCurve: { ts: number; equity: number }[]
+  btcBuyAndHold: { available: boolean; reason: string | null; returnPct: number | null; finalCapital: number | null }
+  monthly: Record<string, { trades: number; netPnl: number; returnPct: number; wins: number }>
+  weekly: Record<string, { trades: number; netPnl: number; returnPct: number; wins: number }>
+  closedTrades: unknown[]
+  openPositions: unknown[]
+  edge: {
+    straddling_left_edge: number; straddling_note: string | null
+    open_positions_included: boolean; open_positions_note: string
+    open_book_error: string | null
+  }
+  accounting: {
+    starting_equity: number; realised_pnl: number
+    terminal_unrealised_pnl: number | null; terminal_unrealised_note: string
+    ending_equity_realised_basis: number; identity: string; holds: boolean
+  }
+  universe: { closed_in_record: number; closed_in_window: number }
+}
+
+function toDateInput(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+function CustomRerunControls({ tier, setTier, rerun, busy, error, isPt, onRun, onClear }: {
+  tier: Tier
+  setTier: (t: Tier) => void
+  rerun: RerunResult | null
+  busy: boolean
+  error: string | null
+  isPt: boolean
+  onRun: (from: string, to: string, capital: number, tier: Tier) => void
+  onClear: () => void
+}) {
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [capital, setCapital] = useState('10000')
+  const [localErr, setLocalErr] = useState<string | null>(null)
+
+  const today = toDateInput(Date.now())
+
+  function submit() {
+    // VALIDATE BEFORE SENDING. A refused input says what is wrong; it never silently runs
+    // something other than what the user asked for.
+    const cap = Number(capital)
+    if (!Number.isFinite(cap) || cap < 100 || cap > 10_000_000) {
+      setLocalErr('Starting capital must be between $100 and $10,000,000.'); return
+    }
+    if (from && to && Date.parse(from) >= Date.parse(to)) {
+      setLocalErr('The start date must be earlier than the end date.'); return
+    }
+    if (from && Number.isNaN(Date.parse(from))) { setLocalErr('The start date is not a valid date.'); return }
+    if (to && Number.isNaN(Date.parse(to))) { setLocalErr('The end date is not a valid date.'); return }
+    setLocalErr(null)
+    onRun(from, to, cap, tier)
+  }
+
+  const shown = localErr || error
+
+  return (
+    <div className="card card-pad bt-rerun">
+      <div className="bt-rerun-head">
+        <div className="bt-card-title"><span className="bt-card-bar" /> {isPt ? 'BACKTEST PERSONALIZADO' : 'CUSTOM BACKTEST'}</div>
+        {rerun ? (
+          <button type="button" className="bt-view-tab" onClick={onClear}>
+            {isPt ? 'Voltar ao publicado' : 'Back to published'}
+          </button>
+        ) : null}
+      </div>
+      <div className="bt-rerun-grid">
+        <label className="bt-rerun-field">
+          <span>{isPt ? 'Data inicial' : 'Start date'}</span>
+          <input type="date" value={from} max={to || today} onChange={e => setFrom(e.target.value)} />
+        </label>
+        <label className="bt-rerun-field">
+          <span>{isPt ? 'Data final' : 'End date'}</span>
+          <input type="date" value={to} min={from || undefined} max={today} onChange={e => setTo(e.target.value)} />
+        </label>
+        <label className="bt-rerun-field">
+          <span>{isPt ? 'Capital inicial' : 'Starting capital'}</span>
+          <input type="number" inputMode="decimal" min={100} max={10000000} step={100}
+                 value={capital} onChange={e => setCapital(e.target.value)} />
+        </label>
+        <label className="bt-rerun-field">
+          <span>{isPt ? 'Tier' : 'Tier'}</span>
+          <select value={tier} onChange={e => setTier(e.target.value as Tier)}>
+            {(['conservative', 'moderate', 'aggressive', 'kamikaze'] as Tier[]).map(t => (
+              <option key={t} value={t}>{isPt ? TIER_LABELS[t].pt : TIER_LABELS[t].en}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="bt-rerun-go" onClick={submit} disabled={busy}>
+          {busy ? (isPt ? 'Calculando…' : 'Running…') : (isPt ? 'Backtest' : 'Backtest')}
+        </button>
+      </div>
+      {shown ? (
+        <div className="bt-rerun-err">⚠ {shown}</div>
+      ) : null}
+      {rerun ? (
+        <div className="bt-rerun-prov">
+          <div className="bt-rerun-prov-row">
+            <strong>{rerun.identity.basket}</strong> · {rerun.identity.tier} ·{' '}
+            {rerun.identity.range.from.slice(0, 10)} → {rerun.identity.range.to.slice(0, 10)} ·{' '}
+            ${rerun.identity.startCapital.toLocaleString()} start ·{' '}
+            {rerun.universe.closed_in_window.toLocaleString()} of{' '}
+            {rerun.universe.closed_in_record.toLocaleString()} canonical closes
+          </div>
+          <div className="bt-rerun-prov-row">
+            run {rerun.run_id} · computed {rerun.computed_at.replace('T', ' ').slice(0, 19)}Z
+          </div>
+          <div className="bt-rerun-prov-row">{rerun.identity.execution_policy}</div>
+          <div className="bt-rerun-prov-row">{rerun.identity.basis}</div>
+          <div className="bt-rerun-prov-row">
+            {rerun.accounting.identity} — starting equity + realised P&amp;L = ending equity
+            {rerun.accounting.holds ? ' ✓' : ' ✗ RECONCILIATION FAILED'} ·{' '}
+            unrealised on the open book is reported separately and never added
+          </div>
+          {rerun.edge.straddling_left_edge > 0 ? (
+            <div className="bt-rerun-prov-row bt-rerun-caveat">
+              {rerun.edge.straddling_left_edge} trade
+              {rerun.edge.straddling_left_edge === 1 ? '' : 's'} opened before the start date and
+              closed inside the window — {rerun.edge.straddling_note}
+            </div>
+          ) : null}
+          {!rerun.edge.open_positions_included ? (
+            <div className="bt-rerun-prov-row bt-rerun-caveat">{rerun.edge.open_positions_note}</div>
+          ) : null}
+          {rerun.btcBuyAndHold.available ? (
+            <div className="bt-rerun-prov-row">
+              BTC buy &amp; hold over the same window: {rerun.btcBuyAndHold.returnPct}% → $
+              {rerun.btcBuyAndHold.finalCapital?.toLocaleString()}
+            </div>
+          ) : (
+            <div className="bt-rerun-prov-row">BTC buy &amp; hold not computed — {rerun.btcBuyAndHold.reason}</div>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }
