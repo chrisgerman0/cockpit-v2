@@ -2568,6 +2568,20 @@ type ConRow = {
   cfg_fingerprint: string | null; cfg_sha256: string | null; cfg_variant: string | null
   table_candidate_version: string | null; data_fingerprint: string | null
   standalone_ledger: string | null; standalone_ledger_sha256: string | null
+  // ── PROVENANCE, KEPT APART (2026-09-26) ────────────────────────────────────────────────────
+  // `preseal_band` is what made this a contender; `oos_tier` is what the sealed year then said
+  // about it. An OOS Tier A is NOT evidence of pre-seal admission, and one column for both is
+  // how 13 OOS-only promotions ended up in a selectable surface.
+  preseal_band?: string | null
+  preseal_admitted?: boolean | null
+  admission_artifact?: string | null
+  admission_predates_oos?: boolean | null
+  certificate_status?: string | null
+  oos_tier?: string | null
+  provenance?: string | null
+  alias_count?: number | null
+  aliases?: Array<{ candidate_id: string; role?: string | null; preseal_band?: string | null }> | null
+  duplicate_basis?: string | null
   source_verdict_artifact: string | null
   historical_cutoff: string | null; fees: number | null
 }
@@ -2839,6 +2853,34 @@ export function ContendersPanel({ active }: { active: boolean }) {
 
       {/* ── OOS POOL HEADER (2026-09-26). The simulator universe is the STRICT survivors; sparse
            supportive is a separate, clearly-labelled opt-in and is never on by default. ── */}
+      {/* ── THE POOL CORRECTION, STATED WHERE THE POOL IS USED (2026-09-26) ─────────────────
+          This surface previously served CFGs promoted by the sealed year alone. The banner names
+          the gate and the exact arithmetic so a reader can see which population they are picking
+          from without opening an artifact. */}
+      {meta?.pool_correction && (
+        <div style={{ margin: '8px 0', padding: '8px 10px', borderRadius: 6, fontSize: 11,
+                      background: 'rgba(217,164,65,0.07)', border: '1px solid rgba(217,164,65,0.28)' }}>
+          <div style={{ fontWeight: 800, letterSpacing: 0.5, color: '#d9a441' }}>
+            SELECTABLE = PRE-SEAL CORE/FLEX/EXCEPTIONAL ∩ CERTIFICATE ∩ OOS ∩ NO HOLD
+          </div>
+          <div style={{ marginTop: 3, opacity: 0.9 }}>
+            {meta.pool_correction.arithmetic} · sparse {meta.pool_correction.displayed_sparse} displayed
+            − {meta.pool_correction.removed_oos_only_sparse} OOS-only = {meta.pool_correction.canonical_sparse}.
+            {' '}<b>{(meta.pool_correction.removed_oos_only_strict ?? 0) + (meta.pool_correction.removed_oos_only_sparse ?? 0)}</b>
+            {' '}rows were promoted by the sealed year without ever passing the pre-seal admission
+            gate — preserved and labelled OOS_SEEN_BEFORE_PRESEAL_ADMISSION, excluded here.
+          </div>
+          <div style={{ marginTop: 3, opacity: 0.72 }}>
+            OOS is the final validation step; it cannot create contender status. Combined IS+OOS
+            metrics below are DESCRIPTIVE and are never an admission gate. Data cutoff:{' '}
+            {meta.data_cutoff ?? 'unstated'}.
+          </div>
+          <div style={{ marginTop: 3, opacity: 0.72 }}>
+            strict sha <code>{String(meta.strict_sha256 ?? '').slice(0, 16)}</code> · sparse sha{' '}
+            <code>{String(meta.sparse_sha256 ?? '').slice(0, 16)}</code>
+          </div>
+        </div>
+      )}
       {meta?.counts?.strict_survivors != null && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12,
                       margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6,
@@ -3122,6 +3164,9 @@ export function ContendersPanel({ active }: { active: boolean }) {
             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.18)' }}>
               <th style={{ padding: '4px 6px' }} title="include in the basket">keep</th>
               <th style={{ padding: '4px 6px' }} title="designate as Tier-S (subset of keep)">Tier-S</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }} title="the frozen PRE-SEAL admission band — CORE / FLEX / EXCEPTIONAL. This is what made the cfg a contender.">pre-seal</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }} title="the causal certificate verdict">cert</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }} title="the SEALED-YEAR screening tier. Evidence ABOUT the cfg, never evidence that it was admitted.">OOS</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>band</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>candidate ID</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>family</th>
@@ -3129,6 +3174,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>tf</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>dir</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>role</th>
+              <th style={{ padding: '4px 6px', textAlign: 'right' }} title="exact aliases collapsed into this row — preserved, not independently selectable">alias</th>
               <th style={{ padding: '4px 6px', textAlign: 'left' }}>ROBUST</th>
               {th('trades', 'trades', SA_BG)}
               {th('wr_pct', 'WR %', SA_BG)}
@@ -3167,6 +3213,22 @@ export function ContendersPanel({ active }: { active: boolean }) {
                              title={picked[r.candidate_id] ? 'designate Tier-S' : 'select the cfg first'}
                              onChange={() => setTierS(t => ({ ...t, [r.candidate_id]: !t[r.candidate_id] }))} />
                     </td>
+                    <td style={{ padding: '3px 6px', fontWeight: 700,
+                                 color: r.preseal_band === 'CORE' ? '#4ade80'
+                                      : r.preseal_band === 'FLEX' ? '#d9a441'
+                                      : r.preseal_band === 'EXCEPTIONAL' ? '#60a5fa' : 'var(--muted)' }}
+                        title={r.admission_predates_oos
+                          ? `admitted by ${r.admission_artifact ?? 'the frozen pre-seal procedure'} before any OOS result existed for it`
+                          : 'no pre-seal admission on record'}>
+                      {r.preseal_band ?? '—'}
+                    </td>
+                    <td style={{ padding: '3px 6px', color: r.certificate_status === 'PASS' ? '#4ade80' : '#f0b429' }}>
+                      {r.certificate_status ?? '—'}
+                    </td>
+                    <td style={{ padding: '3px 6px', color: 'var(--muted)' }}
+                        title="sealed-year screening tier — the FINAL VALIDATION STEP, not an admission gate">
+                      {(r.oos_tier ?? '').replace('_OOS_STRONG', ' strong').replace('_OOS_PRACTICAL', ' practical').replace('_OOS_PROMISING', ' promising') || '—'}
+                    </td>
                     <td style={{ padding: '3px 6px', color: BAND_COLOR[r.quality_band] ?? undefined, fontWeight: 700 }}>
                       {r.quality_band}
                     </td>
@@ -3182,7 +3244,13 @@ export function ContendersPanel({ active }: { active: boolean }) {
                     <td style={{ padding: '3px 6px' }}>{r.asset}</td>
                     <td style={{ padding: '3px 6px' }}>{r.tf}</td>
                     <td style={{ padding: '3px 6px' }}>{r.direction ?? '—'}</td>
-                    <td style={{ padding: '3px 6px' }}>{r.role ?? '—'}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.provenance ?? r.role ?? '—'}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right', color: 'var(--muted)' }}
+                        title={(r.alias_count ?? 0) > 0
+                          ? `${r.duplicate_basis}: ${(r.aliases ?? []).map(a => a.candidate_id).join(', ')}`
+                          : 'no exact alias'}>
+                      {(r.alias_count ?? 0) > 0 ? `+${r.alias_count}` : '—'}
+                    </td>
                     <td style={{ padding: '3px 6px' }}>{r.robust_label == null ? '—' : r.robust_label ? 'yes' : 'no'}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{s.trades ?? '—'}</td>
                     <td style={{ padding: '3px 6px', background: SA_BG, textAlign: 'right' }}>{n(s.wr_pct)}</td>

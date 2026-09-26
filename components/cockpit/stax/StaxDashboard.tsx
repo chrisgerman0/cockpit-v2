@@ -161,6 +161,15 @@ export type StaxDashboardData = {
    *  invented line. Omitted => derived from the data (series present ? 'ok' : 'empty'). */
   equityStatus?: 'ok' | 'loading' | 'error' | 'empty'
   equityError?: string
+  /** The moment the CURRENT wizard configuration became effective — the curve's left edge. */
+  equityEffectiveFrom?: string | null
+  equityEffectiveFromSource?: string | null
+  equityBaseSource?: string | null
+  /** Opened before the settings change and closed after it — excluded from the curve, counted. */
+  equityCarriedCount?: number
+  equityCarriedPnl?: number
+  equityUnattributableCount?: number
+  equityExcludedBeforeEffective?: number
   /** Design-preview ONLY. The /design route renders SAMPLE_STAX_DATA, which carries no trades; this
    *  is the single explicit opt-in that lets the chart draw a generated series. Never set on any
    *  path that shows a real user real numbers. */
@@ -1022,19 +1031,33 @@ function simulateRange(
   userCapital: number,
   strategyBase: number,
   range: Range,
-): { points: EquityPoint[]; labels: string[]; summary: string } {
+  /** The curve's hard left edge: the moment the current settings became effective. */
+  effectiveFromMs?: number | null,
+): { points: EquityPoint[]; labels: string[]; summary: string; startTs?: number } {
   if (!trades || trades.length === 0 || userCapital <= 0) {
     return { points: [], labels: [], summary: 'No data' }
   }
   const days = RANGE_DAYS[range]
-  const cutoff = days != null ? Date.now() - days * 86400_000 : 0
+  // THE RANGE CAN SHORTEN THE WINDOW BUT NEVER EXTEND IT PAST THE EFFECTIVE DATE. Picking ALL or
+  // 1Y on an account configured last month must not imply a year of history under these settings;
+  // it shows everything there is, which starts at the effective moment.
+  const rangeCutoff = days != null ? Date.now() - days * 86400_000 : 0
+  const cutoff = effectiveFromMs != null && Number.isFinite(effectiveFromMs)
+    ? Math.max(rangeCutoff, effectiveFromMs)
+    : rangeCutoff
   const filtered = trades.filter(t => t.exitTs >= cutoff)
   if (filtered.length === 0) {
     return { points: [], labels: [], summary: `No trades in ${range}` }
   }
 
   const scale = strategyBase > 0 ? userCapital / strategyBase : 1
-  const startTs = filtered[0].exitTs - 86400_000
+  // Anchor the curve's first point AT the effective moment when we know it, so the left edge is
+  // the configuration change itself rather than a day before the first close that happened to
+  // follow it.
+  const startTs = (effectiveFromMs != null && Number.isFinite(effectiveFromMs)
+                   && effectiveFromMs <= filtered[0].exitTs)
+    ? effectiveFromMs
+    : filtered[0].exitTs - 86400_000
   let eq = userCapital
   const points: EquityPoint[] = [{ ts: startTs, value: userCapital, month: '' }]
 
@@ -1053,18 +1076,27 @@ function simulateRange(
   // X-axis labels — pick 5–7 evenly spaced ticks. Format "DD MMM YY" matches
   // the design reference (e.g. "02 Apr 26"). For ALL-time view we also drop
   // the year suffix on the second line if needed.
+  // LABEL THE AXIS THE CURVE ACTUALLY SPANS. These were sampled from `filtered` (the trades),
+  // while the first PLOTTED point is anchored at the effective-settings moment — so with an
+  // effective date in March and the first close in September the curve began in March and the
+  // leftmost label read 03 Sep. Deriving the labels from the point timestamps keeps the two in
+  // step by construction.
   const labelCount = range === '1M' ? 5 : range === '3M' ? 5 : range === '6M' ? 6 : 7
   const labels: string[] = []
   for (let i = 0; i < labelCount; i++) {
-    const idx = Math.round((i / (labelCount - 1)) * (filtered.length - 1))
-    const d = new Date(filtered[idx].exitTs)
+    const idx = Math.round((i / (labelCount - 1)) * (points.length - 1))
+    // EquityPoint.ts is optional in the type; every point built above carries one, and the
+    // fallback keeps the axis honest rather than throwing if a caller ever supplies one without.
+    const pts = points[idx]?.ts
+    if (pts == null) continue
+    const d = new Date(pts)
     const day = String(d.getDate()).padStart(2, '0')
     const mon = d.toLocaleString('en-US', { month: 'short' })
     const yr = String(d.getFullYear()).slice(2)
     labels.push(`${day} ${mon} ${yr}`)
   }
 
-  return { points, labels, summary: '' /* Hero builds the footer string per design */ }
+  return { points, labels, summary: '' /* Hero builds the footer string per design */, startTs }
 }
 
 /**
@@ -1116,8 +1148,12 @@ function Hero({ data }: { data: StaxDashboardData }) {
     // user's own. A real account NEVER silently borrows the strategy's curve.
     const isReal = !!data.equityIsReal && !!data.equityTrades && data.equityTrades.length > 0
     const curveBase = (data.equityBase && data.equityBase > 0) ? data.equityBase : data.balanceUsd
+    const effMs = data.equityEffectiveFrom ? Date.parse(data.equityEffectiveFrom) : null
     if (isReal) {
-      return { ...simulateRange(data.equityTrades!, curveBase, data.strategyBase || 10000, range), isReal: true }
+      // strategyBase === curveBase for a real account: the user's own realised P&L is already in
+      // their own dollars and must not be rescaled by the strategy's $10k notional base.
+      return { ...simulateRange(data.equityTrades!, curveBase, curveBase, range,
+                                Number.isFinite(effMs as number) ? effMs : null), isReal: true }
     }
     // No real trades yet → the illustrative strategy curve, LABELLED as illustrative.
     if (data.portfolioTrades && data.portfolioTrades.length > 0) {
@@ -1130,7 +1166,7 @@ function Hero({ data }: { data: StaxDashboardData }) {
       summary: data.equityRangeLabel,
       isReal: false,
     }
-  }, [data.equityTrades, data.equityIsReal, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, range])
+  }, [data.equityTrades, data.equityIsReal, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, data.equityEffectiveFrom, range])
 
   // EXPLICIT, in this order: an author-declared state wins; then a genuine empty; then ok.
   // 'empty' and 'error' are different facts and are never collapsed into one another.
@@ -1252,17 +1288,34 @@ function Hero({ data }: { data: StaxDashboardData }) {
             <>NO CLOSED TRADES YET · your curve starts at your first close</>
           ) : sim.isReal ? (
             <>
-              {/* NAME THE QUANTITY, not just the number. This curve is starting capital plus
-                  REALISED closes; the balance card above it is the live exchange equity, which also
-                  carries open-position P&L and any deposits or withdrawals. They are different
-                  quantities and they will not match. A bare "ending $2,484" beside a balance
-                  reading "$8,408" reads as a contradiction or a bug — the same confusion that made
-                  this card present the strategy's curve as the user's own in September. */}
-              REAL ACCOUNT EQUITY · curve ends at ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
-              {' '}(starting capital + realised closes)
-              {' · '}{range === 'ALL' ? 'all time' : `last ${range.toLowerCase()}`}
+              {/* NAME THE QUANTITY AND ITS PERIOD. This curve is the equity recorded when the
+                  current bot settings became effective, plus the REALISED closes of trades OPENED
+                  under those settings. The balance card above is live exchange equity: it also
+                  carries open-position P&L, trades from earlier configurations, and any deposits
+                  or withdrawals. They are different quantities and they will not match — saying so
+                  is the difference between a reconciliation and a contradiction. */}
+              STRATEGY EQUITY, CURRENT SETTINGS · ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              {' '}= ${(data.equityBase || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} at activation + realised closes
+              {data.equityEffectiveFrom ? (
+                <> {' · '}since {new Date(data.equityEffectiveFrom).toISOString().slice(0, 10)}</>
+              ) : null}
+              {' · '}{range === 'ALL' ? 'all of it' : `last ${range.toLowerCase()}`}
               {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
-              {' · '}non-compounding basis · excludes open P&L and any deposits or withdrawals
+              {' · '}non-compounding
+              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.75 }}>
+                Account balance ${data.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} differs:
+                it includes open-position P&amp;L and any deposits or withdrawals, and is not bounded
+                to these settings.
+                {(data.equityExcludedBeforeEffective ?? 0) > 0
+                  ? ` ${data.equityExcludedBeforeEffective} earlier close${data.equityExcludedBeforeEffective === 1 ? '' : 's'} from a previous configuration excluded.`
+                  : ''}
+                {(data.equityCarriedCount ?? 0) > 0
+                  ? ` ${data.equityCarriedCount} position${data.equityCarriedCount === 1 ? '' : 's'} carried across the change (${(data.equityCarriedPnl ?? 0) >= 0 ? '+' : ''}$${Math.abs(data.equityCarriedPnl ?? 0).toLocaleString()}) counted separately, not in the curve.`
+                  : ''}
+                {(data.equityUnattributableCount ?? 0) > 0
+                  ? ` ${data.equityUnattributableCount} close${data.equityUnattributableCount === 1 ? '' : 's'} carry no open timestamp and cannot be attributed to a configuration.`
+                  : ''}
+              </div>
             </>
           ) : (
             <>ILLUSTRATIVE BACKTEST — NO LIVE TRADES YET · not your account history · $

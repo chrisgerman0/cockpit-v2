@@ -54,6 +54,10 @@ type BalanceResp = { equity?: number; available?: number; unrealizedPnl?: number
 type BotConfigResp = {
   activated?: boolean
   config?: { tier?: string; preset?: string; leverage?: number; activation_balance?: number; hb_base_notional_usd?: number; compound?: boolean } | null
+  /** ISO moment the CURRENT wizard configuration became effective. See the equity-curve note. */
+  effective_from?: string | null
+  effective_from_source?: string | null
+  activation_balance_source?: string | null
 }
 
 function symToCoin(sym: string): CoinSym {
@@ -852,12 +856,42 @@ export function useStaxDashboardData(): StaxLoadState {
 
         // The user's OWN realised trades, oldest-first, for the real equity curve. Never the
         // strategy's book: `pnl_usd` and `closed_at` come from the authenticated user's ledger.
-        const realEquityTrades = userClosedTrades
+        // ── THE CURVE BELONGS TO THE CURRENT CONFIGURATION (2026-09-26) ────────────────────────
+        // It used to start at the activation BALANCE and then plot every trade the account had
+        // ever closed. Chris's account showed a curve starting at $5,000 against a balance of
+        // ~$8,417 — the start came from one configuration and the history from all of them, and
+        // the ending basis reconciled with nothing.
+        //
+        // The curve now begins at the equity recorded when the LATEST wizard settings became
+        // effective and contains only trades OPENED under those settings. A position opened
+        // before that moment and closed after it is a CARRIED position: it is not this
+        // configuration's performance, so it is excluded from the curve and counted separately
+        // rather than silently dropped. When the effective moment is unknown the curve is not
+        // guessed — `equityStatus` goes to 'empty' with the reason, because a curve over the wrong
+        // period is worse than no curve.
+        const effFromMs = botRes?.effective_from ? Date.parse(botRes.effective_from) : NaN
+        const haveEff = Number.isFinite(effFromMs)
+        const closedWithTs = userClosedTrades
           .filter(t => t.closed_at)
-          .map(t => ({ exitTs: new Date(t.closed_at as string).getTime(),
-                       pnl: Number(t.pnl_usd) || 0 }))
+          .map(t => ({
+            exitTs: new Date(t.closed_at as string).getTime(),
+            openTs: t.opened_at ? new Date(t.opened_at as string).getTime() : NaN,
+            pnl: Number(t.pnl_usd) || 0,
+          }))
           .filter(t => Number.isFinite(t.exitTs) && t.exitTs > 0)
           .sort((a, b) => a.exitTs - b.exitTs)
+        // opened under the current settings
+        const underCurrent = haveEff
+          ? closedWithTs.filter(t => Number.isFinite(t.openTs) && t.openTs >= (effFromMs as number))
+          : []
+        // opened before, closed after — carried across the settings change
+        const carried = haveEff
+          ? closedWithTs.filter(t => Number.isFinite(t.openTs) && t.openTs < (effFromMs as number)
+                                     && t.exitTs >= (effFromMs as number))
+          : []
+        // a row with no opened_at cannot be attributed to a configuration; it is named, not binned
+        const unattributable = closedWithTs.filter(t => !Number.isFinite(t.openTs))
+        const realEquityTrades = underCurrent.map(t => ({ exitTs: t.exitTs, pnl: t.pnl }))
 
         const data: StaxDashboardData = {
           trackRecord: userTradesRes?.track_record,
@@ -898,12 +932,31 @@ export function useStaxDashboardData(): StaxLoadState {
           balanceAgeSeconds: (balanceRes as { ageSeconds?: number })?.ageSeconds,
           equityTrades: realEquityTrades,
           equityIsReal: realEquityTrades.length > 0,
+          equityEffectiveFrom: botRes?.effective_from ?? null,
+          equityEffectiveFromSource: botRes?.effective_from_source ?? null,
+          equityBaseSource: botRes?.activation_balance_source ?? null,
+          equityCarriedCount: carried.length,
+          equityCarriedPnl: Math.round(carried.reduce((a, t) => a + t.pnl, 0) * 100) / 100,
+          equityUnattributableCount: unattributable.length,
+          equityExcludedBeforeEffective: haveEff
+            ? closedWithTs.length - underCurrent.length - carried.length - unattributable.length
+            : closedWithTs.length,
           // ORDER MATTERS: a read failure outranks an empty book. Reporting "no trades yet" on a
           // 503 is the fabricated-zero failure wearing friendlier words.
+          // ORDER MATTERS: a read failure outranks an unknown effective date, which outranks an
+          // empty book. Each is a different fact and none of them is a zero.
           equityStatus: equityReadFailed && realEquityTrades.length === 0 && portfolio.length === 0
             ? 'error'
-            : (realEquityTrades.length === 0 && portfolio.length === 0 ? 'empty' : 'ok'),
-          equityError: equityReadFailed ? equityReadError : undefined,
+            : (!haveEff && closedWithTs.length > 0
+                ? 'error'
+                : (realEquityTrades.length === 0 && portfolio.length === 0 ? 'empty' : 'ok')),
+          equityError: equityReadFailed
+            ? equityReadError
+            : (!haveEff && closedWithTs.length > 0
+                ? 'The moment your current bot settings became effective could not be read, so the '
+                  + 'curve cannot be bounded to them. Showing no curve rather than one over the '
+                  + 'wrong period.'
+                : undefined),
           equityRealTradeCount: realEquityTrades.length,
           equityBase: userBaseline,
           strategyBase: startCapital,

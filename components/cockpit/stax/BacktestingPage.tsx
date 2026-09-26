@@ -703,9 +703,9 @@ export function BacktestingContent() {
         <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'}
           value={trades.length > 0 ? trades.length.toLocaleString() : '—'} />
         <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'}
-          value={derivedStats ? `${derivedStats.winRate.toFixed(2)}%` : '—'} positive />
+          value={derivedStats ? fmtNum(derivedStats.winRate, 2, '%') : '—'} positive />
         <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'}
-          value={derivedStats ? derivedStats.profitFactor.toFixed(2) : '—'} />
+          value={derivedStats ? fmtPF(derivedStats.profitFactor, (derivedStats as any).profitFactorStatus) : '—'} />
       </div>
 
       {/* Tier picker — highlights the user's live-config tier */}
@@ -787,11 +787,46 @@ export function BacktestingContent() {
             </div>
           )
         })()}
-        <TradesTable trades={allTrades} loading={loading} isPt={isPt} showCfgColumn={isAdmin === true} compound={compound} compoundRows={compoundRows} />
+        <TradesTable trades={allTrades} loading={loading} isPt={isPt} tier={tier} showCfgColumn={isAdmin === true} compound={compound} compoundRows={compoundRows} />
         </>
       )}
     </div>
   )
+}
+
+
+// ─── ABSENT IS NOT ZERO, AND IT IS NOT A CRASH ──────────────────────────────
+/**
+ * A custom-window backtest crashed the page with
+ * `Cannot read properties of null (reading 'toFixed')`.
+ *
+ * Root cause: profit factor is `gross profit / gross loss`, and over a short window an asset can
+ * genuinely have NO LOSING TRADE — the ratio is then undefined, not zero. Four assets in a 30-day
+ * aggressive window (LINK, NEAR, ADA, HBAR) came back with `profitFactor: null`, and
+ * `row.profitFactor.toFixed(2)` threw before the page could render. The published full-history feed
+ * never had a no-loss asset, so the bug was invisible until custom windows existed.
+ *
+ * `(x ?? 0).toFixed(2)` would stop the crash and introduce a worse bug: it prints 0.00 — the WORST
+ * possible profit factor — for the BEST possible outcome, which is the falsy-zero coercion that has
+ * already cost this project four CFGs their tier. So PF renders from its MEANING: ∞ when there were
+ * no losses, n/a when there were no economic observations at all, the number otherwise.
+ */
+function fmtPF(v: number | null | undefined, status?: string | null): React.ReactNode {
+  if (status === 'NO_LOSSES' || (v == null && status == null && false)) {
+    return <span style={{ color: '#4ade80', fontWeight: 700 }} title="no losing trade in this window — the profit factor is undefined because the denominator is zero, which is the BEST case, not the worst">∞</span>
+  }
+  if (status === 'NO_ECONOMIC_OBSERVATIONS') return <span style={{ opacity: 0.5 }} title="no trades in this window">n/a</span>
+  if (v == null || !Number.isFinite(v)) return <span style={{ opacity: 0.5 }} title="profit factor undefined for this window">—</span>
+  return v.toFixed(2)
+}
+
+/** A number that may legitimately be absent. Never substitutes a value that means something else. */
+function fmtNum(v: number | null | undefined, d = 2, suffix = ''): string {
+  return v == null || !Number.isFinite(v) ? '—' : `${v.toFixed(d)}${suffix}`
+}
+
+function fmtUsd(v: number | null | undefined, d = 2): string {
+  return v == null || !Number.isFinite(v) ? '—' : `$${v.toFixed(d)}`
 }
 
 // ─── Metrics view (all sections) ────────────────────────────────────────────
@@ -810,7 +845,7 @@ function MetricsView({ stats, trades, loading, tier, isPt, compound, rerun }: {
 
   return (
     <>
-      <EquityCurveSection trades={trades} stats={stats} isPt={isPt} compound={compound} />
+      <EquityCurveSection trades={trades} stats={stats} isPt={isPt} compound={compound} rerun={rerun} />
       <PerAssetBreakdown stats={stats} tier={tier} isPt={isPt} />
       <div className="bt-twin-row">
         <ProfitStructure trades={trades} isPt={isPt} />
@@ -832,7 +867,7 @@ function MetricsView({ stats, trades, loading, tier, isPt, compound, rerun }: {
 
 // ─── Equity curve with Log/Linear toggle + BTC B&H comparison ───────────────
 
-function EquityCurveSection({ trades, stats, isPt, compound }: { trades: PortfolioTrade[]; stats: Stats | null; isPt: boolean; compound: boolean }) {
+function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: PortfolioTrade[]; stats: Stats | null; isPt: boolean; compound: boolean; rerun?: RerunResult | null }) {
   const [scale, setScale] = useState<'linear' | 'log'>('linear')
   const [show, setShow] = useState<{ strategy: boolean; bh: boolean }>({ strategy: true, bh: true })
 
@@ -877,8 +912,27 @@ function EquityCurveSection({ trades, stats, isPt, compound }: { trades: Portfol
     // independently against BTC count so the BH curve has comparable density
     // to the strategy curve.
     const btcChrono = chrono.filter(t => (t.symbol || '').includes('BTC'))
+    // ── BTC BUY-AND-HOLD ────────────────────────────────────────────────────────────────────
+    // A rerun carries an AUTHORITATIVE daily series computed server-side from the BTC daily-close
+    // panel, independent of every strategy trade. Use it verbatim.
+    //
+    // The fallback below still samples BTC at the strategy's own BTC entry/exit marks, which is
+    // the defect this replaces: a handful of points, flat for months, starting after the window
+    // start and ending before its end, and absent entirely when the strategy did not trade BTC.
+    // It is kept only for the PUBLISHED full-history view, where the strategy trades BTC densely
+    // across the whole period and there is no server-side window to ask about — and it is labelled
+    // as approximate in the legend so the two are never confused.
     let bhPoints: EquityPoint[] = []
-    if (btcChrono.length > 0) {
+    let bhExact = false
+    const rb = rerun?.btcBuyAndHold as any
+    if (rb && rb.available && Array.isArray(rb.series) && rb.series.length > 1) {
+      const SAMPLE = 1500
+      const step = Math.max(1, Math.floor(rb.series.length / SAMPLE))
+      bhPoints = rb.series
+        .filter((_p: any, i: number) => i % step === 0 || i === rb.series.length - 1)
+        .map((p: any) => ({ ts: p.ts, value: Math.max(1, p.equity), month: '' }))
+      bhExact = true
+    } else if (btcChrono.length > 0) {
       const firstPx = btcChrono[0].entryPx
       const BH_SAMPLE = 1500
       const bhStep = Math.max(1, Math.floor(btcChrono.length / BH_SAMPLE))
@@ -888,8 +942,8 @@ function EquityCurveSection({ trades, stats, isPt, compound }: { trades: Portfol
         month: '',
       }))
     }
-    return { strategy, bhPoints }
-  }, [trades, stats?.startCapital, compound])
+    return { strategy, bhPoints, bhExact }
+  }, [trades, stats?.startCapital, compound, rerun])
 
   const hasBh = data.bhPoints.length > 0
 
@@ -921,6 +975,17 @@ function EquityCurveSection({ trades, stats, isPt, compound }: { trades: Portfol
             aria-pressed={show.bh}
           >
             <span className="bt-legend-swatch bt-legend-swatch-dashed" /> BTC Buy &amp; Hold
+            {data.bhExact ? (
+              <span style={{ marginLeft: 6, fontSize: 9.5, opacity: 0.75 }}
+                    title={`${(rerun!.btcBuyAndHold as any).points} daily closes across the window · ${(rerun!.btcBuyAndHold as any).basis}`}>
+                · daily close, {(rerun!.btcBuyAndHold as any).points} pts
+              </span>
+            ) : (
+              <span style={{ marginLeft: 6, fontSize: 9.5, opacity: 0.6 }}
+                    title="sampled at the strategy's own BTC trade marks — approximate. Run a custom backtest for the exact daily-close benchmark.">
+                · approx
+              </span>
+            )}
           </button>
         ) : null}
       </div>
@@ -1264,10 +1329,11 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                       </div>
                     </td>
                     <td><span className="bt-scope-tag">{row.scope || 'Systematic'}</span></td>
-                    <td className="num" style={{ textAlign: 'right' }}>{row.totalTrades.toLocaleString()}</td>
-                    <td className={'num pos-text'} style={{ textAlign: 'right' }}>+{row.returnPct.toFixed(2)}%</td>
-                    <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{row.winRate.toFixed(1)}%</td>
-                    <td className="num" style={{ textAlign: 'right' }}>{row.profitFactor.toFixed(2)}</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{(row.totalTrades ?? 0).toLocaleString()}</td>
+                    <td className={'num ' + ((row.returnPct ?? 0) >= 0 ? 'pos-text' : 'neg-text')} style={{ textAlign: 'right' }}>
+                      {row.returnPct == null ? '—' : `${row.returnPct >= 0 ? '+' : ''}${row.returnPct.toFixed(2)}%`}</td>
+                    <td className="num" style={{ textAlign: 'right', color: 'var(--gold)' }}>{fmtNum(row.winRate, 1, '%')}</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmtPF(row.profitFactor, (row as any).profitFactorStatus)}</td>
                       <td colSpan={6} style={{ textAlign: 'right', opacity: 0.3, fontSize: '0.72em',
                                                borderLeft: '2px solid rgba(212,175,55,0.35)' }}>{isPt ? 'por cfg' : 'per-cfg only'}</td>
                   </tr>
@@ -1286,8 +1352,8 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                       <td className={'num ' + ((c.returnPct ?? 0) >= 0 ? 'pos-text' : 'neg-text')} style={{ textAlign: 'right', fontSize: '0.85em' }}>
                         {(c.returnPct ?? 0) >= 0 ? '+' : ''}{(c.returnPct ?? 0).toFixed(2)}%
                       </td>
-                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em', color: 'var(--gold)' }}>{(c.winRate ?? 0).toFixed(1)}%</td>
-                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em' }}>{(c.profitFactor ?? 0).toFixed(2)}</td>
+                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em', color: 'var(--gold)' }}>{fmtNum(c.winRate, 1, '%')}</td>
+                      <td className="num" style={{ textAlign: 'right', fontSize: '0.85em' }}>{fmtPF(c.profitFactor, (c as any).profitFactorStatus)}</td>
                         {(() => {
                           const q = sa[sid]
                           const cell = (v: React.ReactNode, extra: React.CSSProperties = {}) => (
@@ -1296,8 +1362,8 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                           if (!q) return <td colSpan={6} style={{ textAlign: 'right', opacity: 0.3, fontSize: '0.72em', borderLeft: '2px solid rgba(212,175,55,0.35)' }}>—</td>
                           return (<>
                             {cell(q.sa_trades, { borderLeft: '2px solid rgba(212,175,55,0.35)' })}
-                            {cell(`${q.sa_winRate.toFixed(1)}%`)}
-                            {cell(q.sa_profitFactor.toFixed(2), { color: q.sa_profitFactor >= 1 ? 'var(--gold)' : '#ef4444', fontWeight: 600 })}
+                            {cell(fmtNum(q.sa_winRate, 1, '%'))}
+                            {cell(fmtPF(q.sa_profitFactor, (q as any).sa_profitFactorStatus), { color: (q.sa_profitFactor ?? 0) >= 1 ? 'var(--gold)' : '#ef4444', fontWeight: 600 })}
                             {cell(`${q.sa_netUsd >= 0 ? '+' : ''}$${Math.round(q.sa_netUsd).toLocaleString()}`)}
                             {cell(`${q.seatRate.toFixed(0)}%`, { color: q.seatRate < 50 ? '#f59e0b' : undefined })}
                             {cell(`$${Math.round(q.lost).toLocaleString()}`, { opacity: 0.85 })}
@@ -1440,7 +1506,7 @@ function ReturnsSummary({ stats, trades, isPt }: { stats: Stats | null; trades: 
   )
 }
 
-function Row({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+function Row({ label, value, valueClass }: { label: string; value: React.ReactNode; valueClass?: string }) {
   return (
     <tr>
       <td>{label}</td>
@@ -1481,9 +1547,9 @@ function TradeAnalysis({ trades, isPt }: { trades: PortfolioTrade[]; isPt: boole
           <SplitRow label={isPt ? 'Total de Trades' : 'Total Trades'} all={cols.all.total} long={cols.long.total} short={cols.short.total} />
           <SplitRow label={isPt ? 'Vencedores' : 'Winners'} all={cols.all.wins} long={cols.long.wins} short={cols.short.wins} />
           <SplitRow label={isPt ? 'Perdedores' : 'Losers'} all={cols.all.losses} long={cols.long.losses} short={cols.short.losses} />
-          <SplitRow label={isPt ? 'Taxa de Acerto' : 'Win Rate'} all={`${cols.all.winRate.toFixed(2)}%`} long={`${cols.long.winRate.toFixed(2)}%`} short={`${cols.short.winRate.toFixed(2)}%`} />
-          <SplitRow label={isPt ? 'Vitória Média' : 'Avg Win'} all={`$${cols.all.avgWin.toFixed(2)}`} long={`$${cols.long.avgWin.toFixed(2)}`} short={`$${cols.short.avgWin.toFixed(2)}`} />
-          <SplitRow label={isPt ? 'Perda Média' : 'Avg Loss'} all={`$${cols.all.avgLoss.toFixed(2)}`} long={`$${cols.long.avgLoss.toFixed(2)}`} short={`$${cols.short.avgLoss.toFixed(2)}`} />
+          <SplitRow label={isPt ? 'Taxa de Acerto' : 'Win Rate'} all={fmtNum(cols.all.winRate, 2, '%')} long={fmtNum(cols.long.winRate, 2, '%')} short={fmtNum(cols.short.winRate, 2, '%')} />
+          <SplitRow label={isPt ? 'Vitória Média' : 'Avg Win'} all={fmtUsd(cols.all.avgWin)} long={fmtUsd(cols.long.avgWin)} short={fmtUsd(cols.short.avgWin)} />
+          <SplitRow label={isPt ? 'Perda Média' : 'Avg Loss'} all={fmtUsd(cols.all.avgLoss)} long={fmtUsd(cols.long.avgLoss)} short={fmtUsd(cols.short.avgLoss)} />
           <SplitRow label={isPt ? 'Maior Vitória' : 'Largest Win'} all={`$${cols.all.largestWin.toFixed(2)}`} long={`$${cols.long.largestWin.toFixed(2)}`} short={`$${cols.short.largestWin.toFixed(2)}`} valueClass="pos-text" />
           <SplitRow label={isPt ? 'Maior Perda' : 'Largest Loss'} all={`$${cols.all.largestLoss.toFixed(2)}`} long={`$${cols.long.largestLoss.toFixed(2)}`} short={`$${cols.short.largestLoss.toFixed(2)}`} valueClass="neg-text" />
           <SplitRow label="Pyramided" all={cols.all.pyramided} long={cols.long.pyramided} short={cols.short.pyramided} />
@@ -1613,7 +1679,7 @@ function RiskAdjusted({ trades, stats, isPt }: { trades: PortfolioTrade[]; stats
           <Row label={isPt ? 'Expectativa' : 'Expectancy'} value={`$${ra.expectancy.toFixed(2)}`} valueClass="pos-text" />
           <Row label={isPt ? 'Retorno Médio Mensal' : 'Avg Monthly Return'} value={`${ra.avgMonthly.toFixed(2)}%`} valueClass="pos-text" />
           <Row label="Monthly Std Dev" value={`${ra.monthlyStd.toFixed(2)}%`} />
-          <Row label={isPt ? 'Fator de Lucro' : 'Profit Factor'} value={ra.profitFactor.toFixed(2)} />
+          <Row label={isPt ? 'Fator de Lucro' : 'Profit Factor'} value={fmtPF(ra.profitFactor, (ra as any).profitFactorStatus)} />
         </tbody>
       </table>
     </div>
@@ -1833,7 +1899,7 @@ function WeeklyTable({ byWeek, totals, years, isPt }: { byWeek: Record<number, R
 
 // ─── Top metric card ────────────────────────────────────────────────────────
 
-function MetricCard({ label, value, sub, positive, negative }: { label: string; value: string; sub?: string; positive?: boolean; negative?: boolean }) {
+function MetricCard({ label, value, sub, positive, negative }: { label: string; value: React.ReactNode; sub?: string; positive?: boolean; negative?: boolean }) {
   const cls = positive ? 'pos-text' : negative ? 'neg-text' : ''
   return (
     <div className="card card-pad bt-metric-card">
@@ -1900,11 +1966,42 @@ function isOpenTrade(tr: PortfolioTrade): boolean {
          /^open/i.test(tr.displayReason || '')
 }
 
-function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = false, compoundRows = null }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; showCfgColumn?: boolean; compound?: boolean; compoundRows?: CompoundView | null }) {
+function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compound = false, compoundRows = null }: { trades: PortfolioTrade[]; loading: boolean; isPt: boolean; tier: Tier; showCfgColumn?: boolean; compound?: boolean; compoundRows?: CompoundView | null }) {
   const [page, setPage] = useState(0)
   const [coin, setCoin] = useState<CoinFilter>('ALL')
   const [side, setSide] = useState<SideFilter>('ALL')
+  // ── STATUS FILTER (2026-09-26) ─────────────────────────────────────────────────────────────
+  // The list was closed-and-open mixed with no way to isolate either. OPEN is the view a user
+  // actually wants when they are comparing the page against their own exchange positions.
+  const [status, setStatus] = useState<'ALL' | 'OPEN' | 'CLOSED'>('ALL')
   const PAGE = 50
+
+  // The canonical open book carries the fields a forward/shadow row does not: lane, Tier-S,
+  // the live stop, and the risk-sized notional. Joined by cfg_sid where the row has one and by
+  // asset + entry bar otherwise, so an open row in the main list is as complete as the dedicated
+  // open-positions table below it. A failed read leaves the extra columns empty, never zeroed.
+  const [canonOpen, setCanonOpen] = useState<Map<string, CanonOpen>>(new Map())
+  useEffect(() => {
+    let dead = false
+    fetch(`/api/strategies/phase-h/open-positions?tier=${tier}`, { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (dead || !j || !Array.isArray(j.positions)) return
+        const m = new Map<string, CanonOpen>()
+        for (const p of j.positions as CanonOpen[]) {
+          if (p.cfg_sid) m.set(`sid:${p.cfg_sid}`, p)
+          if (p.asset && p.entryTs) m.set(`ae:${p.asset}|${p.entryTs}`, p)
+          if (p.symbol) m.set(`sym:${p.symbol}|${p.dir}`, p)
+        }
+        setCanonOpen(m)
+      })
+      .catch(() => { /* the extra columns stay empty; the list still renders */ })
+    return () => { dead = true }
+  }, [tier])
+  const canonFor = (tr: PortfolioTrade): CanonOpen | undefined =>
+    (tr.cfg_sid ? canonOpen.get(`sid:${tr.cfg_sid}`) : undefined)
+    ?? canonOpen.get(`ae:${canonicalAsset(tr.symbol)}|${tr.entryTs}`)
+    ?? canonOpen.get(`sym:${tr.symbol}|${tr.dir}`)
 
   // Live prices for OPEN trades. Bitget WS singleton; tickers tick whenever
   // the WS sends a frame, which re-renders the table and recomputes
@@ -1918,14 +2015,50 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
     return m
   }, [tickers])
 
+  // ── THE OPEN BOOK BELONGS IN THE MAIN TRADE LIST, NOT ONLY IN A CARD BELOW IT ──────────────
+  // On the admin path `trades` comes from phase-h-risk, which is CLOSED-ONLY, so the list showed
+  // "OPEN 0" while four positions were genuinely open — the user's first question ("what am I
+  // holding?") had to be answered by scrolling past every closed row. Canonical open positions
+  // are projected into the same row shape and prepended, with `reason: 'open'` so isOpenTrade
+  // classifies them and the existing open-first sort puts them on top. A position already present
+  // as an open row (the customer/shadow path) is not duplicated.
+  const withOpens = useMemo(() => {
+    if (canonOpen.size === 0) return trades
+    const already = new Set(
+      trades.filter(isOpenTrade).map(t => `${canonicalAsset(t.symbol)}|${t.entryTs}`))
+    const extra: PortfolioTrade[] = []
+    const seen = new Set<string>()
+    for (const p of canonOpen.values()) {
+      const k = `${p.asset}|${p.entryTs}`
+      if (!p.entryTs || !p.entryPx || already.has(k) || seen.has(k)) continue
+      seen.add(k)
+      extra.push({
+        dir: (p.dir > 0 ? 1 : -1) as 1 | -1,
+        // An OPEN position has no realised P&L and no exit. Both are left at zero HERE only
+        // because the row shape requires a number; `reason: 'open'` makes every consumer treat
+        // the row as open, the table renders the live mark instead of an exit, and the metric
+        // set this feeds (`trades`) is the CLOSED set, which this list is not.
+        pnl: 0, entryTs: p.entryTs, exitTs: 0,
+        reason: 'open', displayReason: 'open', pyramided: false,
+        entryPx: p.entryPx, exitPx: 0,
+        notional: p.notional ?? 0, mfePct: 0, returnPct: 0, tierMult: 1,
+        symbol: p.symbol || `${p.asset}USDT`, type: 'hb',
+        ...(p.cfg_sid ? { cfg_sid: p.cfg_sid } : {}),
+      } as PortfolioTrade)
+    }
+    return extra.length ? [...extra, ...trades] : trades
+  }, [trades, canonOpen])
+
   const filtered = useMemo(() => {
-    return trades.filter(tr => {
+    return withOpens.filter(tr => {
       if (coin !== 'ALL' && canonicalAsset(tr.symbol) !== coin) return false  // rebrand-aware: GRAM chip matches old TON-labeled rows
       if (side === 'LONG' && tr.dir <= 0) return false
       if (side === 'SHORT' && tr.dir >= 0) return false
+      if (status === 'OPEN' && !isOpenTrade(tr)) return false
+      if (status === 'CLOSED' && isOpenTrade(tr)) return false
       return true
     })
-  }, [trades, coin, side])
+  }, [withOpens, coin, side, status])
 
   if (loading) return <div className="card card-pad">Loading…</div>
   if (!trades.length) return <div className="card card-pad">No trades.</div>
@@ -1956,6 +2089,24 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
       </div>
 
       <div className="bt-trades-filters">
+        <div className="bt-filter-group">
+          <span className="bt-filter-label">{isPt ? 'Estado' : 'Status'}</span>
+          <div className="bt-tier-pills">
+            {(['ALL', 'OPEN', 'CLOSED'] as const).map(st => {
+              const n = st === 'ALL' ? withOpens.length
+                : st === 'OPEN' ? withOpens.filter(isOpenTrade).length
+                : withOpens.filter(t => !isOpenTrade(t)).length
+              return (
+                <button key={st} type="button"
+                        className={'bt-tier-pill' + (status === st ? ' active' : '')}
+                        onClick={() => { setStatus(st); setPage(0) }}>
+                  {st === 'OPEN' ? <span className="dot" style={{ marginRight: 5 }} /> : null}
+                  {st} <span style={{ opacity: 0.6, marginLeft: 4 }}>{n}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
         <div className="bt-filter-group">
           <span className="bt-filter-label">{isPt ? 'Par' : 'Pair'}</span>
           <div className="bt-tier-pills">
@@ -2052,6 +2203,8 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
               // these — the row pulses to signal "active position" so the
               // user doesn't mistake them for closed-and-realized trades.
               const livePx = open ? priceBySymbol.get(tr.symbol) : undefined
+              // canonical open-book join: lane, Tier-S and the live stop for OPEN rows only
+              const co = open ? canonFor(tr) : undefined
               const liveReturnPct = (open && livePx && tr.entryPx > 0)
                 ? ((livePx - tr.entryPx) / tr.entryPx) * 100 * (tr.dir || 1)
                 : null
@@ -2069,6 +2222,7 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
                         </span>
                       ) : null}
                       <span className="num">{tr.symbol}</span>
+                      {co?.tierS ? <span className="bt-tiers-pill" title="Tier-S — eligible for the reserved lane">TIER-S</span> : null}
                     </div>
                   </td>
                   <td><span className={'badge ' + (tr.dir > 0 ? 'badge-long' : 'badge-short')}>{tr.dir > 0 ? 'LONG' : 'SHORT'}</span></td>
@@ -2090,6 +2244,13 @@ function TradesTable({ trades, loading, isPt, showCfgColumn = false, compound = 
                         ) : (
                           <span className="ts" style={{ color: 'var(--muted)' }}>strategy holding</span>
                         )}
+                        {co ? (
+                          <span className="ts" style={{ color: 'var(--muted)' }}
+                                title={`lane ${co.lane ?? 'unknown'} (${co.laneSource}) · stop ${co.stop ?? 'unknown'}${co.stopMovedFromInitial ? ' (trailed)' : ''} · no fixed target: ${co.targetNote}`}>
+                            lane {co.lane ?? '—'} · SL {co.stop != null ? `$${co.stop.toFixed(co.stop < 1 ? 4 : 2)}` : '—'}
+                            {co.stopMovedFromInitial ? ' ⇡' : ''}
+                          </span>
+                        ) : null}
                       </>
                     ) : (
                       <>
