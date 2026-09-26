@@ -76,35 +76,78 @@ type EquityChartProps = {
   width?: number
   height?: number
   monthLabels?: string[]
+  /** 2026-09-26 — OPT IN, DEFAULT OFF. See the note below. */
+  allowSynthetic?: boolean
+  /** Explicit render state. 'ok' draws the series; the others draw a labelled panel. */
+  state?: 'ok' | 'loading' | 'error' | 'empty'
+  /** Shown inside the loading/error/empty panel. */
+  stateMessage?: string
 }
 
-export function EquityChart({ data, range = '6M', width = 700, height = 200, monthLabels }: EquityChartProps) {
+/**
+ * 2026-09-26 — THE SYNTHETIC FALLBACK IS NO LONGER SILENT, AND IS OFF BY DEFAULT.
+ *
+ * `EquityChart` used to fall through to `genSyntheticEquity` whenever it received fewer than two
+ * points. On the Dashboard that meant the LOADING placeholder (`LOADING_STAX_DATA`, which carries
+ * `portfolioTrades: []`) and every failed fetch rendered a smooth, plausible, entirely INVENTED
+ * $4k → $14k equity curve in the card labelled with the user's own balance. A viewer could not tell
+ * it from their real history. That is the fabricated-data failure mode, drawn as a picture.
+ *
+ * Synthetic data now requires `allowSynthetic` — used only by the /design preview, which has no
+ * real series by definition. Everywhere else, too few points renders an explicit state panel.
+ */
+export function EquityChart({ data, range = '6M', width = 700, height = 200, monthLabels,
+                              allowSynthetic = false, state, stateMessage }: EquityChartProps) {
+  const enough = !!data && data.length > 1
+  const resolved: 'ok' | 'loading' | 'error' | 'empty' =
+    state && state !== 'ok' ? state : (enough || allowSynthetic ? 'ok' : 'empty')
   const series = useMemo(() => {
     if (data && data.length > 1) return data
+    if (!allowSynthetic) return [] as EquityPoint[]
     const seedMap = { '1M': 3, '3M': 5, '6M': 7, '1Y': 11, 'ALL': 13 } as const
     const ptsMap = { '1M': 30, '3M': 90, '6M': 180, '1Y': 240, 'ALL': 360 } as const
     return genSyntheticEquity(seedMap[range], ptsMap[range], 4000, 14000)
-  }, [data, range])
+  }, [data, range, allowSynthetic])
 
-  const pad = { l: 38, r: 14, t: 14, b: 28 }
+  // The 38px y-axis gutter is a tenth of a 360px phone screen. Tighten it (and the label font)
+  // below 420px so the plot keeps the width instead of the margin.
+  const narrow = width < 420
+  const pad = narrow
+    ? { l: 30, r: 8, t: 12, b: 26 }
+    : { l: 38, r: 14, t: 14, b: 28 }
   const W = width
   const H = height
-  const values = series.map(p => p.value)
+  // RULES OF HOOKS: the state panel returns BELOW, after every hook has run. So this scale maths
+  // executes for the empty series too — guard it rather than let Math.min(...[]) make Infinity.
+  const values = series.length ? series.map(p => p.value) : [0, 1]
   const min = Math.min(...values) * 0.95
   const max = Math.max(...values) * 1.02
   const xs = (i: number) => pad.l + (i / Math.max(1, series.length - 1)) * (W - pad.l - pad.r)
   const ys = (v: number) => pad.t + (1 - (v - min) / Math.max(0.001, max - min)) * (H - pad.t - pad.b)
   const path = series.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xs(i).toFixed(1)} ${ys(p.value).toFixed(1)}`).join(' ')
-  const area = `${path} L ${xs(series.length - 1).toFixed(1)} ${H - pad.b} L ${xs(0).toFixed(1)} ${H - pad.b} Z`
+  const area = series.length
+    ? `${path} L ${xs(series.length - 1).toFixed(1)} ${H - pad.b} L ${xs(0).toFixed(1)} ${H - pad.b} Z`
+    : ''
 
   // y ticks — pick ~5 nice round numbers regardless of scale ($1k → $1M+).
   // Without this, ALL-time view (~$10k → $830k span) renders 400+ horizontal
   // grid lines, fusing into a barcode-like visual mush.
   const ticks = niceTicks(min, max, 5)
 
-  const months = monthLabels && monthLabels.length > 0
+  // LABEL DENSITY IS A FUNCTION OF WIDTH, NOT A CONSTANT.
+  // Seven "03 Sep 26"-style labels need ~58px each. In a 343px-wide phone viewport the axis has
+  // ~291px of inner width, so seven of them overlapped into an unreadable smear —
+  // "03 S0ep 26t1 Sep 2616 Sep 26". Thinning by a whole-number stride keeps the first and last
+  // labels (which anchor the period) and drops the ones in between that will not fit.
+  const allMonths = monthLabels && monthLabels.length > 0
     ? monthLabels
     : ["Nov '23", "Dec '23", "Jan '24", "Feb '24", "Mar '24", "Apr '24", "May '24"]
+  const innerW = Math.max(1, W - pad.l - pad.r)
+  const fitLabels = Math.max(2, Math.floor(innerW / 58))
+  const stride = Math.max(1, Math.ceil(allMonths.length / fitLabels))
+  const months = allMonths.length <= fitLabels
+    ? allMonths
+    : allMonths.filter((_m, i) => i % stride === 0 || i === allMonths.length - 1)
 
   // Hover state — index into series array. null when not hovering.
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
@@ -135,6 +178,23 @@ export function EquityChart({ data, range = '6M', width = 700, height = 200, mon
     ? (() => { const d = new Date(hovered.ts); const day = String(d.getDate()).padStart(2, '0'); const mon = d.toLocaleString('en-US', { month: 'short' }); return `${day} ${mon} ${d.getFullYear()}` })()
     : (hovered?.month || '')
 
+  if (resolved !== 'ok' || series.length < 2) {
+    const copy = resolved === 'loading'
+      ? { icon: '⋯', title: 'Loading your equity curve', body: stateMessage || 'Reading your closed trades.' }
+      : resolved === 'error'
+      ? { icon: '⚠', title: 'Equity curve unavailable', body: stateMessage || 'Your trade history could not be read. This is a load failure, not a zero balance.' }
+      : { icon: '—', title: 'No closed trades yet', body: stateMessage || 'Your equity curve starts with your first closed trade.' }
+    return (
+      <div className="equity-state" role="status" aria-live="polite"
+           style={{ height, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    justifyContent: 'center', gap: 6, textAlign: 'center', padding: '0 16px' }}>
+        <div style={{ fontSize: 22, lineHeight: 1, color: resolved === 'error' ? '#f0b429' : 'var(--muted)' }}>{copy.icon}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{copy.title}</div>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', maxWidth: 320 }}>{copy.body}</div>
+      </div>
+    )
+  }
+
   return (
     <svg
       ref={svgRef}
@@ -159,19 +219,25 @@ export function EquityChart({ data, range = '6M', width = 700, height = 200, mon
         return (
           <g key={i}>
             <line x1={pad.l} x2={W - pad.r} y1={y} y2={y} stroke="var(--line)" strokeDasharray="2 4" />
-            <text x={pad.l - 6} y={y + 3} textAnchor="end" fontSize="10" fill="var(--muted)" fontFamily="JetBrains Mono">{fmtAxisDollars(t)}</text>
+            <text x={pad.l - 6} y={y + 3} textAnchor="end" fontSize={narrow ? 8.5 : 10} fill="var(--muted)" fontFamily="JetBrains Mono">{fmtAxisDollars(t)}</text>
           </g>
         )
       })}
       <path d={area} fill="url(#eqFill)" />
       <path d={path} fill="none" stroke="var(--gold)" strokeWidth="1.6" />
       {months.map((m, i) => {
-        const x = pad.l + (i / Math.max(1, months.length - 1)) * (W - pad.l - pad.r)
+        // Position from the label's index in the FULL list. Re-spacing the survivors evenly would
+        // put each date under the wrong point on the curve — a subtle, very misleading error.
+        const oi = allMonths.indexOf(m)
+        const frac = allMonths.length > 1
+          ? (oi >= 0 ? oi : i * stride) / (allMonths.length - 1)
+          : (i / Math.max(1, months.length - 1))
+        const x = pad.l + Math.min(1, frac) * (W - pad.l - pad.r)
         // Anchor first label to start, last to end — keeps them inside the
         // chart bounds. With textAnchor="middle" the rightmost label gets
         // its right half clipped past the SVG edge.
-        const anchor = i === 0 ? 'start' : i === months.length - 1 ? 'end' : 'middle'
-        return <text key={i} x={x} y={H - 10} textAnchor={anchor} fontSize="10.5" fill="var(--muted)">{m}</text>
+        const anchor = frac <= 0.001 ? 'start' : frac >= 0.999 ? 'end' : 'middle'
+        return <text key={i} x={x} y={H - 10} textAnchor={anchor} fontSize={narrow ? 8.5 : 10.5} fill="var(--muted)">{m}</text>
       })}
 
       {/* Crosshair + tooltip — rendered last so they sit above the line. */}

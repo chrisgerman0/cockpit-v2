@@ -459,19 +459,55 @@ export function useStaxDashboardData(): StaxLoadState {
     async function load() {
       try {
         const sb = browserClient()
-        const { data: { session }, error: sessionError } = await sb.auth.getSession()
-        if (!session || sessionError) { if (!cancelled) setState({ status: 'unauthenticated' }); return }
+        // 2026-09-22: this used to `return` on a missing session, so when Supabase Auth hung the
+        // hook never issued a single API call and the dashboard sat at $0.00. A missing Supabase
+        // session is NOT proof of being signed out — the locally-verified admin cookie may still
+        // authenticate. Let the SERVER decide: authedFetch now sends credentials and surfaces a
+        // real 401 as NOT_AUTHENTICATED, which is handled below.
+        // ── NOTHING ON THE DATA PATH MAY AWAIT SUPABASE UNBOUNDED (2026-09-22) ──────────────
+        // These two were raw client calls. `.catch()` catches a REJECTION; it does not rescue a
+        // HANG, and gotrue was hanging — the console showed
+        //   `Lock "lock:sb-…-auth-token" was not released within 5000ms`
+        // so the hook blocked here and never reached a single fetch. Measured in Chris's own
+        // browser at the time: /api/balance and /api/trades-live BOTH returned 200 with real data,
+        // while the page sat on "Loading" and $0.00 — the data was available and never requested.
+        // Both are now raced against a short timeout and fall back to harmless defaults. Neither
+        // value gates the account data: `session` is informational and the mission target has a
+        // default of 1 BTC.
+        const bounded = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+          Promise.race([
+            p.catch(() => fallback),
+            new Promise<T>(res => setTimeout(() => res(fallback), ms)),
+          ])
 
-        // Pull the mission target from user_metadata. Settings → Profile saves
-        // it via supabase.auth.updateUser; reading from getUser ensures we
-        // always see the latest value (no extra API call needed).
-        const { data: { user: authUser } } = await sb.auth.getUser()
+        const sessRes = await bounded(
+          sb.auth.getSession() as unknown as Promise<{ data: { session: unknown | null } }>,
+          2000, { data: { session: null } })
+        const session = sessRes?.data?.session ?? null
+
+        const userRes = await bounded(
+          sb.auth.getUser() as unknown as Promise<{ data: { user: { user_metadata?: Record<string, unknown> } | null } }>,
+          2000, { data: { user: null } })
+        const authUser = userRes?.data?.user ?? null
         const missionTarget = Number((authUser?.user_metadata as any)?.mission_target_btc)
         const btcGoalTarget = Number.isFinite(missionTarget) && missionTarget > 0 ? missionTarget : 1
 
+        // Track whether the SERVER actually rejected us. A swallowed NOT_AUTHENTICATED must not
+        // become `balance = 0` — that is the fabricated-$0 failure this whole change exists to
+        // stop. We now distinguish "rejected" from "could not ask" from "answered".
+        let sawUnauthenticated = false
+        let sawUpstreamDown = false
+        const classify = (e: Error) => {
+          const m = String(e?.message || e)
+          if (/NOT_AUTHENTICATED/.test(m)) sawUnauthenticated = true
+          else if (/unavailable|upstream|503/i.test(m) || e?.name === 'AuthUnavailableError'
+                   || e?.name === 'UpstreamUnavailableError') sawUpstreamDown = true
+          return m
+        }
+
         const [botRes, balanceRes, userTradesRes] = await Promise.all([
-          authedFetch<BotConfigResp>('/api/bot-activate').catch(() => null),
-          authedFetch<BalanceResp>('/api/balance').catch((e: Error) => ({ error: e.message } as BalanceResp)),
+          authedFetch<BotConfigResp>('/api/bot-activate').catch((e: Error) => { classify(e); return null }),
+          authedFetch<BalanceResp>('/api/balance').catch((e: Error) => ({ error: classify(e) } as BalanceResp)),
           // Bitget-sourced (see use-live-trading-data.tsx for rationale).
           // limit=500 (not 50): /api/trades-live divides the limit across the 19
           // V1 symbols (route.ts getPositionHistory ⌈limit/19⌉ per symbol), so
@@ -480,9 +516,27 @@ export function useStaxDashboardData(): StaxLoadState {
           // page (which uses 500). Match it so both read the SAME full closed set.
           authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500')
             .then(r => { lastGoodTrades.current = r; return r })
-            .catch(() => lastGoodTrades.current ?? ({ trades: [] as RawTrade[], track_record: undefined })),
+            .catch((e: Error) => { classify(e); return lastGoodTrades.current ?? ({ trades: [] as RawTrade[], track_record: undefined }) }),
         ])
         if (cancelled) return
+
+        // A REJECTION IS A SIGN-OUT; AN OUTAGE IS NOT, AND NEITHER IS EVER $0.
+        // Without this, a 401 fell through to `equity = Number(balance?.equity || 0)` and the
+        // dashboard rendered $0.00 over a live account — indistinguishable from a real zero.
+        if (sawUnauthenticated && !balanceRes?.equity) {
+          if (!cancelled) setState({ status: 'unauthenticated' })
+          return
+        }
+        // `lastGoodTrades.current` is set even when a response was EMPTY, so testing it for
+        // truthiness let an empty cache masquerade as good data and suppressed this branch —
+        // leaving $0.00 on screen. Require actual trades.
+        const haveGoodCache = (lastGoodTrades.current?.trades?.length ?? 0) > 0
+        if (sawUpstreamDown && !balanceRes?.equity && !haveGoodCache) {
+          if (!cancelled) setState({ status: 'error',
+            message: 'Upstream authentication is unavailable. Your data is not being shown rather '
+                   + 'than shown as zero. Retrying automatically.' })
+          return
+        }
 
         // Detect the user's setup state but DON'T short-circuit. The dashboard
         // pre-activation should still render a "strategy preview" so the user
@@ -500,7 +554,12 @@ export function useStaxDashboardData(): StaxLoadState {
         // would actually be (and the user can preview other tiers from the
         // Backtesting page).
         const tier = cfg ? normalizeTier(cfg.tier || cfg.preset) : 'conservative'
-        const tierLabel = TIER_LABEL[tier] ?? TIER_LABEL.conservative
+        // When the bot config could not be read (Supabase down), DO NOT present the fallback tier
+        // as fact — it rendered "Conservative tier · 0.5× of balance" over an Aggressive account.
+        const configUnavailable = !cfg && (sawUpstreamDown || (botRes === null))
+        const tierLabel = configUnavailable
+          ? 'Tier unavailable — upstream down'
+          : (TIER_LABEL[tier] ?? TIER_LABEL.conservative)
 
         const balance = balanceRes && !('error' in balanceRes && balanceRes.error) ? balanceRes : null
         const equity = Number(balance?.equity || 0)
@@ -514,13 +573,28 @@ export function useStaxDashboardData(): StaxLoadState {
         // derived stats (win rate, streak, equity curve, realized pnl, total
         // return). These mirror what the Backtesting page shows so the dashboard
         // surfaces the strategy's track record, not the user's personal slice.
-        const portfolio = await fetchPortfolioTrades(tier).catch(() => [] as PortfolioTrade[])
+        // 2026-09-26 — A FAILED READ AND AN EMPTY BOOK ARE DIFFERENT FACTS. Both of these used to
+        // collapse to `[]`, and the equity card then drew a GENERATED curve over the top of it. The
+        // flags below travel to the Hero as `equityStatus`, so a 500 renders as "could not load"
+        // and a genuinely new account renders as "no closed trades yet".
+        let equityReadFailed = false
+        let equityReadError: string | undefined
+        const portfolio = await fetchPortfolioTrades(tier).catch((e: Error) => {
+          equityReadFailed = true
+          equityReadError = `Strategy trade history could not be read (${e?.message || 'fetch failed'}).`
+          return [] as PortfolioTrade[]
+        })
         // Recent Trades list (new-user backtest fallback) sources the FORWARD
         // closed history (liveref closed-trades.json) so it shows the strategy's
         // RECENT closes — the frozen `portfolio` set ends at the locked backtest
         // window (~2026-05-29), which made Recent Trades read as stale May rows.
         // Headline metrics (return/win-rate/streak/equity) stay on frozen `portfolio`.
-        const fwdClosed = await fetchClosedTrades(tier).catch(() => [] as PortfolioTrade[])
+        const fwdClosed = await fetchClosedTrades(tier).catch((e: Error) => {
+          equityReadFailed = true
+          equityReadError = equityReadError
+            || `Closed-trade history could not be read (${e?.message || 'fetch failed'}).`
+          return [] as PortfolioTrade[]
+        })
         if (cancelled) return
 
         // Realised pnl + return % — USER's account, not the backtest.
@@ -776,6 +850,15 @@ export function useStaxDashboardData(): StaxLoadState {
           openLegs: openTrades.map(t => ({ symbol: t.symbol, side: t.side as 'long' | 'short' })),
         })
 
+        // The user's OWN realised trades, oldest-first, for the real equity curve. Never the
+        // strategy's book: `pnl_usd` and `closed_at` come from the authenticated user's ledger.
+        const realEquityTrades = userClosedTrades
+          .filter(t => t.closed_at)
+          .map(t => ({ exitTs: new Date(t.closed_at as string).getTime(),
+                       pnl: Number(t.pnl_usd) || 0 }))
+          .filter(t => Number.isFinite(t.exitTs) && t.exitTs > 0)
+          .sort((a, b) => a.exitTs - b.exitTs)
+
         const data: StaxDashboardData = {
           trackRecord: userTradesRes?.track_record,
           btcPrice,
@@ -797,7 +880,31 @@ export function useStaxDashboardData(): StaxLoadState {
           // equityBase = the curve's STARTING balance: the connected user's wizard initial
           // capital (activation_balance) or $10k for a new/preview user — NOT the current
           // account balance (which made the curve start at "now" instead of at inception).
-          equityTrades: fwdClosed.map(t => ({ exitTs: t.exitTs, pnl: t.pnl })),
+          // 2026-09-22 REAL-ACCOUNT EQUITY. This used to be `fwdClosed` — the LIVEREF closed
+          // book, i.e. the STRATEGY's canonical trades, not this user's. The caption under the
+          // chart reads "Your $X balance", so the dashboard presented the strategy's performance
+          // as the user's own: Chris's account showed a curve climbing to ~$48k while his balance
+          // was $8,230 and realised PnL was -$5,711.
+          // A user WITH real closed trades now gets ONLY their own. A user with none keeps the
+          // illustrative fallback, and `equityIsReal` tells the UI to label it as such.
+          // surfaced in the UI so a degraded read is never mistaken for a healthy one
+          degraded: !!(balanceRes as { degraded?: boolean })?.degraded
+                    || !!(userTradesRes as { degraded?: boolean })?.degraded
+                    || configUnavailable,
+          degradedWarning: (balanceRes as { warning?: string })?.warning
+                    || (userTradesRes as { warning?: string })?.warning
+                    || (configUnavailable ? 'Bot configuration is unreadable while the upstream is down.' : undefined),
+          balanceSource: (balanceRes as { source?: string })?.source,
+          balanceAgeSeconds: (balanceRes as { ageSeconds?: number })?.ageSeconds,
+          equityTrades: realEquityTrades,
+          equityIsReal: realEquityTrades.length > 0,
+          // ORDER MATTERS: a read failure outranks an empty book. Reporting "no trades yet" on a
+          // 503 is the fabricated-zero failure wearing friendlier words.
+          equityStatus: equityReadFailed && realEquityTrades.length === 0 && portfolio.length === 0
+            ? 'error'
+            : (realEquityTrades.length === 0 && portfolio.length === 0 ? 'empty' : 'ok'),
+          equityError: equityReadFailed ? equityReadError : undefined,
+          equityRealTradeCount: realEquityTrades.length,
           equityBase: userBaseline,
           strategyBase: startCapital,
           equityRangeLabel,

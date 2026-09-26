@@ -146,8 +146,25 @@ export type StaxDashboardData = {
   //     initial capital (activation_balance) or $10k for a new/preview user —
   //     NOT the current account balance (which made the curve start at "now").
   equityTrades?: Array<{ exitTs: number; pnl: number }>
+  /** true when equityTrades are the AUTHENTICATED USER'S own realised trades. */
+  equityIsReal?: boolean
+  equityRealTradeCount?: number
+  degraded?: boolean
+  degradedWarning?: string
+  balanceSource?: string
+  balanceAgeSeconds?: number
   equityBase?: number
   strategyBase?: number              // strategy account base ($10k by default)
+  /** 2026-09-26 — EXPLICIT EQUITY STATE. Without this the card could only distinguish "I have a
+   *  series" from "I have nothing", and "nothing" was drawn as a generated curve. 'loading' and
+   *  'error' are now first-class: a failed read renders as a failed read, never as a flat or
+   *  invented line. Omitted => derived from the data (series present ? 'ok' : 'empty'). */
+  equityStatus?: 'ok' | 'loading' | 'error' | 'empty'
+  equityError?: string
+  /** Design-preview ONLY. The /design route renders SAMPLE_STAX_DATA, which carries no trades; this
+   *  is the single explicit opt-in that lets the chart draw a generated series. Never set on any
+   *  path that shows a real user real numbers. */
+  allowSyntheticEquity?: boolean
   equityCurve?: EquityPoint[]        // legacy fallback when portfolioTrades not provided
   equityMonthLabels?: string[]       // legacy fallback
   equityRangeLabel: string           // "6M Performance (...)"
@@ -171,6 +188,9 @@ export type StaxDashboardData = {
 // ─── Sample data — used by the design preview at /design and as a fallback. ─
 
 export const SAMPLE_STAX_DATA: StaxDashboardData = {
+  // The /design preview has no trade history by construction, so it is the one caller allowed to
+  // draw a generated series. Production data paths never set this.
+  allowSyntheticEquity: true,
   btcPrice: 76318,
   balanceUsd: 10247.83,
   tierLabel: 'Aggressive tier · 1.0× of balance',
@@ -216,6 +236,7 @@ export const LOADING_STAX_DATA: StaxDashboardData = {
   tierLabel: '—',
   btcGoal: 0,
   equityRangeLabel: 'Loading…',
+  equityStatus: 'loading',
   portfolioTrades: [],
   strategyBase: 10000,
   stats: [
@@ -1046,6 +1067,34 @@ function simulateRange(
   return { points, labels, summary: '' /* Hero builds the footer string per design */ }
 }
 
+/**
+ * MEASURE THE CONTAINER, don't assume 780px.
+ *
+ * The equity chart was rendered with a hardcoded `width={780}` viewBox and
+ * `preserveAspectRatio="none"`, so on a 360px phone the SVG was squeezed to 46% of its authored
+ * width: the y-axis labels and the date row were horizontally compressed into unreadable slivers
+ * and the 38px axis gutter ate a tenth of the screen. Passing the MEASURED width makes the viewBox
+ * match the rendered box, so nothing is distorted at any size.
+ */
+function useMeasuredWidth(fallback: number) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [w, setW] = useState(fallback)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const read = () => setW(Math.max(220, Math.round(el.getBoundingClientRect().width)))
+    read()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read)
+      return () => window.removeEventListener('resize', read)
+    }
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return { ref, width: w }
+}
+
 function Hero({ data }: { data: StaxDashboardData }) {
   const t = useT()
   const [range, setRange] = useState<Range>('6M')
@@ -1055,27 +1104,60 @@ function Hero({ data }: { data: StaxDashboardData }) {
   const target = data.btcGoalTarget && data.btcGoalTarget > 0 ? data.btcGoalTarget : 1
   const pct = Math.min(1, Math.max(0, data.btcGoal / target))
 
+  const eq = useMeasuredWidth(780)
   const sim = useMemo(() => {
     // 2026-07-06: curve = FORWARD closed trades (equityTrades, → today) starting from
     // equityBase (wizard initial-capital for connected / $10k for new) — NOT the frozen
     // backtest set and NOT the current balance. Falls back to the old inputs if a caller
     // (mock) doesn't supply the new ones.
-    const curveTrades = (data.equityTrades && data.equityTrades.length > 0)
-      ? data.equityTrades : data.portfolioTrades
+    // REAL ACCOUNT ONLY when the user has traded. The old code fell back to
+    // `portfolioTrades` — the STRATEGY's backtest — whenever equityTrades was empty, while the
+    // caption below still read "Your $X balance". That presented strategy performance as the
+    // user's own. A real account NEVER silently borrows the strategy's curve.
+    const isReal = !!data.equityIsReal && !!data.equityTrades && data.equityTrades.length > 0
     const curveBase = (data.equityBase && data.equityBase > 0) ? data.equityBase : data.balanceUsd
-    if (curveTrades && curveTrades.length > 0) {
-      return simulateRange(curveTrades, curveBase, data.strategyBase || 10000, range)
+    if (isReal) {
+      return { ...simulateRange(data.equityTrades!, curveBase, data.strategyBase || 10000, range), isReal: true }
+    }
+    // No real trades yet → the illustrative strategy curve, LABELLED as illustrative.
+    if (data.portfolioTrades && data.portfolioTrades.length > 0) {
+      return { ...simulateRange(data.portfolioTrades, data.strategyBase || 10000, data.strategyBase || 10000, range), isReal: false }
     }
     // Fallback: use precomputed equityCurve if a caller (mock data) provides it.
     return {
       points: data.equityCurve || [],
       labels: data.equityMonthLabels || [],
       summary: data.equityRangeLabel,
+      isReal: false,
     }
-  }, [data.equityTrades, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, range])
+  }, [data.equityTrades, data.equityIsReal, data.equityBase, data.portfolioTrades, data.balanceUsd, data.strategyBase, data.equityCurve, data.equityMonthLabels, data.equityRangeLabel, range])
+
+  // EXPLICIT, in this order: an author-declared state wins; then a genuine empty; then ok.
+  // 'empty' and 'error' are different facts and are never collapsed into one another.
+  const equityState: 'ok' | 'loading' | 'error' | 'empty' =
+    data.equityStatus && data.equityStatus !== 'ok'
+      ? data.equityStatus
+      : (sim.points && sim.points.length > 1) || data.allowSyntheticEquity === true
+        ? 'ok'
+        : 'empty'
+  const endingEquity = sim.points && sim.points.length
+    ? sim.points[sim.points.length - 1].value
+    : null
 
   return (
     <div className="row row-hero">
+      {data.degraded && (
+        <div style={{
+          gridColumn: '1 / -1', marginBottom: 12, padding: '10px 14px',
+          background: '#422006', color: '#fde68a', border: '1px solid #ca8a04',
+          borderRadius: 8, fontSize: 13, fontWeight: 600,
+        }}>
+          ⚠ UPSTREAM DEGRADED — {data.degradedWarning || 'some data is served from local sources.'}
+          {data.balanceSource ? ` Balance source: ${data.balanceSource}` : ''}
+          {typeof data.balanceAgeSeconds === 'number' ? ` (${data.balanceAgeSeconds}s old).` : ''}
+          {' '}Figures shown are real; nothing here is a fabricated zero.
+        </div>
+      )}
       {/* Balance + BTC Goal */}
       <div className={'card balance-card card-pad' + (data.isPreview ? ' is-preview' : '')} data-tour="balance" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
         {/* Subtle Staxs icon watermark — only shown for connected users so it
@@ -1146,13 +1228,39 @@ function Hero({ data }: { data: StaxDashboardData }) {
             ))}
           </div>
         </div>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <EquityChart data={sim.points} range={range} width={780} height={190} monthLabels={sim.labels} />
+        <div ref={eq.ref} style={{ flex: 1, minHeight: 0 }}>
+          <EquityChart
+            data={sim.points}
+            range={range}
+            width={eq.width}
+            height={190}
+            monthLabels={sim.labels}
+            allowSynthetic={data.allowSyntheticEquity === true}
+            state={equityState}
+            stateMessage={data.equityError}
+          />
         </div>
-        <div className="equity-foot" style={{ color: 'var(--muted)' }}>
-          Your ${data.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} balance
-          {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
-          {' · '}last {range.toLowerCase()}
+        {/* THE BASIS IS ON THE SAME LINE AS THE FIGURE (§BASIS). A curve without its period and
+            accounting basis is not a reportable number — the reader cannot tell a real account from
+            a strategy illustration, nor a compounding curve from a fixed-stake one. */}
+        <div className="equity-foot" style={{ color: equityState !== 'ok' ? 'var(--muted)' : (sim.isReal ? 'var(--muted)' : '#d9a441') }}>
+          {equityState === 'loading' ? (
+            <>LOADING — no figure is shown until your trades are read</>
+          ) : equityState === 'error' ? (
+            <>COULD NOT LOAD YOUR EQUITY — this is a read failure, not a zero balance</>
+          ) : equityState === 'empty' ? (
+            <>NO CLOSED TRADES YET · your curve starts at your first close</>
+          ) : sim.isReal ? (
+            <>
+              REAL ACCOUNT EQUITY · ending ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              {' · '}{range === 'ALL' ? 'all time' : `last ${range.toLowerCase()}`}
+              {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
+              {' · '}realised closes, non-compounding basis
+            </>
+          ) : (
+            <>ILLUSTRATIVE BACKTEST — NO LIVE TRADES YET · not your account history · $
+              {(data.strategyBase || 10000).toLocaleString()} non-compounding basis</>
+          )}
         </div>
       </div>
     </div>
