@@ -154,6 +154,18 @@ const LIVE_DATA_BASE = '/data/strategies/phase-h-risk'
 // ?basket= would let a crafted link render unknown JSON as our own published numbers.
 const CANDIDATE_BASKETS: Record<string, string> = {
   prelim80: '/data/strategies/phase-h-prelim80',
+  // 2026-09-27: the Blender's preliminary MAX_NET basket — 56 research CFGs across 8 families and
+  // 21 assets, 7 Tier-S, basket hash dddf9f44db5b323a. Its OWN namespace, deliberately: phase-h-risk
+  // is written by the live publisher, so publishing research numbers there would both present
+  // research as live and be reverted on the publisher's next tick. Reviewable at ?basket=research56.
+  research56: '/data/strategies/phase-h-research56',
+}
+// The eyebrow must NAME the basket on screen. Rendering a candidate under the live basket's name
+// ("SWINGMATE v3 SUPER STACK · 18-ASSET BASKET") would state that the account trades these numbers,
+// which is the one claim a candidate review must never make.
+const CANDIDATE_LABELS: Record<string, string> = {
+  prelim80: 'PRELIMINARY 80-CFG CANDIDATE BASKET · RESEARCH · NOT TRADED',
+  research56: 'BLENDER MAX_NET · 56 CFG · 8 FAMILIES · 21 ASSETS · PRELIMINARY RESEARCH · NOT TRADED',
 }
 function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
@@ -595,7 +607,9 @@ export function BacktestingContent() {
       )}
       {/* Header */}
       <div className="bt-header">
-        <div className="bt-eyebrow">{previewMode ? 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET'}</div>
+        <div className="bt-eyebrow">{candidateBasket
+          ? (CANDIDATE_LABELS[candidateBasket] ?? 'CANDIDATE BASKET · RESEARCH · NOT TRADED')
+          : previewMode ? 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET'}</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
