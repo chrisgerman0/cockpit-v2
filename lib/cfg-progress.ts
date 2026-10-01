@@ -88,7 +88,14 @@ function trailActivationPct(trailMode: string): number {
     case 'atr_2':       return 0       // ATR-based, fires from bar 1
     case 'fixed_3pct':  return 3.0     // needs MFE > trail distance to net positive
     case 'off':         return Infinity
-    default:            return Infinity
+    default:
+      // 2026-10-01: ANY ATR multiple, not just the two that were hardcoded. The RESEARCH56
+      // families publish their trail as `atr_<multiple>` straight from the cfg (VALUE AREA LTC is
+      // atr_1), and an unknown mode fell to Infinity — so `mfeCommitted < activation` was always
+      // true, armingBar got an impossible threshold and the Pulse cell rendered nothing at all
+      // while BNB and DOGE, both old-basket cfgs, kept their meters. Same rule the named ATR modes
+      // already use: ATR-based, fires from bar 1.
+      return /^atr_/.test(trailMode) ? 0 : Infinity
   }
 }
 
@@ -151,7 +158,10 @@ function trailModeLabel(trailMode: string): string {
     case 'atr_2':       return 'ATR Trail'
     case 'fixed_3pct':  return 'Fixed Trail'
     case 'off':         return ''
-    default:            return 'Trail'
+    // 2026-10-01: `atr_<multiple>` from the research families reads as an ATR trail, because that
+    // is what it is — the multiple itself lives in the cfg and the engine publishes the resulting
+    // level as trail_limit_px.
+    default:            return /^atr_/.test(trailMode) ? 'ATR Trail' : 'Trail'
   }
 }
 
