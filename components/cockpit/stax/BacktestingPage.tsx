@@ -148,25 +148,60 @@ const TIER_LABELS: Record<Tier, { en: string; pt: string; notional: string; mult
 // risk-sized pnls directly. The two axes stay independent: risk-sizing ON
 // (display), compound OFF (display). Numbers: PF 1.97/2.13/2.10, maxDD ~-10%,
 // Calmar 5.0/6.1/7.1 (cons/mod/aggr) — corrected exit-order maxDD.
-const LIVE_DATA_BASE = '/data/strategies/phase-h-risk'
+// 2026-09-28 BASKET CUTOVER. The account has traded RESEARCH56_20260928_MAXNET_V3 (56 research CFGs,
+// 8 families, 21 assets, basket_hash dddf9f44db5b323a) since 17:23:10Z, so THAT is what this page
+// defaults to. phase-h-risk still holds the retired k54_bounded book and stays reachable as a named
+// historical comparison at ?basket=k54 — it is history now, not the account's strategy.
+//
+// The research surface is built by the REAL phase-i publisher (research_publisher_adapter resolves
+// the members from the canonical ledgers before load_cfg) and risk-sized by risk_sizing_canonical on
+// the same $10,000 / compound-OFF basis as the old one, so the two are directly comparable in shape.
+// Verified 35/35 in scratchpad/basket_cutover/CANARY_VERIFY.json.
+// 2026-09-29: READ THE SURFACE THE RECURRING PIPELINE OWNS. phase-h-research56 was a hand
+// publish — correct at the moment I wrote it and stale from the next minute, because no cycle
+// regenerates it. phase-h-risk IS regenerated every publisher cycle (forward pass -> overlap gate
+// -> risk sizing), and since the full-period adapter was exported in the runner that cycle now
+// produces the complete book: 1,776 trades to 2026-09-21 with 277 entries past the 2025 seal,
+// refreshed alongside phase-h and phase-h-liveref. Pointing here is what makes Backtesting
+// advance by itself instead of freezing at whatever I last published by hand.
+const ACTIVE_DATA_BASE = '/data/strategies/phase-h-risk'
+// The hand-published full-period snapshot, kept reachable at ?basket=research56 for comparison.
+const RESEARCH56_SNAPSHOT = '/data/strategies/phase-h-research56'
+const LIVE_DATA_BASE = ACTIVE_DATA_BASE
 
 // Candidate baskets reviewable via ?basket=<key>. ALLOW-LIST, deliberately: an arbitrary
 // ?basket= would let a crafted link render unknown JSON as our own published numbers.
 const CANDIDATE_BASKETS: Record<string, string> = {
   prelim80: '/data/strategies/phase-h-prelim80',
-  // 2026-09-27: the Blender's preliminary MAX_NET basket — 56 research CFGs across 8 families and
-  // 21 assets, 7 Tier-S, basket hash dddf9f44db5b323a. Its OWN namespace, deliberately: phase-h-risk
-  // is written by the live publisher, so publishing research numbers there would both present
-  // research as live and be reverted on the publisher's next tick. Reviewable at ?basket=research56.
-  research56: '/data/strategies/phase-h-research56',
+  // Kept so an existing ?basket=research56 link still resolves — it now points at the default.
+  research56: RESEARCH56_SNAPSHOT,
+  // The book the account traded until 2026-09-28T17:23Z. Not a candidate: a RETIRED basket, offered
+  // for comparison. It runs a year longer than the active one (to 2026-09-28 rather than the
+  // 2025-09-09 research seal), so return% across the two is not like for like — PF and maxDD are.
+  // the retired k54 book is no longer at phase-h-risk — that path now carries the ACTIVE basket.
+  // Its last published state lives in the LKG snapshot, which the publisher keeps untouched.
+  k54: '/data/strategies/phase-h-lkg',
 }
+// A selectable basket that is NOT research awaiting a verdict. `true` here means "the account does
+// not trade this", which drives the warning banner and the no-open-positions path.
+const NOT_TRADED: Record<string, boolean> = { prelim80: true, k54: true, research56: false }
 // The eyebrow must NAME the basket on screen. Rendering a candidate under the live basket's name
 // ("SWINGMATE v3 SUPER STACK · 18-ASSET BASKET") would state that the account trades these numbers,
 // which is the one claim a candidate review must never make.
 const CANDIDATE_LABELS: Record<string, string> = {
   prelim80: 'PRELIMINARY 80-CFG CANDIDATE BASKET · RESEARCH · NOT TRADED',
-  research56: 'BLENDER MAX_NET · 56 CFG · 8 FAMILIES · 21 ASSETS · PRELIMINARY RESEARCH · NOT TRADED',
+  // "PRELIMINARY RESEARCH · NOT TRADED" became FALSE at 2026-09-28T17:23:10Z and a stale label on a
+  // customer-facing page is a production bug, not a cosmetic one.
+  research56: 'RESEARCH56 MAX_NET · 56 CFG · 8 FAMILIES · 21 ASSETS · THE ACTIVE BASKET',
+  k54: 'k54_bounded · 70 CFG · 29 ASSETS · RETIRED 2026-09-28 · HISTORICAL COMPARISON',
 }
+const ACTIVE_EYEBROW = 'RESEARCH56 MAX_NET · 56 CFG · 8 FAMILIES · 21 ASSETS · THE ACTIVE BASKET'
+// THE BASKET'S OWN IDENTITY, not a count of some other list. PHASE_H_BASKET is the UNION of the
+// basket and any asset still holding a carried position (22 today, because a BNB long survived the
+// cutover and must stay visible on Live Trading). Counting it here would have told a reader the
+// backtest covers 22 assets when the book covers 21. The eyebrow said "18-ASSET" and the blurb
+// "29 assets" against a 21-asset basket for the same reason: both counted something else.
+const ACTIVE_BASKET_IDENTITY = { cfgs: 56, families: 8, assets: 21, name: 'RESEARCH56 MAX_NET' }
 function statsPath(tier: Tier, base = LIVE_DATA_BASE): string {
   // 2026-05-21 cutover: V1 satoshi-stacker → Phase H Super Stack.
   // See archive/v1-satoshi-stacker-deprecated-2026-05-12/HANDOVER.md.
@@ -221,6 +256,14 @@ export function BacktestingContent() {
   const stats: Stats | null = rerun ? (rerun.stats as unknown as Stats) : pubStats
   const trades: PortfolioTrade[] = rerun ? (rerun.closedTrades as PortfolioTrade[]) : pubTrades
   const allTrades: PortfolioTrade[] = rerun ? (rerun.closedTrades as PortfolioTrade[]) : pubAllTrades
+  // ── CLOSED-ONLY, FOR EVERY REALISED FIGURE (2026-09-29) ─────────────────────────────────────
+  // The publisher now emits genuine simulated OPEN positions as rows with exitTs = null, so the
+  // trade list can show them under its OPEN filter. They must not reach a realised number.
+  // Measured when they first shipped: TOTAL TRADES read 2,839 instead of 2,835 (four open rows
+  // counted as trades) and the period read "-49.6yr" because the last row's null exitTs went
+  // straight into the date arithmetic. Headline count and period take this list; the trade list
+  // and its ALL/OPEN/CLOSED filter still take the full one.
+  const closedTrades = useMemo(() => trades.filter(t => !isOpenTrade(t)), [trades])
   // 2026-06-12: compounding toggle (OFF by default = the canonical compound-off
   // display the producer serves). ON recomputes the headline metrics + equity curve
   // client-side by reinvesting each trade's flat-base return on the running equity.
@@ -228,8 +271,28 @@ export function BacktestingContent() {
   const [loading, setLoading] = useState(true)
   const [updatedAgo, setUpdatedAgo] = useState<string | null>(null)
   const [updatedAgoMins, setUpdatedAgoMins] = useState<number | null>(null)
+  // HOW FAR THE REFERENCE HAS BEEN EVALUATED — read, and re-read, never typed in. The refresh
+  // runs hourly, so the page polls on the same order of cadence; a header that only updated on a
+  // full reload would go stale between refreshes and that is the exact bug this replaces.
+  const [refEvaluatedTo, setRefEvaluatedTo] = useState<number | null>(null)
   const { isAdmin } = useIsAdmin()
   const [frozenAt, setFrozenAt] = useState<string | null>(null)
+
+  useEffect(() => {
+    let dead = false
+    const read = () => fetch(`/api/strategies/phase-h/open-positions?tier=${tier}`,
+                             { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (dead) return
+        const v = Number(j?.reference_evaluated_to_ms)
+        setRefEvaluatedTo(Number.isFinite(v) && v > 0 ? v : null)
+      })
+      .catch(() => { /* absent => the claim is not made; never a wrong date */ })
+    read()
+    const id = setInterval(read, 5 * 60_000)
+    return () => { dead = true; clearInterval(id) }
+  }, [tier])
 
   // 2026-06-01 71-cfg cutover PREVIEW: ?preview=1 points the page at the
   // staging publisher output (/data/strategies/phase-h-preview) so the full
@@ -341,9 +404,16 @@ export function BacktestingContent() {
       // A candidate basket is a STATIC book: its closed history is the whole story. Blending in
       // the LIVE open positions (LIVEREF_BASE) would show the account's real open trades under a
       // basket the account is not running — so candidate mode takes the same path as preview.
-      const staticBasket = previewMode || !!candidateBasket
+      // The ACTIVE basket's published book is static too: it is the permitted pre-seal history and it
+      // stops at 2025-09-09. Blending in live opens would be worse than useless right now —
+      // phase-h-liveref is still produced from the RETIRED basket until the publisher re-lock lands,
+      // so those opens belong to a different book. Treated as static until liveref agrees.
+      const staticBasket = previewMode || !!candidateBasket || dataBase === ACTIVE_DATA_BASE
       const useTwoStore = !wantAdmin && !staticBasket
-      const tradesFetcher = wantAdmin && adminToken
+      // 2026-10-01: the token is OPTIONAL now — a cookie-only admin session still reaches the
+      // admin feed (see fetchAdminPortfolioTrades). Guarding on the token is what blanked the CFG
+      // column.
+      const tradesFetcher = wantAdmin
         ? (open: boolean) => fetchAdminPortfolioTrades(tier, adminToken, { includeOpen: open })
         : (open: boolean) => fetchPortfolioTrades(tier, { includeOpen: open })
 
@@ -381,9 +451,18 @@ export function BacktestingContent() {
             // signal on ANY tier, instead of depending on the aggressive-only shadow bridge.
             ? fetchForwardOpens(tier, LIVEREF_BASE).catch(() => [] as PortfolioTrade[])
             : staticBasket
-              ? fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
-                  .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
-                  .catch(() => [] as PortfolioTrade[])
+              // 2026-10-01: an ADMIN on the static path still has to go through the admin
+              // endpoint. This branch fetched tradesPath(dataBase) unconditionally — the PUBLIC
+              // file, which has cfg_sid stripped server-side by design — so the CFG (ADMIN) column
+              // was blank on every row of the active basket. The one row that did show a sid came
+              // from the liveref merge, which made it look like a per-row data gap rather than the
+              // wrong source. data-admin/strategies/phase-h-risk carries cfg_sid on all 3,186 rows
+              // and /api/admin/portfolio-trades serves it; the customer path is unchanged.
+              ? (wantAdmin
+                  ? tradesFetcher(true).catch(() => [] as PortfolioTrade[])
+                  : fetch(tradesPath(tier, dataBase), { cache: 'no-store' })
+                      .then(r => (r.ok ? (r.json() as Promise<PortfolioTrade[]>) : []))
+                      .catch(() => [] as PortfolioTrade[]))
               : tradesFetcher(true).catch(() => [] as PortfolioTrade[]),
           staticBasket
             ? Promise.resolve({ trades: [] as PortfolioTrade[], lastEventTs: 0 })
@@ -522,7 +601,9 @@ export function BacktestingContent() {
     if (!trades || trades.length === 0) return null
     const startCap = stats?.startCapital || 10000
     // Walk trades chronologically to also compute trade-level max DD.
-    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+    const chrono = [...trades].filter(t => !isOpenTrade(t))
+      .sort((a, b) => a.exitTs - b.exitTs)   // realised series: an open row's null exitTs
+                                             // sorts as NaN and flattens the whole curve
     let eq = startCap
     let peak = startCap
     let maxDDPct = 0
@@ -564,7 +645,9 @@ export function BacktestingContent() {
   const compoundRows = useMemo<CompoundView | null>(() => {
     if (!compound || !trades.length) return null
     const startCap = stats?.startCapital || 10000
-    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+    const chrono = [...trades].filter(t => !isOpenTrade(t))
+      .sort((a, b) => a.exitTs - b.exitTs)   // realised series: an open row's null exitTs
+                                             // sorts as NaN and flattens the whole curve
     const map = new Map<string, { notional: number; pnl: number; capped: boolean }>()
     let eq = startCap
     for (const t of chrono) {
@@ -593,30 +676,36 @@ export function BacktestingContent() {
       )}
       {/* A candidate basket is not the one the account is trading. Say so before any number is
           read, not in a footnote — these figures are in-sample over the selection window. */}
-      {candidateBasket && (
+      {candidateBasket && NOT_TRADED[candidateBasket] && (
         <div style={{
           position: 'sticky', top: 0, zIndex: 50, marginBottom: 16,
           padding: '10px 16px', background: '#422006', color: '#fde68a',
           border: '1px solid #ca8a04', borderRadius: 8, fontSize: 13,
           fontWeight: 600, textAlign: 'center', letterSpacing: '0.02em',
         }}>
-          ⚠ CANDIDATE BASKET — NOT ACTIVATED. Your account is not trading this.
+          ⚠ {candidateBasket === 'k54'
+            ? 'RETIRED BASKET — the account stopped trading this on 28 Sep 2026. Shown for comparison.'
+            : 'CANDIDATE BASKET — NOT ACTIVATED. Your account is not trading this.'}
           {stats?.cfgCount ? ` ${stats.cfgCount} cfgs · ${stats.tierSCount} Tier-S.` : ''}
-          {' '}In-sample over the selection window (to 2025-09-09), no open positions shown.
+          {' '}No open positions shown.
         </div>
       )}
+      {/* Chris marked the large green banner that used to sit here for removal. The period and
+          the simulated-vs-live distinction still have to be stated — a reader cannot infer either
+          — so they live in the meta line under the title, where the dates already are. The
+          methodology behind them is in the info view. */}
       {/* Header */}
       <div className="bt-header">
         <div className="bt-eyebrow">{candidateBasket
           ? (CANDIDATE_LABELS[candidateBasket] ?? 'CANDIDATE BASKET · RESEARCH · NOT TRADED')
-          : previewMode ? 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET · PREVIEW' : 'SWINGMATE v3 SUPER STACK · 18-ASSET BASKET'}</div>
+          : previewMode ? `${ACTIVE_EYEBROW} · PREVIEW` : ACTIVE_EYEBROW}</div>
         <h1 className="bt-title">
           {isPt ? <>Performance <span className="bt-title-gold">verificada.</span></> : <>Verified <span className="bt-title-gold">performance.</span></>}
         </h1>
         <p className="bt-blurb">
           {isPt
-            ? <>Backtest verificado da super-stack sistemática multi-ativo em {PHASE_H_BASKET.length} ativos. <strong>Os números abaixo refletem o tier selecionado em uma conta de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×/9×).</strong> Inclui custos modelados de funding rate Bitget (~2% do PnL bruto).</>
-            : <>Verified backtest of the systematic multi-asset super stack across {PHASE_H_BASKET.length} assets. <strong>Numbers reflect the selected tier on a $10,000 account with Bitget cross-margin leverage (1×/3×/6×/9×).</strong> Includes modelled Bitget funding rate cost (~2% of gross PnL).</>}
+            ? <>Backtest verificado de {ACTIVE_BASKET_IDENTITY.cfgs} CFGs de pesquisa em {ACTIVE_BASKET_IDENTITY.families} famílias e {ACTIVE_BASKET_IDENTITY.assets} ativos — a cesta que a conta negocia. <strong>Os números abaixo refletem o tier selecionado em uma conta simulada de $10.000 com alavancagem cross-margin Bitget (1×/3×/6×/9×) — não é o saldo desta conta.</strong> Inclui custos modelados de funding rate Bitget.</>
+            : <>Verified backtest of {ACTIVE_BASKET_IDENTITY.cfgs} research CFGs across {ACTIVE_BASKET_IDENTITY.families} families and {ACTIVE_BASKET_IDENTITY.assets} assets — the basket this account trades. <strong>Numbers reflect the selected tier on a simulated $10,000 account with Bitget cross-margin leverage (1×/3×/6×/9×) — not this account&apos;s balance.</strong> Includes modelled Bitget funding rate cost.</>}
         </p>
         <div className="bt-meta">
           <span>{trades.length > 0 ? new Date(trades[0].entryTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
@@ -630,7 +719,30 @@ export function BacktestingContent() {
             return maxTs > 0 ? new Date(maxTs).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
           })()}</span>
           <span>·</span>
-          <span>{trades.length.toLocaleString()} trades</span>
+          <span>{closedTrades.length.toLocaleString()} trades</span>
+          {/* THE ENDPOINT, NAMED. Chris: "Record the exact endpoint on the page." The dates either
+              side of this line are the first and last TRADE, which is not the same thing as where
+              the evaluation stopped: the run is bounded by a signed data watermark, and the last
+              trade can fall days short of it. Saying only "23 Sept 2026" would let a reader take
+              the book as current when the tape behind it ends at a fixed, stated instant. */}
+          {/* 2026-09-30 READ, NEVER HARDCODED. This was literally the string "2026-09-22 17:45
+              UTC", typed in on the day the reference happened to stop there. The reference now
+              advances hourly, so a fixed date is a lie with a timestamp on it — the page said
+              22 Sept while the trade list underneath showed 30 Sept. It comes from the endpoint
+              that knows: /api/strategies/phase-h/open-positions returns
+              reference_evaluated_to_ms, which is the horizon the book was actually evaluated to
+              (not the last exit — a quiet night with no exits is not staleness). Absent => the
+              claim is simply not made, rather than made wrongly. */}
+          {refEvaluatedTo ? (
+            <>
+              <span>·</span>
+              <span title="How far the reference has actually been evaluated. Trades after this
+                           instant are not in the book yet; it advances as bars complete.">
+                {isPt ? 'avaliado até' : 'evaluated to'}{' '}
+                {new Date(refEvaluatedTo).toISOString().slice(0, 16).replace('T', ' ')} UTC
+              </span>
+            </>
+          ) : null}
           {updatedAgo ? (() => {
             // Freshness banding. Publisher cron runs hourly + takes ~15 min,
             // so portfolio-stats.json mtime cycles 0-60 min by design. The old
@@ -715,7 +827,7 @@ export function BacktestingContent() {
         <MetricCard label={isPt ? 'Drawdown Máximo' : 'Max Drawdown'}
           value={derivedStats ? `${derivedStats.maxDD.toFixed(2)}%` : '—'} negative />
         <MetricCard label={isPt ? 'Total de Trades' : 'Total Trades'}
-          value={trades.length > 0 ? trades.length.toLocaleString() : '—'} />
+          value={closedTrades.length > 0 ? closedTrades.length.toLocaleString() : '—'} />
         <MetricCard label={isPt ? 'Taxa de Acerto' : 'Win Rate'}
           value={derivedStats ? fmtNum(derivedStats.winRate, 2, '%') : '—'} positive />
         <MetricCard label={isPt ? 'Fator de Lucro' : 'Profit Factor'}
@@ -751,8 +863,10 @@ export function BacktestingContent() {
           ) : null}
           {isPt ? `Modo ${TIER_LABELS[tier].pt}` : `${TIER_LABELS[tier].en} tier`} ·
           {' '}{TIER_LABELS[tier].mult} ·
-          {' '}{isPt ? `Cesta de ${PHASE_H_BASKET.length} ativos` : `${PHASE_H_BASKET.length}-asset basket`} ·
-          {' '}{trades.length > 0 ? `${(((trades[trades.length - 1].exitTs - trades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
+          {' '}{isPt
+            ? `Cesta de ${ACTIVE_BASKET_IDENTITY.assets} ativos · ${ACTIVE_BASKET_IDENTITY.cfgs} CFG`
+            : `${ACTIVE_BASKET_IDENTITY.assets}-asset basket · ${ACTIVE_BASKET_IDENTITY.cfgs} CFG`} ·
+          {' '}{closedTrades.length > 0 ? `${(((closedTrades[closedTrades.length - 1].exitTs - closedTrades[0].entryTs) / 86400000 / 365)).toFixed(1)}yr backtest` : ''}
         </div>
       </div>
 
@@ -896,7 +1010,9 @@ function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: 
     // could be summing across non-chronological PnL. Sorting by exitTs
     // means each sample point reflects total realised PnL up to that
     // wall-clock moment, which is what an equity curve should show.
-    const chrono = [...trades].sort((a, b) => a.exitTs - b.exitTs)
+    const chrono = [...trades].filter(t => !isOpenTrade(t))
+      .sort((a, b) => a.exitTs - b.exitTs)   // realised series: an open row's null exitTs
+                                             // sorts as NaN and flattens the whole curve
 
     // Sample density. Bumped 250 → 1500 (2026-05-26) so the curve no longer
     // skips over short-duration drawdowns and rallies — at 250 samples on a
@@ -907,7 +1023,17 @@ function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: 
     let eq = startCap
     const SAMPLE = 1500
     const step = Math.max(1, Math.floor(chrono.length / SAMPLE))
-    const strategy: EquityPoint[] = [{ ts: chrono[0].entryTs, value: startCap, month: '' }]
+    // 2026-09-30 THE CURVE STARTS AT THE WINDOW, NOT AT THE FIRST TRADE'S ENTRY.
+    // This anchored on `chrono[0].entryTs`. A trade opened in late August and closed in September
+    // is the first CLOSE in a 1 September window, so the line began in AUGUST — before the window
+    // the user asked for — and its whole P&L landed on the first sample, putting the strategy
+    // below $10,000 by the time the chosen start date arrived. The benchmark beside it starts at
+    // the window, so the two were not the same race.
+    // The window start is taken from the rerun's own identity when there is one, and from the
+    // first trade otherwise (the published full-history view, where they coincide).
+    const winFrom = rerun?.identity?.range?.from ? Date.parse(rerun.identity.range.from) : null
+    const anchorTs = (winFrom && Number.isFinite(winFrom)) ? winFrom : chrono[0].entryTs
+    const strategy: EquityPoint[] = [{ ts: anchorTs, value: startCap, month: '' }]
     for (let i = 0; i < chrono.length; i++) {
       // 2026-06-12: compound ON = the engine's Smart Sizing ($25k/lane-capped,
       // sub-linear in equity — matches derivedStats); OFF = linear fixed-bet.
@@ -956,6 +1082,19 @@ function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: 
         month: '',
       }))
     }
+    // ── BOTH SERIES SPAN THE REQUESTED WINDOW ───────────────────────────────────────────────
+    // The strategy's last sample is its last trade's exit, which can fall days short of the
+    // chosen end date; the benchmark's last point is its last daily close. Two lines ending at
+    // different x on one chart is not a comparison. Equity genuinely does not move without a
+    // trade, so carrying the strategy flat to the window end states a fact rather than inventing
+    // one. The benchmark is NOT extended — a price that has not closed yet must not be drawn —
+    // and the legend says where its data actually stops.
+    const winTo = rerun?.identity?.range?.to ? Date.parse(rerun.identity.range.to) : null
+    const lastPt = strategy.length ? strategy[strategy.length - 1] : undefined
+    const lastTs = lastPt?.ts
+    if (winTo && Number.isFinite(winTo) && lastPt && typeof lastTs === 'number' && winTo > lastTs) {
+      strategy.push({ ts: winTo, value: lastPt.value, month: '' })
+    }
     return { strategy, bhPoints, bhExact }
   }, [trades, stats?.startCapital, compound, rerun])
 
@@ -979,7 +1118,7 @@ function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: 
           onClick={() => setShow(s => ({ ...s, strategy: !s.strategy }))}
           aria-pressed={show.strategy}
         >
-          <span className="bt-legend-swatch" style={{ background: 'var(--gold)' }} /> Satoshi Stacker
+          <span className="bt-legend-swatch" style={{ background: 'var(--gold)' }} /> RESEARCH56 basket
         </button>
         {hasBh ? (
           <button
@@ -993,6 +1132,17 @@ function EquityCurveSection({ trades, stats, isPt, compound, rerun }: { trades: 
               <span style={{ marginLeft: 6, fontSize: 9.5, opacity: 0.75 }}
                     title={`${(rerun!.btcBuyAndHold as any).points} daily closes across the window · ${(rerun!.btcBuyAndHold as any).basis}`}>
                 · daily close, {(rerun!.btcBuyAndHold as any).points} pts
+                {(() => {
+                  // WHERE THE BENCHMARK ACTUALLY ENDS. It is drawn only where BTC has closed, so
+                  // on a window running to today it stops at the last completed daily bar. Saying
+                  // so is the difference between a short line and an unexplained one.
+                  const b = rerun!.btcBuyAndHold as any
+                  const t = b?.toTs
+                  const miss = b?.missing_days_in_window
+                  if (!t) return null
+                  const d = new Date(t).toISOString().slice(0, 10)
+                  return <> · to {d}{miss ? ` (${miss} day(s) of the window not yet closed)` : ''}</>
+                })()}
               </span>
             ) : (
               <span style={{ marginLeft: 6, fontSize: 9.5, opacity: 0.6 }}
@@ -1226,7 +1376,7 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
           {strategyHoverVal != null && (
             <div className="bt-eq-tooltip-row">
               <span className="bt-eq-tooltip-swatch bt-eq-tooltip-swatch-solid" />
-              <span className="bt-eq-tooltip-label">Satoshi Stacker</span>
+              <span className="bt-eq-tooltip-label">RESEARCH56 basket</span>
               <span className="bt-eq-tooltip-value">{fmtFull(strategyHoverVal)}</span>
             </div>
           )}
@@ -1245,7 +1395,8 @@ function DualEquityChart({ strategy, bh, scale, width, height, show }: {
 
 // ─── Per-asset breakdown ────────────────────────────────────────────────────
 
-type SaRow = { sid: string; sa_trades: number; sa_winRate: number; sa_profitFactor: number
+type SaRow = { sid: string; sa_trades: number; sa_winRate: number; sa_profitFactor: number | null
+              sa_profitFactorStatus?: string | null
               sa_netUsd: number; seatRate: number; lost: number }
 
 function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: Tier; isPt: boolean }) {
@@ -1258,20 +1409,28 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
   // seated PF 0.88 on this page, standalone PF 2.536 on +$6,132, seating 38.2% of its signals.
   // Joined CLIENT-SIDE — risk_sizing_canonical regenerates the risk surface on every re-lock and
   // would silently drop a merged field.
+  // 2026-09-29 TIER-AWARE. The published file now carries rowsByTier, because the SEATED columns
+  // beside these change with the tier and the old aggressive-only file therefore showed a
+  // DIFFERENT policy on the other three — silently, in adjacent cells. `rows` is kept as the
+  // aggressive fallback so an older published file still resolves rather than blanking.
   const [sa, setSa] = useState<Record<string, SaRow>>({})
+  const [saBasis, setSaBasis] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     fetch('/data/cfg-quality-leaderboard.json', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        if (cancelled || !d?.rows) return
+        if (cancelled || !d) return
+        const list: SaRow[] | undefined = d.rowsByTier?.[tier] ?? d.rows
+        if (!list) return
         const m: Record<string, SaRow> = {}
-        for (const r of d.rows as SaRow[]) m[r.sid] = r
+        for (const r of list) m[r.sid] = r
         setSa(m)
+        setSaBasis(typeof d.period === 'string' ? d.period : null)
       })
       .catch(() => {})   // absent file => SA cells render "—"; never breaks the page
     return () => { cancelled = true }
-  }, [])
+  }, [tier])
   const [expandedAsset, setExpandedAsset] = useState<string | null>(null)
   useEffect(() => { setExpandedAsset(null) }, [tier])
   return (
@@ -1281,7 +1440,7 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
         <span className="bt-tier-tag">{tier.toUpperCase()} TIER</span>
       </div>
       <div className="bt-card-sub">
-        Satoshi Stacker · single $10,000 account · 1× notional/trade ({tier} tier)
+        RESEARCH56 basket · single $10,000 account · 1× notional/trade ({tier} tier)
       </div>
       <div className="table-scroll">
         <table>
@@ -1389,7 +1548,7 @@ function PerAssetBreakdown({ stats, tier, isPt }: { stats: Stats | null; tier: T
                     <tr className="bt-cfg-row">
                       <td colSpan={12} style={{ paddingLeft: 26, fontSize: '0.72em', opacity: 0.6 }}>
                         <strong>Left of the divider — SEATED</strong> (locked risk-sized, after lane competition): {cfgs.length} cfgs · {cfgs.reduce((s, [, c]) => s + (c.totalTrades || 0), 0).toLocaleString()} trades, and these <strong>sum to the {asset.replace('USDT', '')} row above</strong> by construction.
-                        <br /><strong>Right of the divider — STANDALONE</strong> (locked risk-sized, every signal the cfg fires, no lane competition). These <strong>do NOT sum to the parent and are not meant to</strong> — they count trades the book never seated. Standalone judges the CFG; seated measures the BOOK. <strong>GAP</strong> is what lane competition cost.
+                        <br /><strong>Right of the divider — STANDALONE</strong> (same risk sizing, same 0.15%/120m limit entry, every signal the cfg fires with no lane competition and no per-asset gate). These <strong>do NOT sum to the parent and are not meant to</strong> — they count trades the book never seated. Standalone judges the CFG; seated measures the BOOK. <strong>GAP</strong> is what lane competition cost.{saBasis ? ` Both sides: ${saBasis}.` : ''}
                       </td>
                     </tr>
                   )}
@@ -1995,6 +2154,11 @@ function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compo
   // asset + entry bar otherwise, so an open row in the main list is as complete as the dedicated
   // open-positions table below it. A failed read leaves the extra columns empty, never zeroed.
   const [canonOpen, setCanonOpen] = useState<Map<string, CanonOpen>>(new Map())
+  const [refAsOf, setRefAsOf] = useState<number | null>(null)
+  // The reference is "current" while its last evaluated bar is inside the last daily bar plus a
+  // settle margin — the basket's slowest timeframe is 1d. null = not yet known (no mark is
+  // painted until it is; a mark drawn while the answer is still loading is a guess).
+  const refStale: boolean | null = refAsOf == null ? null : (Date.now() - refAsOf) > 26 * 3_600_000
   useEffect(() => {
     let dead = false
     fetch(`/api/strategies/phase-h/open-positions?tier=${tier}`, { cache: 'no-store' })
@@ -2005,9 +2169,11 @@ function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compo
         for (const p of j.positions as CanonOpen[]) {
           if (p.cfg_sid) m.set(`sid:${p.cfg_sid}`, p)
           if (p.asset && p.entryTs) m.set(`ae:${p.asset}|${p.entryTs}`, p)
+          if (p.entryActionTs) m.set(`ae:${p.asset}|${p.entryActionTs}`, p)
           if (p.symbol) m.set(`sym:${p.symbol}|${p.dir}`, p)
         }
         setCanonOpen(m)
+        setRefAsOf(Number.isFinite(j.reference_evaluated_to_ms) ? j.reference_evaluated_to_ms : null)
       })
       .catch(() => { /* the extra columns stay empty; the list still renders */ })
     return () => { dead = true }
@@ -2038,14 +2204,30 @@ function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compo
   // as an open row (the customer/shadow path) is not duplicated.
   const withOpens = useMemo(() => {
     if (canonOpen.size === 0) return trades
+    // 2026-09-29 DEDUP ON IDENTITY, NEVER ON THE STAMP. This keyed on
+    // `asset|entryTs`, and the two sides hold two different conventions: the canonical book
+    // records the BAR OPEN, the publisher's own row the action time (bar open + tf). Measured:
+    // NEAR +1d, LINK +12h, RUNE +6h. So the keys never matched, `already` was always empty, and
+    // every reference position was appended a second time — the page showed twice the open book.
+    // A cfg holds at most one open position (allocator.asset_already_open), and at most one per
+    // asset, so cfg_sid — or asset+direction where the public feed has stripped cfg_sid — IS the
+    // identity. No timestamp is involved and neither convention can break it.
+    const idOf = (sid: unknown, asset: string, dir: number) =>
+      (sid ? `sid:${sid}` : `ad:${asset}|${dir > 0 ? 1 : -1}`)
     const already = new Set(
-      trades.filter(isOpenTrade).map(t => `${canonicalAsset(t.symbol)}|${t.entryTs}`))
+      trades.filter(isOpenTrade)
+        .map(t => idOf((t as any).cfg_sid, canonicalAsset(t.symbol), t.dir)))
+    // …and the asset-level key too, because the public feed strips cfg_sid while the canonical
+    // book keeps it: without this the same position carries two different ids across the join.
+    const alreadyAsset = new Set(
+      trades.filter(isOpenTrade).map(t => `ad:${canonicalAsset(t.symbol)}|${t.dir > 0 ? 1 : -1}`))
     const extra: PortfolioTrade[] = []
     const seen = new Set<string>()
     for (const p of canonOpen.values()) {
-      const k = `${p.asset}|${p.entryTs}`
-      if (!p.entryTs || !p.entryPx || already.has(k) || seen.has(k)) continue
-      seen.add(k)
+      const k = idOf(p.cfg_sid, p.asset, p.dir)
+      const ka = `ad:${p.asset}|${p.dir > 0 ? 1 : -1}`
+      if (!p.entryTs || !p.entryPx || already.has(k) || alreadyAsset.has(ka) || seen.has(ka)) continue
+      seen.add(ka)
       extra.push({
         dir: (p.dir > 0 ? 1 : -1) as 1 | -1,
         // An OPEN position has no realised P&L and no exit. Both are left at zero HERE only
@@ -2216,7 +2398,14 @@ function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compo
               // whenever the WS frame arrives. The strategy IS still holding
               // these — the row pulses to signal "active position" so the
               // user doesn't mistake them for closed-and-realized trades.
-              const livePx = open ? priceBySymbol.get(tr.symbol) : undefined
+              // 2026-09-29 NO LIVE MARK ON A BOOK THAT HAS NOT REACHED IT. The reference book
+              // stops at its last evaluated bar; pricing its open rows off the live ticker
+              // reports an unrealised P&L for bars the book has never seen, and the position may
+              // have exited on one of them. RUNE: still open at the book's last bar (2026-09-22
+              // 17:45Z, close 0.6612, stop 0.66683521 untouched), painted with a 0.7805 live
+              // mark — a stop first touched 2026-09-26 03:07Z, four days beyond the book.
+              // Self-clearing: once the reference follows completed bars this is live again.
+              const livePx = (open && refStale === false) ? priceBySymbol.get(tr.symbol) : undefined
               // canonical open-book join: lane, Tier-S and the live stop for OPEN rows only
               const co = open ? canonFor(tr) : undefined
               const liveReturnPct = (open && livePx && tr.entryPx > 0)
@@ -2322,6 +2511,7 @@ function TradesTable({ trades, loading, isPt, tier, showCfgColumn = false, compo
 type CanonOpen = {
   open: boolean; cfg_sid: string | null; asset: string; symbol: string; tf: string | null
   dir: number; side: string; entryTs: number | null; entryPx: number | null
+  entryActionTs?: number | null; entryStampConvention?: string
   mark: number | null; markSource: string; notional: number | null; units: number | null
   lane: number | null; laneSource: string; tierS: boolean | null; tierSSource: string
   stop: number | null; initialSl: number | null; stopMovedFromInitial: boolean | null
@@ -2341,7 +2531,8 @@ function fmtAge(ms: number | null): string {
 function OpenPositionsSection({ tier, rerun }: { tier: Tier; rerun?: RerunResult | null }) {
   const [rows, setRows] = useState<CanonOpen[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [meta, setMeta] = useState<{ updated_at: string | null; n_lanes: number | null } | null>(null)
+  const [meta, setMeta] = useState<{ updated_at: string | null; n_lanes: number | null
+                                     evaluatedTo: number | null } | null>(null)
   const tickers = usePublicTickers()
 
   const priceBySymbol = useMemo(() => {
@@ -2373,19 +2564,30 @@ function OpenPositionsSection({ tier, rerun }: { tier: Tier; rerun?: RerunResult
       .then(j => {
         if (cancelled) return
         setRows(Array.isArray(j?.positions) ? j.positions : [])
-        setMeta({ updated_at: j?.updated_at ?? null, n_lanes: j?.n_lanes ?? null })
+        setMeta({ updated_at: j?.updated_at ?? null, n_lanes: j?.n_lanes ?? null,
+                  evaluatedTo: Number.isFinite(j?.reference_evaluated_to_ms)
+                    ? j.reference_evaluated_to_ms : null })
       })
       .catch((e: Error) => { if (!cancelled) setErr(e.message || 'could not load the open book') })
     return () => { cancelled = true }
   }, [tier, rerunEnded])
 
-  // Price in the browser, from the same ticker feed the closed table uses for its OPEN rows.
+  // 2026-09-29 A LIVE MARK ONLY WHILE THE BOOK REACHES IT. Same rule as the merged list above:
+  // these are REFERENCE positions, and the reference stops at its last evaluated bar. Marking
+  // them off the live ticker reports an unrealised P&L over bars the book has never seen — and
+  // the position may have exited on one of them. RUNE's short was open at the book's last bar
+  // (2026-09-22 17:45Z, close 0.6612) with its 0.66683521 stop untouched inside that window; the
+  // card showed a 0.7805 live mark, while the stop was in fact first touched on 2026-09-26
+  // 03:07Z. The honest answer is "not priced, the book ends here", never a number.
+  const refStale: boolean | null = meta?.evaluatedTo == null
+    ? null : (Date.now() - meta.evaluatedTo) > 26 * 3_600_000
   const priced = useMemo(() => (rows || []).map(p => {
-    const mark = priceBySymbol.get(p.symbol) ?? priceBySymbol.get(p.asset) ?? null
+    const mark = refStale === false
+      ? (priceBySymbol.get(p.symbol) ?? priceBySymbol.get(p.asset) ?? null) : null
     const returnPct = mark != null && p.entryPx ? ((mark - p.entryPx) / p.entryPx) * 100 * (p.dir || 1) : null
     const unrealised = returnPct != null && p.notional != null ? p.notional * (returnPct / 100) : null
     return { ...p, mark, returnPct, unrealised }
-  }), [rows, priceBySymbol])
+  }), [rows, priceBySymbol, refStale])
 
   const pricedRows = priced.filter(p => p.unrealised != null)
   const unrealisedTotal = pricedRows.length
@@ -2434,8 +2636,17 @@ function OpenPositionsSection({ tier, rerun }: { tier: Tier; rerun?: RerunResult
         <div className="bt-open-sub">
           held at the terminal timestamp
           {meta?.n_lanes ? ` · ${meta.n_lanes} lanes` : ''}
-          {meta?.updated_at ? ` · book ${new Date(meta.updated_at).toISOString().slice(0, 16).replace('T', ' ')}Z` : ''}
+          {meta?.evaluatedTo
+            ? ` · reference evaluated to ${new Date(meta.evaluatedTo).toISOString().slice(0, 16).replace('T', ' ')}Z`
+            : ''}
         </div>
+        {refStale ? (
+          <div className="bt-open-sub" style={{ color: '#f0b429' }}>
+            These positions are not marked to the live price. The reference book ends at the
+            timestamp above, so a mark taken now would cover bars it has never evaluated — the
+            position may already have exited on one of them.
+          </div>
+        ) : null}
       </div>
       <div className="table-scroll">
         <table className="bt-open-table">
@@ -2506,7 +2717,10 @@ function OpenPositionsSection({ tier, rerun }: { tier: Tier; rerun?: RerunResult
         <div className="bt-open-note">
           Unrealised, and reported separately: it is <strong>not</strong> included in the realised
           P&amp;L, return, win rate, profit factor or drawdown above, and no exit is imputed for an
-          open position. {pricedRows.length}/{priced.length} priced from the live feed
+          open position. {refStale
+            ? 'None are priced: the reference book has not reached the present, and a live mark on '
+              + 'it would be an invented figure rather than a measured one.'
+            : `${pricedRows.length}/${priced.length} priced from the live feed`}
           {priced.length - pricedRows.length > 0
             ? ` · ${priced.length - pricedRows.length} unpriced, shown as "—" rather than $0`
             : ''}. These strategies carry no fixed take-profit, so Target reads "none" — exits are

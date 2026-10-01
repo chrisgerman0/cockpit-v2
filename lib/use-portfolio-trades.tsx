@@ -353,9 +353,22 @@ export async function fetchForwardOpens(tier: Tier, base: string = LIVEREF_BASE)
  */
 const adminCache = new Map<Tier, CacheEntry>()
 
+/** ISO mtime of the FROZEN half of the admin feed, per tier. See SSB5 note below. */
+const adminFrozenAt = new Map<Tier, string | null>()
+export function adminFrozenAtFor(tier: Tier): string | null {
+  return adminFrozenAt.get(tier) ?? null
+}
+
 export async function fetchAdminPortfolioTrades(
   tier: Tier,
-  token: string,
+  // 2026-10-01: OPTIONAL. getAccessToken() returns null on a cookie-only session, and the caller
+  // guarded on `wantAdmin && adminToken` — so an admin with a valid session but no bearer token
+  // silently fell through to the PUBLIC feed, which has cfg_sid stripped, and the CFG (ADMIN)
+  // column rendered '—' on every row. /api/admin/portfolio-trades authenticates the cookie
+  // perfectly well: verified 2026-10-01, it returned count 3187 with cfg_sid on every row from a
+  // plain browser request carrying no Authorization header at all. Send the header when we have
+  // one, rely on the same-origin cookie when we do not.
+  token?: string | null,
   opts: { includeOpen?: boolean } = {},
 ): Promise<PortfolioTrade[]> {
   const cached = adminCache.get(tier)
@@ -363,13 +376,23 @@ export async function fetchAdminPortfolioTrades(
   if (cached && Date.now() - cached.fetchedAt < CACHE_MS) {
     normalized = cached.raw
   } else {
-    const res = await fetch(`/api/admin/portfolio-trades?tier=${tier}`, {
+    // 2026-10-01: `includeOpen` was accepted and then never sent. The route defaults to CLOSED
+    // ONLY, so the open positions the caller explicitly asked for were dropped on the way out.
+    const qs = `tier=${tier}${opts.includeOpen ? '&includeOpen=1' : ''}`
+    const res = await fetch(`/api/admin/portfolio-trades?${qs}`, {
       cache: 'no-store',
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'same-origin',
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
     })
     if (!res.ok) throw new Error(`admin portfolio-trades fetch failed: ${res.status}`)
-    const j = await res.json() as { trades: PortfolioTrade[] }
+    const j = await res.json() as { trades: PortfolioTrade[]; frozenAt?: string | null }
     normalized = j.trades.map(t => normalizeTrade(t, tier))
+    // 2026-09-07 SSB5: remember how old the FROZEN half is. The admin feed is
+    // frozen history (phase-h-risk, written only on a publisher validation PASS)
+    // plus a live tail. When the publisher halted on 2026-09-06 the frozen half
+    // stopped at 12:05Z and stayed there for 19h18m while the tail kept moving,
+    // and nothing on the page said so — a stale book looked current.
+    adminFrozenAt.set(tier, j.frozenAt ?? null)
     adminCache.set(tier, { fetchedAt: Date.now(), raw: normalized })
   }
   return opts.includeOpen ? normalized : normalized.filter(t => !isEodMarker(t))
