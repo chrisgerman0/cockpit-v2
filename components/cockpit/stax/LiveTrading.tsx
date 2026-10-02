@@ -80,11 +80,36 @@ export function LiveTradingContent() {
   if (state.status === 'loading') return <LiveTradingView data={EMPTY_LIVE_DATA} />
 
   if (state.status === 'unauthenticated') return <CenterMessage title="Sign in to see live trading" body="Log in at staxs.ai to load your trading data." action={{ label: 'Go to login', href: 'https://staxs.ai/login' }} />
+  // NOT the same thing as being signed out — see useLiveTradingData. Saying
+  // "sign in" here is what hid a live book behind a login prompt for four
+  // mornings. The hook keeps retrying; the user is told the truth meanwhile.
+  if (state.status === 'auth-unavailable') return <CenterMessage title="Can’t reach the sign-in service" body={`Your session could not be checked (${state.reason}). You have not been signed out — this page keeps retrying and will load your positions as soon as it gets through.`} />
   if (state.status === 'no-keys') return <CenterMessage title="Connect your Bitget account" body="Add API keys in Settings to see live positions." action={{ label: 'Connect API keys', href: '/onboarding' }} />
   if (state.status === 'no-bot') return <CenterMessage title="Bot not activated yet" body="Run the activation wizard to arm the bot." action={{ label: 'Open wizard', href: '/?setup=bot' }} />
   if (state.status === 'error') return <CenterMessage title="Couldn’t load live trading" body={state.message} />
 
-  return <LiveTradingView data={state.data} />
+  return (
+    <>
+      {state.data.stale ? <StaleBanner stale={state.data.stale} /> : null}
+      <LiveTradingView data={state.data} />
+    </>
+  )
+}
+
+/** Held numbers, shown as held. Presenting the last good book as if it were
+ *  current is the same failure as showing zeros — both tell the user something
+ *  that is not true. */
+function StaleBanner({ stale }: { stale: { sinceMs: number; reason: string } }) {
+  const mins = Math.max(1, Math.round((Date.now() - stale.sinceMs) / 60000))
+  return (
+    <div
+      role="status"
+      className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+    >
+      <strong className="font-semibold">Showing last known data</strong>
+      {` — ${stale.reason}. Last confirmed ${mins} min ago; retrying every 30s.`}
+    </div>
+  )
 }
 
 function LiveTradingView({ data }: { data: LiveTradingData }) {
@@ -234,7 +259,12 @@ function StatsRow({ totals, unrealizedPnl, openCount }: { totals: LiveTradingDat
       <Stat icon={Icons.TrendUp} label="Win Rate"       value={totals.closedCount === 0 ? '—' : `${totals.winRate}%`} sub={`${totals.wins} wins · ${totals.losses} losses`} />
       <Stat icon={Icons.TrendUp} label="Unrealized PnL" value={openCount === 0 ? '$0' : fmtUsdSign(unrealizedPnl)} sub={openCount === 0 ? 'No open position' : `${openCount} ${openCount === 1 ? 'leg' : 'legs'} open`} valueClass={openCount === 0 ? '' : unrealizedClass} />
       <Stat icon={Icons.Check}   label="Realized PnL"   value={totals.closedCount === 0 ? '$0' : fmtUsdSign(totals.realizedPnl)} sub={totals.closedCount === 0 ? 'No closed trades yet' : `Best ${fmtUsdSign(totals.bestTrade)} · Worst ${fmtUsdSign(totals.worstTrade)}`} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
-      <Stat icon={Icons.Star}    label="Total Return"   value={totals.closedCount === 0 ? '—' : fmtPctSign(totals.realizedPct)} sub="Since activation" valueClass={totals.closedCount === 0 ? '' : realizedClass} />
+      <Stat icon={Icons.Star}    label="Total Return"   value={totals.closedCount === 0 ? '—' : fmtPctSign(totals.realizedPct)} sub={/* NOT "Since activation" — activation belongs to the strategy this account replaced.
+              Every total on this page is scoped to the account epoch, and the label has to say
+              which period the number covers or it contradicts the figure above it. */
+             totals.epochAvailable && totals.epochOpensAt
+               ? `Since ${String(totals.epochOpensAt).slice(0, 10)}`
+               : 'All time'} valueClass={totals.closedCount === 0 ? '' : realizedClass} />
     </div>
   )
 }
@@ -718,6 +748,53 @@ function msToBarClose(tf: string | undefined): number | null {
   return (Math.floor(now / tfMs) + 1) * tfMs - now
 }
 
+/**
+ * TRUE when the engine tracks this position but holds NO stop level for it.
+ *
+ * 2026-10-02 (Chris): "if there is no stop, have an alert sent to me on my telegram and have a
+ * label on the trade itself... exactly where the pulse would be." Before this, a position with
+ * no stop rendered the same em dash as a position whose ticker had simply dropped a beat — the
+ * most dangerous state on the book was indistinguishable from a cosmetic one. The live LTC long
+ * sat like that for a day.
+ *
+ * Deliberately NOT "mark is missing". A ticker dropout is transient and blanks the meter
+ * harmlessly; this is about the STOP being absent from engine state, which means no intra-bar
+ * SL watch and nothing armed from state. Only claimed when cfgDims is present — i.e. the engine
+ * really is tracking this cfg and really has no level, rather than us simply not knowing.
+ */
+function hasNoStop(cfgDims?: CfgDims | null): boolean {
+  if (!cfgDims) return false
+  const sl = cfgDims.sl_price
+  return sl == null || !Number.isFinite(sl) || sl <= 0
+}
+
+/** The label that replaces the Pulse meter when a position is running without a stop. */
+function NoStopCell() {
+  return (
+    <div
+      className="lt-sl-cell"
+      title={'This position has NO stop loss level in the engine. Nothing is armed from state: '
+           + 'no intra-bar stop watch and no trailing exit. Chris has been alerted on Telegram.'}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+    >
+      <span
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '2px 8px', borderRadius: 4, fontWeight: 700, letterSpacing: '0.04em',
+          fontSize: '0.78rem', whiteSpace: 'nowrap',
+          color: 'var(--neg)', background: 'rgba(var(--neg-rgb), 0.12)',
+          border: '1px solid rgba(var(--neg-rgb), 0.55)',
+        }}
+      >
+        <span aria-hidden="true">⚠</span> NO STOP LOSS
+      </span>
+      <span style={{ color: 'var(--muted)', fontSize: '0.78rem' }}>
+        unprotected — no trail, no stop watch
+      </span>
+    </div>
+  )
+}
+
 function CfgProgressCell({
   cfgDims, entry, mark, side, entryTs,
 }: {
@@ -1065,7 +1142,9 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
                   <td className={'num ' + (r.pnl > 0 ? 'pos-text' : 'neg-text')}>{r.pnlPct.toFixed(2)}%</td>
                   <td>
                     {r.open
-                      ? (r.cfgDims
+                      ? (hasNoStop(r.cfgDims)
+                        ? <NoStopCell />
+                        : r.cfgDims
                           ? <CfgProgressCell
                               cfgDims={r.cfgDims}
                               entry={r.entryPx}
@@ -1154,7 +1233,9 @@ function LiveTradesTable({ title, rows, emptyText, pageSize = 50, lastColLabel =
 
               <div className="lt-card-last">
                 {r.open
-                  ? (r.cfgDims
+                  ? (hasNoStop(r.cfgDims)
+                    ? <NoStopCell />
+                    : r.cfgDims
                       ? <CfgProgressCell
                           cfgDims={r.cfgDims}
                           entry={r.entryPx}
