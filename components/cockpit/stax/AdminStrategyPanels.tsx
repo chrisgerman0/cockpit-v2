@@ -2614,6 +2614,14 @@ export function ContendersPanel({ active }: { active: boolean }) {
   // pool unless Chris/Codex rule otherwise.
   const [inclSparse, setInclSparse] = useState(false)
   const [sparseRows, setSparseRows] = useState<ConRow[]>([])
+  // ECONOMIC NEAR MISS (Chris, 2026-10-04: "I dont see the ECONOMIC tier there"). The generator
+  // has emitted `economic_near_miss_rows` since this morning and the served payload carries all
+  // five with their note — nothing on this page ever read them, so the tier existed in the data
+  // and nowhere else. These PASSED the sealed-year black box and miss ONLY the frozen 60%
+  // sealed-year win-rate floor, so they are emphatically NOT contenders: OFF by default, and
+  // every row carries tier 'NONE — fails the frozen 60% sealed-year WR' from the generator.
+  const [inclNearMiss, setInclNearMiss] = useState(false)
+  const [nearMissRows, setNearMissRows] = useState<ConRow[]>([])
   // ── basket construction. `picked` is the source of truth — nothing is ticked by default.
   //    tierS is SEPARATE and must be a subset of picked; unticking a cfg drops it from Tier-S.
   const [picked, setPicked] = useState<Record<string, boolean>>({})
@@ -2651,6 +2659,7 @@ export function ContendersPanel({ active }: { active: boolean }) {
         ])
         if (cancelled) return
         setRows(d.rows ?? []); setMeta(d); setSparseRows(d.sparse_rows ?? [])
+        setNearMissRows(d.economic_near_miss_rows ?? [])
         const tl: CanonTier[] = t?.tiers ?? []
         setTiers(tl)
         // AGGRESSIVE BY DEFAULT (Chris, 2026-09-26). This defaulted to `tl[0]`, which is
@@ -2674,8 +2683,11 @@ export function ContendersPanel({ active }: { active: boolean }) {
   const uniq = (f: (r: ConRow) => string | null) =>
     Array.from(new Set(rows.map(f).filter(Boolean) as string[])).sort()
 
-  // The strict pool is the default simulator universe; sparse-supportive folds in only on request.
-  const pool = inclSparse ? [...rows, ...sparseRows] : rows
+  // The strict pool is the default simulator universe; sparse-supportive and economic-near-miss
+  // fold in only on request. Both are preserved-and-monitored, neither is deployable.
+  const pool = [...rows,
+                ...(inclSparse ? sparseRows : []),
+                ...(inclNearMiss ? nearMissRows : [])]
   let view = pool.filter(r =>
     (fAsset === 'all' || r.asset === fAsset) &&
     (fTf === 'all' || r.tf === fTf) &&
@@ -2906,6 +2918,23 @@ export function ContendersPanel({ active }: { active: boolean }) {
               strict deployable pool
             </span>
           </div>
+          {/* ECONOMIC NEAR MISS — Chris, 2026-10-04. Shown on the same terms as sparse: off by
+              default, counted, and labelled with the one gate it fails. */}
+          {(meta.counts?.economic_near_miss ?? 0) > 0 && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer',
+                              color: '#d98c1f' }}>
+                <input type="checkbox" checked={inclNearMiss}
+                       onChange={e => setInclNearMiss(e.target.checked)} />
+                <span>INCLUDE ECONOMIC NEAR MISS <b>{meta.counts.economic_near_miss}</b></span>
+              </label>
+              <span style={{ opacity: 0.75 }}>
+                {String(meta.economic_near_miss_note ??
+                  'PASSED the sealed-year black box; misses ONLY the frozen 60% sealed-year win rate')}
+                {' '}— NEVER a contender, shown for visibility only
+              </span>
+            </div>
+          )}
           <div style={{ opacity: 0.7 }}>
             default simulator universe: <b>STRICT SURVIVORS ONLY</b> · generated{' '}
             {String(meta.generated_at ?? '')} · <b>{meta.label}</b>
