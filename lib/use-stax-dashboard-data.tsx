@@ -8,6 +8,7 @@ import type { StaxDashboardData, Position, Trade, CoinSym, TickerAsset, StatCard
 // Coin symbol type alias used by the user-trade Position/Trade builders below.
 type _CoinSymInternal = CoinSym
 import { authedFetch, browserClient } from './api'
+import { deriveReadState } from './account-read-state'
 import { usePublicTickers, type PublicTicker } from './use-public-tickers'
 import { fetchPortfolioTrades, fetchClosedTrades, normalizeTier, type PortfolioTrade, type Tier } from './use-portfolio-trades'
 
@@ -366,10 +367,25 @@ function buildStats(opts: {
   totalReturnPct: number
   openCount: number
   closedCount: number
+  epochSub?: string
   activated: boolean
+  /** The account reads did not answer: we know neither the bot state nor the open book. */
+  statusUnknown?: boolean
   openLegs?: Array<{ symbol: string; side: 'long' | 'short' }>
 }): StatCardSpec[] {
   const { unrealizedPnl, realizedPnl, totalReturnPct, openCount, closedCount, activated, openLegs = [] } = opts
+  // 2026-10-06 — "OFF" AND "NO OPEN POSITION" ARE MEASUREMENTS. On a failed read we have taken no
+  // measurement, and printing the zero-state anyway is what told Chris his bot was Off and he held
+  // nothing while both were untrue. Three states, never two: unknown, zero, and a number.
+  if (opts.statusUnknown) {
+    const unknown = <span style={{ color: 'var(--muted)' }}>—</span>
+    return [
+      { label: 'Bot Status',     icon: Icons.Robot,    value: unknown, sub: 'could not be read' },
+      { label: 'Unrealized PnL', icon: Icons.TrendUp,  value: unknown, sub: 'could not be read' },
+      { label: 'Realized PnL',   icon: Icons.Check,    value: unknown, sub: 'could not be read' },
+      { label: 'Total Return',   icon: Icons.TrendUp,  value: unknown, sub: 'could not be read' },
+    ]
+  }
   // Bot Status — handle 0, 1, or many legs across BTC/ETH/SOL/XRP/SUI with
   // mixed long/short directions. Examples:
   //   0 legs (active):     "Active" / "Watching"
@@ -417,7 +433,10 @@ function buildStats(opts: {
       label: 'Total Return',
       icon: Icons.TrendUp,
       value: fmtPctSign(totalReturnPct),
-      sub: 'All time',
+      // NOT "All time" — this figure is scoped to the account epoch, and a card that says
+      // otherwise contradicts the scope line above it. `epochSub` carries the epoch's start, or
+      // "All time" when the epoch could not be read and the number really is unscoped.
+      sub: opts.epochSub ?? 'All time',
       valueClass: totalReturnPct >= 0 ? 'pos' : 'neg',
     },
   ]
@@ -501,11 +520,31 @@ export function useStaxDashboardData(): StaxLoadState {
         // stop. We now distinguish "rejected" from "could not ask" from "answered".
         let sawUnauthenticated = false
         let sawUpstreamDown = false
+        // ── 2026-10-06: A FAILURE WE CANNOT NAME IS STILL A FAILURE ────────────────────────────
+        // classify() recognised exactly two shapes — 401 and 503 — and anything else set NEITHER
+        // flag. Chris's iPhone hit 431 (Request Header Fields Too Large: nginx allows 64k of
+        // headers, Node's origin caps at 16k) on all three authed reads at 10:24-10:25. With both
+        // flags false nothing downstream knew a read had failed, so `botRes === null` was read as
+        // "this user has not activated a bot" and the dashboard served the NEW-USER PREVIEW over a
+        // live, funded account: the strategy's backtest equity curve, the strategy's closed trades
+        // in Recent Trades, and phantom strategy positions summing to −$195.56 beside a sub-label
+        // reading "No open position".
+        //
+        // Every other outcome — 4xx, 5xx, an abort, a network error — lands here now. The rule the
+        // rest of this function depends on: WE DID NOT FIND OUT is its own state, and it must never
+        // collapse into a statement about the user's configuration.
+        let sawReadFailure = false
+        // Did /api/trades-live actually ANSWER on this pass? The catch below falls back to the
+        // last good payload (or an empty one), so a failed read is otherwise indistinguishable
+        // from "this account genuinely holds nothing" — which is how an open position became
+        // "No open position" and let the strategy-positions fallback fire over the top of it.
+        let tradesAnswered = false
         const classify = (e: Error) => {
           const m = String(e?.message || e)
           if (/NOT_AUTHENTICATED/.test(m)) sawUnauthenticated = true
           else if (/unavailable|upstream|503/i.test(m) || e?.name === 'AuthUnavailableError'
                    || e?.name === 'UpstreamUnavailableError') sawUpstreamDown = true
+          else sawReadFailure = true
           return m
         }
 
@@ -519,7 +558,7 @@ export function useStaxDashboardData(): StaxLoadState {
           // undercounting realized PnL / return / closed-count vs the Live Trading
           // page (which uses 500). Match it so both read the SAME full closed set.
           authedFetch<{ trades: RawTrade[]; track_record?: TrackRecord }>('/api/trades-live?limit=500')
-            .then(r => { lastGoodTrades.current = r; return r })
+            .then(r => { lastGoodTrades.current = r; tradesAnswered = true; return r })
             .catch((e: Error) => { classify(e); return lastGoodTrades.current ?? ({ trades: [] as RawTrade[], track_record: undefined }) }),
         ])
         if (cancelled) return
@@ -548,8 +587,18 @@ export function useStaxDashboardData(): StaxLoadState {
         // before they connect keys. The OnboardingBanner above the dashboard
         // tells them what to do next. Without this, brand-new users saw a
         // bare CenterMessage which made the site feel empty and untrustworthy.
-        const noKeys = !!(balanceRes && 'error' in balanceRes && /no api keys/i.test(balanceRes.error || ''))
-        const noBot = !botRes?.activated || !botRes?.config
+        // ── 2026-10-06: "NOT ACTIVATED" IS AN ANSWER. `null` IS NOT. ─────────────────────────
+        // `noBot` was `!botRes?.activated || !botRes?.config` — true for a brand-new user AND for
+        // every failed read, because optional chaining on null yields undefined just as a genuine
+        // `activated: false` does. It gates the three preview fallbacks below (strategy positions,
+        // strategy Recent Trades, strategy win-rate/streak), so one unrecognised HTTP status was
+        // enough to present the backtest as this account's own record.
+        // The predicates now live in lib/account-read-state.ts and are proved directly by
+        // scripts/test-account-read-state.ts — the test runs the same code this path does.
+        const readState = deriveReadState({
+          botRes, balanceRes, tradesAnswered, sawUnauthenticated, sawUpstreamDown, sawReadFailure,
+        })
+        const { noKeys, noBot, botUnknown, accountReadFailed } = readState
         const cfg = botRes?.config
 
         // Default tier for the preview when the user hasn't picked one yet.
@@ -560,12 +609,21 @@ export function useStaxDashboardData(): StaxLoadState {
         const tier = cfg ? normalizeTier(cfg.tier || cfg.preset) : 'conservative'
         // When the bot config could not be read (Supabase down), DO NOT present the fallback tier
         // as fact — it rendered "Conservative tier · 0.5× of balance" over an Aggressive account.
-        const configUnavailable = !cfg && (sawUpstreamDown || (botRes === null))
+        // 2026-09-29 SAY WHICH FAILURE IT WAS. This read `botRes === null` — true after ANY
+        // failed bot-activate call — and then told the user the UPSTREAM was down. On Chris's
+        // iPhone the upstream was healthy throughout (Supabase auth ~65 ms, every container
+        // healthy, no server error logged); his stored token had simply gone stale in a
+        // backgrounded tab. An expired session now reports itself as one (lib/api.ts), so this
+        // must only claim an outage when something actually observed one.
+        const configUnavailable = !cfg && (sawUpstreamDown || botUnknown)
         const tierLabel = configUnavailable
-          ? 'Tier unavailable — upstream down'
+          ? (sawUpstreamDown ? 'Tier unavailable — upstream down'
+                             : 'Tier unavailable — could not read your bot settings')
           : (TIER_LABEL[tier] ?? TIER_LABEL.conservative)
 
         const balance = balanceRes && !('error' in balanceRes && balanceRes.error) ? balanceRes : null
+        const balanceOk = !!balance
+        const balanceAsOfIso = (balance as { asOf?: string } | null)?.asOf ?? null
         const equity = Number(balance?.equity || 0)
         const unrealizedPnl = Number(balance?.unrealizedPnl || 0)
 
@@ -591,6 +649,32 @@ export function useStaxDashboardData(): StaxLoadState {
         // that have no source on this host. See that route for what is and is not available.
         const acctEq = await authedFetch<any>('/api/account-equity', { cache: 'no-store' })
           .catch(() => null)
+
+        // ── THE ACCOUNT EPOCH (2026-09-29) ──────────────────────────────────────────────────
+        // Chris: "Make EPOCH_20260928_RESEARCH56 the default scope for EVERY user-facing
+        // account-history surface... A normal visit must show zero pre-cutover closed trades."
+        // The account changed basket at 2026-09-28T17:23:10Z. Every closed trade before that was
+        // produced by a strategy the account no longer runs, so showing them under one all-time
+        // total describes a system that does not exist. The records are NOT deleted — they stay in
+        // the ledger and are reachable under their own pre-cutover heading.
+        // FAIL-OPEN, LABELLED: if the epoch cannot be read, history stays all-time and `epochOk`
+        // is false so the UI says "all time" rather than silently showing an unscoped total under
+        // an epoch heading. A missing epoch must never render as zero trades either.
+        const epochRes = await fetch('/api/account-epoch', { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null)
+        const epochOk = !!epochRes?.available
+        const epochMs = epochOk ? Number(epochRes.opensMs) : null
+        const epochOpeningEquity = epochOk ? Number(epochRes.openingEquityUsd) : null
+        const carriedSymbols: string[] = epochOk ? (epochRes.carriedSymbols || []) : []
+        // A closed trade belongs to this epoch when it CLOSED at or after the cutover. Closing time
+        // is the right key, not opening time: a position carried across the cutover realises its
+        // result inside the epoch, and that result is what the epoch's P&L is about.
+        const closedInEpoch = (t: { closed_at?: string | null }) => {
+          if (!epochOk || epochMs === null) return true
+          const ms = t.closed_at ? Date.parse(t.closed_at) : NaN
+          return Number.isFinite(ms) ? ms >= epochMs : false
+        }
         const portfolio = await fetchPortfolioTrades(tier).catch((e: Error) => {
           equityReadFailed = true
           equityReadError = `Strategy trade history could not be read (${e?.message || 'fetch failed'}).`
@@ -615,11 +699,21 @@ export function useStaxDashboardData(): StaxLoadState {
         // would make the card flicker on every tick as mark prices move.
         // Matches Live Trading page's realizedPct formula. Open positions
         // contribute to Unrealized PnL card, never here.
-        const userClosedTrades = userTrades.filter(t => t.status === 'closed')
+        const userClosedAllTime = userTrades.filter(t => t.status === 'closed')
+        // DEFAULT SCOPE = THIS EPOCH. The all-time set is kept, not discarded, and travels to the
+        // UI as `preCutoverClosedCount` so the archive heading can state what it holds.
+        const userClosedTrades = userClosedAllTime.filter(closedInEpoch)
+        const preCutoverClosed = userClosedAllTime.filter(t => !closedInEpoch(t))
         const realizedPnl = userClosedTrades.reduce((s, t) => s + (Number(t.pnl_usd) || 0), 0)
+        const preCutoverRealizedPnl = preCutoverClosed.reduce((s, t) => s + (Number(t.pnl_usd) || 0), 0)
         const startCapital = 10000  // strategy account base — kept for equity-curve simulation only
         const userActivationBalance = Number((cfg as { activation_balance?: number })?.activation_balance) || 0
-        const userBaseline = userActivationBalance > 0 ? userActivationBalance : startCapital
+        // The epoch's return is measured against the equity the account HAD when the epoch opened —
+        // a measured exchange reading ($8,003.12 at 2026-09-28T19:27:10Z), not the activation
+        // balance from a previous strategy and never the $10,000 simulation base.
+        const userBaseline = epochOk && epochOpeningEquity && epochOpeningEquity > 0
+          ? epochOpeningEquity
+          : (userActivationBalance > 0 ? userActivationBalance : startCapital)
         const totalReturnPct = userBaseline > 0
           ? (realizedPnl / userBaseline) * 100
           : 0
@@ -688,7 +782,13 @@ export function useStaxDashboardData(): StaxLoadState {
         // live returned empty due to a transient Bitget API issue. Chris
         // saw 4 phantom positions (SOL/AVAX/TON/TRX) on the Dashboard
         // while only TRX was his real position.
-        if (positions.length === 0 && noBot) {
+        // 2026-10-06 — AND THE POSITION READ MUST HAVE ANSWERED. `openTrades` is empty both when
+        // the account is flat and when /api/trades-live failed (the catch returns an empty payload),
+        // so without `tradesAnswered` a failed read still satisfies `positions.length === 0` and
+        // the strategy's open book is drawn as though it were the user's. That is what put
+        // −$195.56 of phantom unrealised P&L on a dashboard that said "No open position" in the
+        // same card.
+        if (positions.length === 0 && noBot && tradesAnswered) {
           const strategyOpen = portfolio.filter(isOpenPortfolioTrade)
           // Latest open per symbol (in case the file has multiple eod entries
           // for the same asset across cycles — keep the freshest).
@@ -760,7 +860,12 @@ export function useStaxDashboardData(): StaxLoadState {
         // trades and they are not. Chris caught it on his own dashboard.
         // Fall back ONLY in the preview state (no keys / no bot), where there is no account to
         // report on. A live account shows its own record, empty if that is the truth.
-        const isPreviewState = noKeys || noBot
+        // 2026-10-06 — AND ONLY WHEN WE KNOW. Preview is a claim about the USER ("you have not set
+        // this up yet"). On a failed read we are entitled to no such claim, and making it anyway is
+        // what filled Chris's Recent Trades with the strategy's backtest closes. `tradesAnswered`
+        // is required too: the preview table is only honest if we actually established the account
+        // has no closed trades of its own.
+        const isPreviewState = readState.isPreviewState
         const trades: Trade[] = closedSorted.length > 0 ? closedSorted.slice(0, 5).map(t => {
           const entry = Number(t.entry_price) || 0
           const exit = Number(t.exit_price) || 0
@@ -842,12 +947,16 @@ export function useStaxDashboardData(): StaxLoadState {
         // Same rule as Recent Trades above: a LIVE account with a clean sheet reports its own
         // (empty) numbers. Only a preview account borrows the strategy's.
         const useStrategyForStats = isPreviewState && userClosedTrades.length === 0
+        // Win-rate and streak widgets are account-history surfaces too, so they take the epoch
+        // scope like everything else. buildWinRate walks the raw trade list, so it is handed the
+        // epoch-scoped closes plus the still-open rows rather than the all-time list.
+        const userTradesInEpoch = [...userClosedTrades, ...openTrades]
         const wr20 = useStrategyForStats
           ? winRateFromPortfolio(portfolio, 20)
-          : buildWinRate(userTrades, 20)
+          : buildWinRate(userTradesInEpoch, 20)
         const wr50 = useStrategyForStats
           ? winRateFromPortfolio(portfolio, 50)
-          : buildWinRate(userTrades, 50)
+          : buildWinRate(userTradesInEpoch, 50)
         const streak = useStrategyForStats
           ? streakFromPortfolio(portfolio, tickerBySymbol)
           : streakFromUser(userClosedTrades, openTrades)
@@ -856,9 +965,13 @@ export function useStaxDashboardData(): StaxLoadState {
           unrealizedPnl,
           realizedPnl,
           totalReturnPct,
+          epochSub: epochOk && epochRes?.opensAt
+            ? `Since ${String(epochRes.opensAt).slice(0, 10)}`
+            : 'All time',
           openCount: openTrades.length,
           closedCount: userClosedTrades.length,  // user's real closed trades, not backtest
           activated: !!botRes?.activated,
+          statusUnknown: accountReadFailed,
           openLegs: openTrades.map(t => ({ symbol: t.symbol, side: t.side as 'long' | 'short' })),
         })
 
@@ -904,7 +1017,19 @@ export function useStaxDashboardData(): StaxLoadState {
         const data: StaxDashboardData = {
           trackRecord: userTradesRes?.track_record,
           btcPrice,
-          balanceUsd: equity || startCapital,
+          // 2026-09-27 — NEVER SUBSTITUTE THE SIMULATION BASE FOR A LIVE BALANCE.
+          // This read `equity || startCapital`. A failed balance read yields equity === 0, which is
+          // FALSY, so the card fell back to startCapital (10000 — the strategy simulation base) and
+          // rendered it as the account's real money. Chris saw "$10,000.00" over a live account
+          // whose measured equity was ~$19k. A real zero balance was indistinguishable from an
+          // outage, and both were indistinguishable from a simulation constant.
+          // `balanceAvailable` lets the card show "unavailable" with the last verified timestamp.
+          // Reference balanceRes directly: a nested block at ~line 700 also declares `balance`
+          // (as a NUMBER, `equity || startCapital`), and relying on block scoping here would be
+          // one refactor away from silently reading the wrong symbol.
+          balanceUsd: balanceOk ? equity : 0,
+          balanceAvailable: balanceOk,
+          balanceAsOf: balanceAsOfIso,
           tierLabel,
           btcGoal,
           btcGoalTarget,
@@ -932,17 +1057,50 @@ export function useStaxDashboardData(): StaxLoadState {
           // surfaced in the UI so a degraded read is never mistaken for a healthy one
           degraded: !!(balanceRes as { degraded?: boolean })?.degraded
                     || !!(userTradesRes as { degraded?: boolean })?.degraded
-                    || configUnavailable,
+                    || configUnavailable
+                    || accountReadFailed,
           degradedWarning: (balanceRes as { warning?: string })?.warning
                     || (userTradesRes as { warning?: string })?.warning
-                    || (configUnavailable ? 'Bot configuration is unreadable while the upstream is down.' : undefined),
+                    || (configUnavailable || accountReadFailed
+                        ? (sawUpstreamDown
+                            ? 'Bot configuration is unreadable while the upstream is down.'
+                            : 'Your account could not be read on this request'
+                              + (tradesAnswered ? '' : ', so no positions or trades are shown')
+                              + '. Your account, bot and positions are unchanged — nothing here '
+                              + 'has been altered, and nothing below is the strategy backtest '
+                              + 'standing in for your own record.')
+                        : undefined),
           balanceSource: (balanceRes as { source?: string })?.source,
           balanceAgeSeconds: (balanceRes as { ageSeconds?: number })?.ageSeconds,
           equityTrades: realEquityTrades,
           equityIsReal: realEquityTrades.length > 0,
           // Measured account equity — deposits and withdrawals included, because a measured
           // equity curve already contains them.
-          accountEquitySeries: acctEq?.available ? acctEq.series : null,
+          // ── EPOCH METADATA, so the UI can state its scope instead of implying it ──────────
+          epochAvailable: epochOk,
+          epochId: epochOk ? epochRes.epochId : null,
+          epochOpensAt: epochOk ? epochRes.opensAt : null,
+          epochOpensMs: epochMs,
+          epochOpeningEquityUsd: epochOpeningEquity,
+          epochBasketGeneration: epochOk ? epochRes.basketGeneration : null,
+          epochCarriedSymbols: carriedSymbols,
+          // The pre-cutover record is PRESERVED and counted, never deleted. These two let the page
+          // show "N earlier trades archived" under its own heading rather than pretending the
+          // account has no history before the cutover.
+          preCutoverClosedCount: preCutoverClosed.length,
+          preCutoverRealizedPnl,
+          preCutoverLabel: epochOk ? (epochRes.preCutover?.label ?? null) : null,
+          // THE MEASURED EQUITY SERIES IS CLIPPED TO THE EPOCH. Left whole it would draw the
+          // account's pre-cutover decline underneath an epoch-scoped P&L figure, so the chart and
+          // the cards would describe different periods — which is exactly the inconsistency this
+          // scope exists to remove. Unclipped when the epoch is unreadable, and then labelled
+          // all-time by `epochAvailable: false`.
+          accountEquitySeries: acctEq?.available
+            ? (epochOk && epochMs !== null
+                ? (acctEq.series || []).filter((pt: { ts?: number }) =>
+                    Number.isFinite(pt?.ts) && (pt.ts as number) >= epochMs)
+                : acctEq.series)
+            : null,
           accountEquityCoverageStart: acctEq?.available ? acctEq.coverage.first_ts : null,
           accountEquityCurrent: acctEq?.available ? acctEq.current_equity : null,
           accountEquityGaps: acctEq?.available ? acctEq.coverage.gaps_over_6h : null,
@@ -961,12 +1119,22 @@ export function useStaxDashboardData(): StaxLoadState {
           // 503 is the fabricated-zero failure wearing friendlier words.
           // ORDER MATTERS: a read failure outranks an unknown effective date, which outranks an
           // empty book. Each is a different fact and none of them is a zero.
-          equityStatus: equityReadFailed && realEquityTrades.length === 0 && portfolio.length === 0
+          // 2026-10-06 — A FAILED ACCOUNT READ OUTRANKS EVERYTHING BELOW IT. With the user's own
+          // trades unreadable, `realEquityTrades` is empty and `equityIsReal` is false, which used
+          // to hand the chart straight to the illustrative strategy backtest — the $10k→$20k curve
+          // Chris was shown over his own account. The chart honours 'error' (StaxDashboard.tsx
+          // ~1223) and draws the reason instead of a curve.
+          equityStatus: accountReadFailed
+            ? 'error'
+            : equityReadFailed && realEquityTrades.length === 0 && portfolio.length === 0
             ? 'error'
             : (!haveEff && closedWithTs.length > 0
                 ? 'error'
                 : (realEquityTrades.length === 0 && portfolio.length === 0 ? 'empty' : 'ok')),
-          equityError: equityReadFailed
+          equityError: accountReadFailed
+            ? 'Your account history could not be read on this request, so no curve is drawn. '
+              + 'The strategy backtest is not shown here in its place.'
+            : equityReadFailed
             ? equityReadError
             : (!haveEff && closedWithTs.length > 0
                 ? 'The moment your current bot settings became effective could not be read, so the '

@@ -125,6 +125,23 @@ export type StaxDashboardData = {
   btcPrice: number
   // Hero
   balanceUsd: number
+  balanceAvailable?: boolean
+  // ── ACCOUNT EPOCH (2026-09-29) ────────────────────────────────────────────────────────────
+  // The account changed basket at 2026-09-28T17:23:10Z. Every account-history surface defaults to
+  // that scope; these fields let the page SAY so rather than leave the reader to assume the numbers
+  // are all-time. `epochAvailable: false` means the epoch could not be read and the figures really
+  // are all-time — which the page must then state, not hide.
+  epochAvailable?: boolean
+  epochId?: string | null
+  epochOpensAt?: string | null
+  epochOpensMs?: number | null
+  epochOpeningEquityUsd?: number | null
+  epochBasketGeneration?: string | null
+  epochCarriedSymbols?: string[]
+  preCutoverClosedCount?: number
+  preCutoverRealizedPnl?: number
+  preCutoverLabel?: string | null
+  balanceAsOf?: string | null
   tierLabel: string                  // "Aggressive tier · 1.0× of balance"
   btcGoal: number                    // current BTC equivalent of equity
   btcGoalTarget?: number             // mission target in BTC (default 1)
@@ -1137,6 +1154,10 @@ function useMeasuredWidth(fallback: number) {
 function Hero({ data }: { data: StaxDashboardData }) {
   const t = useT()
   const [range, setRange] = useState<Range>('6M')
+  // Methodology lives behind this toggle, not across the cards. Chris marked the paragraph that
+  // used to sit under Account Balance for removal; the one fact a reader cannot infer — the period
+  // — stays inline, and the rest opens on request.
+  const [epochInfoOpen, setEpochInfoOpen] = useState(false)
   const ranges: Range[] = ['1M', '3M', '6M', '1Y', 'ALL']
   // Scale progress against the user's mission target (default 1 BTC). A user
   // with a 5 BTC target shouldn't see a full bar at 1 BTC.
@@ -1246,7 +1267,82 @@ function Hero({ data }: { data: StaxDashboardData }) {
           </div>
         )}
         <div className="label">{t('card.accountBalance')}</div>
-        <div className="hero-balance">${data.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        {/* 2026-09-28: THE LOADING STATE USED TO RENDER $0.00 AS THE ACCOUNT BALANCE.
+            DashboardLive renders LOADING_STAX_DATA while the hook resolves, and that placeholder
+            carries `balanceUsd: 0` with NO `balanceAvailable` field. The guard below tested
+            `=== false`, so `undefined` fell straight through to the number and the hero printed
+            "$0.00" — a fabricated figure presented as this account's real money, for as long as the
+            resolve took. On a phone over cellular that is seconds, every single load, which is why
+            it showed up on mobile and not on the desk. `equityStatus: 'loading'` was already on the
+            placeholder and already meant exactly this; the hero simply never consulted it.
+            Three states, never two: resolving, unavailable-with-its-timestamp, and a real number. */}
+        {data.equityStatus === 'loading' && data.balanceAvailable !== true ? (
+          <div className="hero-balance" style={{ opacity: 0.45 }}>—</div>
+        ) : data.balanceAvailable === false ? (
+          <div className="hero-balance" style={{ fontSize: '0.62em', color: '#b45309', lineHeight: 1.3 }}>
+            Unavailable
+            <div style={{ fontSize: '0.5em', fontWeight: 400, opacity: 0.8 }}>
+              {data.balanceAsOf
+                ? `last verified ${new Date(data.balanceAsOf).toISOString().replace('T', ' ').slice(0, 16)} UTC`
+                : 'no verified balance on record'}
+            </div>
+          </div>
+        ) : (
+          <div className="hero-balance">${data.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        )}
+        {/* ── THE SCOPE OF EVERY NUMBER ON THIS PAGE, STATED (2026-09-29) ───────────────────
+            Realised P&L, total return, closed count, win rate, streak, recent trades and the
+            equity curve all default to the account epoch that opened with the basket cutover.
+            A figure whose period the reader has to guess is how "-44.58% all time" sat over a
+            basket the account had already stopped trading. The earlier records are preserved and
+            counted here, not hidden — and if the epoch cannot be read the line says "all time"
+            instead, because silently showing an unscoped total under an epoch heading is worse
+            than showing an honest all-time one. */}
+        {/* ── SCOPE, IN ONE LINE ───────────────────────────────────────────────────────────
+            The first version of this was a four-line paragraph under Account Balance and Chris
+            marked it for removal: methodology does not belong across the main cards. What has to
+            stay is the one fact a reader cannot infer — which period these numbers cover, and that
+            earlier trades exist and are archived rather than lost. Everything else moved to the
+            info view. `epochAvailable === false` still says "all time", because an unscoped total
+            under an epoch heading is the one thing worse than a verbose caption. */}
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+          {data.epochAvailable === false
+            ? <>All time — epoch unavailable.</>
+            : data.epochOpensAt
+              ? <>Since {new Date(data.epochOpensAt).toISOString().slice(0, 10)}
+                  {(data.preCutoverClosedCount ?? 0) > 0
+                    ? <> · {data.preCutoverClosedCount} earlier trades archived</> : null}
+                  {' '}<button
+                    type="button"
+                    onClick={() => setEpochInfoOpen(v => !v)}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                             color: 'var(--muted)', textDecoration: 'underline', font: 'inherit' }}
+                  >details</button></>
+              : null}
+        </div>
+        {epochInfoOpen && data.epochAvailable && (
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.55,
+                        padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}>
+            This account changed strategy basket on{' '}
+            {new Date(data.epochOpensAt!).toISOString().replace('T', ' ').slice(0, 16)} UTC
+            {data.epochBasketGeneration ? <> to {data.epochBasketGeneration}</> : null}.
+            Opening equity was{' '}
+            {data.epochOpeningEquityUsd
+              ? `$${data.epochOpeningEquityUsd.toLocaleString(undefined,
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : 'not recorded'}. Realised P&amp;L, total return, closed count, win rate, streak and
+            the equity curve all count from that moment.
+            {(data.preCutoverClosedCount ?? 0) > 0 && (
+              <> The {data.preCutoverClosedCount} closed trades from before it are preserved in the
+                pre-cutover archive, not deleted.</>
+            )}
+            {(data.epochCarriedSymbols?.length ?? 0) > 0 && (
+              <> Positions carried across the cutover ({data.epochCarriedSymbols!.join(', ')}) are
+                still open and shown below; when they close, only the change after the cutover
+                counts toward this epoch.</>
+            )}
+          </div>
+        )}
         {/* Tier pill only shows once the user has actually activated a bot and
             chosen a tier. In preview mode (no keys / no activation) the hook
             falls back to a default 'conservative' label which would mislead
@@ -1325,18 +1421,22 @@ function Hero({ data }: { data: StaxDashboardData }) {
               ACCOUNT EQUITY (measured) · ${endingEquity != null ? endingEquity.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
               {' · '}{range === 'ALL' ? 'all recorded' : `last ${range.toLowerCase()}`}
               {!data.isPreview && (<>{' · '}{data.tierLabel.split('·')[0]?.trim() || data.tierLabel}</>)}
-              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.75 }}>
-                The live engine's own equity record — deposits, withdrawals and open P&amp;L are
-                already in it, which is why it matches Account Balance
-                {data.accountEquityCurrent != null
-                  ? ` ($${data.accountEquityCurrent.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
-                  : ''}.
-                {data.accountEquityCoverageStart
-                  ? ` The account record begins ${new Date(data.accountEquityCoverageStart).toISOString().slice(0, 10)}; there is no equity snapshot before that, so no earlier curve is drawn.`
-                  : ''}
-                {(sim as any).truncated ? ' The selected range reaches further back than the record.' : ''}
-                {data.accountEquityGaps ? ` ${data.accountEquityGaps} gap(s) over 6h in the record.` : ''}
-              </div>
+              {/* Chris marked the paragraph that used to sit here for removal. What a reader
+                  genuinely cannot infer is kept and compressed to one line: where the record
+                  starts (a range reaching further back has no data behind it, and a line drawn
+                  over that would be an invention) and whether the record has gaps. The rest —
+                  that deposits, withdrawals and open P&L are already inside a MEASURED equity
+                  series, which is why it matches Account Balance — is methodology and belongs in
+                  the info view, not under the chart. */}
+              {(data.accountEquityCoverageStart || (sim as any).truncated || data.accountEquityGaps) && (
+                <div style={{ marginTop: 2, fontSize: 10, opacity: 0.75 }}>
+                  {data.accountEquityCoverageStart
+                    ? `record from ${new Date(data.accountEquityCoverageStart).toISOString().slice(0, 10)}`
+                    : ''}
+                  {(sim as any).truncated ? ' · range exceeds the record' : ''}
+                  {data.accountEquityGaps ? ` · ${data.accountEquityGaps} gap(s)` : ''}
+                </div>
+              )}
             </>
           ) : sim.isReal ? (
             <>
@@ -1890,7 +1990,13 @@ export function StaxDashboardContent({ data }: { data: StaxDashboardData }) {
       const abs = Math.abs(liveUnrealized).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       const value = liveUnrealized >= 0 ? `+$${abs}` : `−$${abs}`
       const valueClass: 'pos' | 'neg' = liveUnrealized >= 0 ? 'pos' : 'neg'
-      return { ...s, value, valueClass }
+      // 2026-10-06 — THE SUB-LABEL MUST COME FROM THE SAME ROWS AS THE NUMBER. This overrode the
+      // value from `livePositions` and left `sub` as the hook had baked it from the USER's open
+      // trades, so Chris's card read "−$195.56" above "No open position" — two sources, one card,
+      // and the contradiction was the only visible sign that the figure was not his. Whatever rows
+      // produced the number now describe themselves.
+      const sub = `${livePositions.length} ${livePositions.length === 1 ? 'leg' : 'legs'} open`
+      return { ...s, value, valueClass, sub }
     })
   }, [data.stats, livePositions])
 
